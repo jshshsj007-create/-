@@ -26,7 +26,7 @@ cat > "$STUB/lucide-react/package.json" <<'JSON'
 {"name":"lucide-react","version":"0.0.0-stub","type":"module","main":"index.mjs","exports":{".":"./index.mjs"}}
 JSON
 node -e '
-const names = require("fs").readFileSync("App.tsx","utf8")
+const names = require("fs").readFileSync("src/App.tsx","utf8")
   .match(/import \{([\s\S]*?)\} from .lucide-react.;/)[1]
   .split(",").map(s => s.trim().split(" as ")[0]).filter(Boolean);
 require("fs").writeFileSync(process.argv[1] + "/lucide-react/index.mjs",
@@ -39,7 +39,7 @@ npx --yes esbuild@0.25.0 --loader:.tsx=tsx --jsx=automatic --bundle --format=esm
   --alias:react="./$STUB/react/index.mjs" \
   --alias:react/jsx-runtime="./$STUB/react/index.mjs" \
   --alias:lucide-react="./$STUB/lucide-react/index.mjs" \
-  --outfile=tests/build/app.mjs App.tsx >/dev/null
+  --outfile=tests/build/app.mjs src/App.tsx >/dev/null
 
 node tests/ledger.test.mjs
 node tests/auth.test.mjs

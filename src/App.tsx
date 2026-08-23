@@ -374,7 +374,6 @@ function FaidLogo({ size = 64, tone = 'light' }) {
 function Shell({ children, dark }) {
   return (
     <div dir="rtl" className={`min-h-screen flex flex-col ${dark ? 'bg-emerald-900' : 'bg-[#F3F5F4]'}`} style={{ fontFamily: "'Tajawal', sans-serif" }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap');`}</style>
       <div className="w-full max-w-md mx-auto flex-1 flex flex-col">{children}</div>
     </div>
   );
@@ -1034,7 +1033,6 @@ export default function App() {
 
   return (
     <div dir="rtl" className="min-h-screen bg-[#F3F5F4]" style={{ fontFamily: "'Tajawal', sans-serif" }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap');`}</style>
 
       <div className="w-full max-w-md mx-auto min-h-screen flex flex-col">
         {/* الهيدر: الترم الحالي + قائمة الحساب */}
