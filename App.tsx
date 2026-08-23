@@ -506,6 +506,7 @@ export default function App() {
         ...(isGrouped ? { days: form.days } : {}),
       }],
     }));
+    setSearch(''); // عشان الجديد يبان فورًا لو كان فيه بحث شغّال
     closeModal();
   };
   const saveParticipantEdit = () => {
@@ -1097,7 +1098,12 @@ export default function App() {
                     <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" />
                     <input className={inputCls + ' pr-9'} placeholder="ابحث باسم المشترك" value={search} onChange={(e) => setSearch(e.target.value)} />
                   </div>
-                  <button onClick={() => markAll('حاضر', visibleDayRoster)} disabled={week.status === 'مغلق'} className="text-xs font-semibold text-green-700 bg-green-50 px-3 py-2.5 rounded-lg shrink-0 disabled:opacity-40">تعليم الكل حاضر</button>
+                  <button onClick={() => markAll('حاضر', visibleDayRoster)} disabled={week.status === 'مغلق'} className="text-xs font-semibold text-green-700 bg-green-50 px-3 py-2.5 rounded-lg shrink-0 disabled:opacity-40">الكل حاضر</button>
+                  {/* التسجيل من داخل اليوم نفسه: اللي يجي متأخر ويبي يسجّل وأنت تحضّر */}
+                  <button className={btnPrimary + ' shrink-0'} disabled={week.status === 'مغلق' || ledgerLocked}
+                    onClick={() => { setForm({ accountId: data.faidAccounts[0]?.id, days: [week.id], amount: Number(program.dayPrice || 0) || '' }); setModal('addParticipant'); }}>
+                    <Plus size={16} /> تسجيل
+                  </button>
                 </div>
                 {dayRoster.length === 0 ? (
                   <div className={emptyCls}>
@@ -1109,8 +1115,11 @@ export default function App() {
                   <AttendanceTable
                     participants={visibleDayRoster}
                     statusOf={(p) => attendanceOf(p, week.id)}
+                    subscriptionOf={(p) => enrolledDays(p, program.weeks).length}
+                    totalDays={program.weeks.length}
                     locked={week.status === 'مغلق'}
                     onSet={(p, s) => setAttendance(p.id, s, week.id)}
+                    onEdit={(p) => { setForm({ ...p, days: enrolledDays(p, program.weeks).map((w) => w.id), amountTouched: true }); setModal('editParticipant'); }}
                   />
                 )}
                 <div className="mt-3 text-sm text-slate-500 px-1 flex flex-wrap gap-x-4 gap-y-1">
@@ -1897,15 +1906,26 @@ function ParticipantsTable({ participants, accounts, showAttendance, statusOf, o
 }
 
 /** جدول حضور يوم واحد في البرنامج المجمّع. */
-function AttendanceTable({ participants, statusOf, onSet, locked }) {
+function AttendanceTable({ participants, statusOf, onSet, locked, subscriptionOf, totalDays, onEdit }) {
   if (!participants.length) return <div className={emptyCls}>ما فيه نتائج.</div>;
   return (
     <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden divide-y divide-slate-50">
       {participants.map((p) => {
         const st = statusOf(p);
+        const subDays = subscriptionOf?.(p);
         return (
           <div key={p.id} className="flex items-center justify-between px-4 py-3 gap-3">
-            <span className="font-semibold text-slate-800 text-sm truncate">{p.name}</span>
+            <span className="min-w-0">
+              <span className="font-semibold text-slate-800 text-sm truncate block">{p.name}</span>
+              {subDays != null && (
+                <span className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                  {subDays === 1 ? 'مشترك يوم واحد' : subDays === totalDays ? `مشترك كل الأيام (${subDays})` : `مشترك ${subDays} من ${totalDays} أيام`}
+                  {onEdit && !locked && (
+                    <button onClick={() => onEdit(p)} className="text-slate-300 hover:text-violet-600"><Pencil size={11} /></button>
+                  )}
+                </span>
+              )}
+            </span>
             <div className="flex items-center gap-1.5 shrink-0">
               {['حاضر', 'غائب'].map((s) => (
                 <button key={s} onClick={() => onSet(p, st === s ? 'معلق' : s)} disabled={locked}

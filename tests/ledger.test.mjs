@@ -125,6 +125,16 @@ test('البيانات القديمة بدون days تعني «كل الأيام
   assert.equal(enrolledDays(old, days).length, 4);
 });
 
+test('التسجيل من داخل اليوم يخلي المشترك في ذاك اليوم فقط', () => {
+  // واحد جا اليوم الثالث وسجّل وأنت تحضّر
+  const walkIn = { id: 'w1', name: 'متأخر', amount: 50, accountId: 'cash', days: ['d3'] };
+  const after = [...grouped.participants, walkIn];
+  assert.equal(enrolledIn(after, 'd3').length, 3);
+  assert.equal(enrolledIn(after, 'd1').length, 2); // ما ظهر في اليوم الأول
+  assert.equal(enrolledDays(walkIn, days).length, 1);
+  assert.equal(L.revenue({ ...grouped, participants: after }), 400); // 350 + 50
+});
+
 test('حذف يوم يشيله من تسجيلات المشتركين', () => {
   const removed = 'd2';
   const after = grouped.participants.map((p) => (p.days ? { ...p, days: p.days.filter((d) => d !== removed) } : p));
