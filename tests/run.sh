@@ -43,4 +43,5 @@ npx --yes esbuild@0.25.0 --loader:.tsx=tsx --jsx=automatic --bundle --format=esm
 
 node tests/ledger.test.mjs
 node tests/auth.test.mjs
+node tests/quick.test.mjs
 rm -rf "$STUB" tests/build

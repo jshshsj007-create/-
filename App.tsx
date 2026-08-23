@@ -31,8 +31,16 @@ export const paidAmount = (parts) => (parts || []).filter((p) => p.accountId !==
  *   الصافي يُوزَّع يدويًا: نصيب مدارس الرواد + نصيب فريق فيض
  *   المتبقي = الصافي − (نصيب المدرسة + نصيب فيض)   ← لازم يساوي صفر عند اكتمال التوزيع
  */
+/**
+ * وضع التسجيل في الدفتر:
+ *  quick — عدد طلاب ومبلغ إيراد فقط (البرنامج المنفصل: يوم واحد، ما يحتاج أسماء).
+ *  named — أسماء المشاركين، وهو اللازم للتحضير (البرنامج المجمّع دائمًا كذا).
+ */
+export const isQuick = (l) => (l?.mode || 'named') === 'quick';
+export const headcount = (l) => (isQuick(l) ? Number(l?.quickCount || 0) : (l?.participants || []).length);
+
 export const L = {
-  revenue: (l) => paidAmount(l?.participants) + sumAmt(l?.collections),
+  revenue: (l) => (isQuick(l) ? Number(l?.quickRevenue || 0) : paidAmount(l?.participants)) + sumAmt(l?.collections),
   expenses: (l) => sumAmt(l?.expenseItems),
   net: (l) => L.revenue(l) - L.expenses(l),
   school: (l) => sumAmt(l?.schoolPayouts),
@@ -52,9 +60,17 @@ export const enrolledDays = (participant, weeks) =>
 export const enrolledIn = (participants, weekId) =>
   (participants || []).filter((p) => isEnrolled(p, weekId));
 
-const emptyLedger = () => ({
+const emptyLedger = (mode = 'named') => ({
+  mode, quickCount: 0, quickRevenue: 0,
   participants: [], collections: [], expenseItems: [], schoolPayouts: [], faidPayouts: [], faidTransfer: null,
 });
+
+/** حالة اليوم المعروضة: تُحسب من البيانات، ما هي حقل يدوي. */
+export const weekState = (l) => {
+  if (l?.status === 'مغلق') return 'مكتمل';
+  const started = headcount(l) > 0 || L.revenue(l) > 0 || L.expenses(l) > 0;
+  return started ? 'جاري' : 'لم يبدأ';
+};
 
 const storage = {
   async get(key) {
@@ -99,9 +115,12 @@ export function migrate(loaded) {
   if (!d.faidAccounts.some((a) => a.name === 'كاش')) d.faidAccounts.push({ id: uid(), name: 'كاش' });
 
   d.programs = (d.programs || []).map((p) => {
-    const prog = { ...emptyLedger(), attendance: {}, status: 'مفتوح', ...p };
+    const prog = { ...emptyLedger('named'), attendance: {}, status: 'مفتوح', ...p };
+    prog.mode = 'named';
     prog.weeks = (p.weeks || []).map((w) => {
-      const week = { ...emptyLedger(), ...w };
+      const defaultMode = prog.type === 'مجمع' || (w.participants || []).length ? 'named' : 'quick';
+      const week = { ...emptyLedger(defaultMode), ...w };
+      if (!week.mode) week.mode = defaultMode;
       // مصروفات النسخة القديمة كانت رقمًا مفردًا على الأسبوع
       if (w.expenses && !(w.expenseItems || []).length) {
         week.expenseItems = [{ id: uid(), accountId: d.faidAccounts[0]?.id, amount: Number(w.expenses), note: 'مصروف سابق' }];
@@ -394,6 +413,16 @@ function Stepper({ value, onChange, min = 1, max = 60 }) {
       <input type="number" value={value} onChange={(e) => set(Number(e.target.value))}
         className="flex-1 text-center text-xl font-extrabold text-slate-800 border border-slate-200 rounded-xl py-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-400" />
       <button type="button" onClick={() => set(Number(value || min) + 1)} className="w-11 h-11 rounded-xl bg-emerald-600 text-white font-bold text-xl">+</button>
+    </div>
+  );
+}
+
+function InfoRow({ icon: Icon, label, value }) {
+  return (
+    <div className="bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3">
+      <span className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0"><Icon size={18} /></span>
+      <span className="text-sm text-slate-500 flex-1">{label}</span>
+      <span className="font-bold text-slate-800">{value}</span>
     </div>
   );
 }
@@ -745,10 +774,11 @@ export default function App() {
     const unit = type === 'مجمع' ? 'اليوم' : 'الأسبوع';
     // ننشئ الأيام/الأسابيع دفعة وحدة بدل ما يضيفها وحدة وحدة
     const weeks = Array.from({ length: count }, (_, i) => ({
-      id: uid(), name: `${unit} ${ORDINALS[i] || i + 1}`, date: '', status: 'مفتوح', ...emptyLedger(),
+      id: uid(), name: `${unit} ${ORDINALS[i] || i + 1}`, date: '', status: 'مفتوح',
+      ...emptyLedger(type === 'مجمع' ? 'named' : 'quick'),
     }));
     const id = uid();
-    save({ ...data, programs: [...data.programs, { id, name: form.name.trim(), type, termKey, status: 'مفتوح', dayPrice: Number(form.dayPrice || 0), weeks, attendance: {}, ...emptyLedger() }] });
+    save({ ...data, programs: [...data.programs, { id, name: form.name.trim(), type, termKey, status: 'مفتوح', dayPrice: Number(form.dayPrice || 0), weeks, attendance: {}, ...emptyLedger('named') }] });
     setSelectedProgramId(id); setProgramTab('days'); goto('programDetail');
     setForm({});
   };
@@ -760,7 +790,8 @@ export default function App() {
   const addWeek = () => {
     if (!form.name) return;
     patchLedger({ kind: 'program', programId: selectedProgramId }, (p) => ({
-      weeks: [...p.weeks, { id: uid(), name: form.name.trim(), date: form.date || '', status: 'مفتوح', ...emptyLedger() }],
+      weeks: [...p.weeks, { id: uid(), name: form.name.trim(), date: form.date || '', status: 'مفتوح',
+        ...emptyLedger(p.type === 'مجمع' ? 'named' : 'quick') }],
     }));
     closeModal();
   };
@@ -994,8 +1025,9 @@ export default function App() {
   const activeProgramTab = programTabs.some((t) => t.id === programTab) ? programTab : programTabs[0]?.id;
 
   const weekTabs = !program || isGrouped ? [] : [
+    { id: 'overview', label: 'نظرة عامة' },
     ...(canMoney ? [{ id: 'finance', label: 'المالية والتوزيع' }] : []),
-    { id: 'participants', label: 'الطلاب والحضور' },
+    ...(week && !isQuick(week) ? [{ id: 'participants', label: 'الطلاب والحضور' }] : []),
     { id: 'report', label: 'تقرير اليوم' },
   ];
   const activeWeekTab = weekTabs.some((t) => t.id === weekTab) ? weekTab : weekTabs[0]?.id;
@@ -1133,37 +1165,32 @@ export default function App() {
                 {program.weeks.length === 0 ? (
                   <div className={emptyCls}>لا توجد أيام بعد. أضف أول يوم.</div>
                 ) : (
-                  <div className="bg-white rounded-2xl border border-slate-100 overflow-x-auto">
-                    <table className="w-full text-sm min-w-[560px]">
-                      <thead className="bg-slate-50 text-slate-500 text-xs"><tr>
-                        <th className="text-right px-4 py-3 font-medium">الاسم</th>
-                        <th className="text-right px-4 py-3 font-medium">التاريخ</th>
-                        <th className="text-right px-4 py-3 font-medium">الحالة</th>
-                        <th className="text-right px-4 py-3 font-medium">{isGrouped ? 'الحضور' : 'المشاركون'}</th>
-                        {!isGrouped && canMoney && <th className="text-right px-4 py-3 font-medium">الصافي</th>}
-                        <th className="text-right px-4 py-3 font-medium"></th>
-                      </tr></thead>
-                      <tbody>
-                        {program.weeks.filter((w) => canSeeWeek(program.id, w.id)).map((w) => {
-                          const roster = isGrouped ? enrolledIn(program.participants, w.id) : w.participants;
-                          const present = isGrouped
-                            ? roster.filter((p) => program.attendance?.[w.id]?.[p.id] === 'حاضر').length
-                            : roster.filter((p) => p.attendance === 'حاضر').length;
-                          const totalP = roster.length;
-                          return (
-                            <tr key={w.id} className="border-t border-slate-50 hover:bg-slate-50/50 cursor-pointer"
-                              onClick={() => { setSelectedWeekId(w.id); setWeekTab(isGrouped ? 'attendance' : 'finance'); goto('weekDetail'); }}>
-                              <td className="px-4 py-3 font-semibold text-slate-800">{w.name}</td>
-                              <td className="px-4 py-3 text-slate-500">{w.date || '-'}</td>
-                              <td className="px-4 py-3"><Badge tone={w.status === 'مفتوح' ? 'blue' : 'green'}>{w.status}</Badge></td>
-                              <td className="px-4 py-3 text-slate-600">{isGrouped ? `${present} / ${totalP}` : totalP}</td>
-                              {!isGrouped && canMoney && <td className="px-4 py-3 font-semibold text-slate-700">{fmt(L.net(w))} ر.س</td>}
-                              <td className="px-4 py-3 text-left"><ChevronLeft size={16} className="text-slate-300" /></td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                  <div className="space-y-2.5">
+                    {program.weeks.filter((w) => canSeeWeek(program.id, w.id)).map((w) => {
+                      const st = weekState(w);
+                      const roster = isGrouped ? enrolledIn(program.participants, w.id) : null;
+                      const present = isGrouped ? roster.filter((p) => program.attendance?.[w.id]?.[p.id] === 'حاضر').length : 0;
+                      const note = isGrouped
+                        ? (roster.length ? `${present} حاضر من ${roster.length} مسجّل` : 'ما فيه مسجّلين في هذا اليوم')
+                        : (st === 'لم يبدأ' ? 'لم يبدأ بعد' : `${headcount(w)} طالب · ${fmt(L.revenue(w))} ر.س`);
+                      return (
+                        <button key={w.id} onClick={() => { setSelectedWeekId(w.id); setWeekTab(isGrouped ? 'attendance' : 'overview'); goto('weekDetail'); }}
+                          className="w-full bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3 text-right hover:shadow-md transition-shadow">
+                          <span className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${st === 'مكتمل' ? 'bg-green-50 text-green-700' : st === 'جاري' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                            <Calendar size={20} />
+                          </span>
+                          <span className="flex-1 min-w-0">
+                            <span className="flex items-center gap-2">
+                              <span className="font-bold text-slate-800">{w.name}</span>
+                              {st === 'مكتمل' && <Badge tone="green">مكتمل</Badge>}
+                              {st === 'جاري' && <Badge tone="amber">جاري</Badge>}
+                            </span>
+                            <span className="block text-xs text-slate-400 mt-0.5">{w.date ? `${w.date} · ` : ''}{note}</span>
+                          </span>
+                          <ChevronLeft size={18} className="text-slate-300 shrink-0" />
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1265,7 +1292,7 @@ export default function App() {
               </div>
               <button onClick={() => patchWeek({ status: week.status === 'مفتوح' ? 'مغلق' : 'مفتوح' })}
                 className={`flex items-center gap-1.5 text-sm font-semibold px-3 py-2 rounded-lg ${week.status === 'مفتوح' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>
-                {week.status === 'مفتوح' ? <Unlock size={15} /> : <Lock size={15} />} {week.status}
+                {week.status === 'مفتوح' ? <Unlock size={15} /> : <Lock size={15} />} {week.status === 'مفتوح' ? 'قيد العمل' : 'مكتمل'}
               </button>
             </div>
 
@@ -1317,6 +1344,45 @@ export default function App() {
               <>
                 <Tabs value={activeWeekTab} onChange={setWeekTab} tabs={weekTabs} />
 
+                {activeWeekTab === 'overview' && (
+                  <div className="space-y-3">
+                    <div className={cardCls + ' flex items-center justify-between'}>
+                      <span className="text-sm text-slate-500">حالة اليوم</span>
+                      <Badge tone={weekState(week) === 'مكتمل' ? 'green' : weekState(week) === 'جاري' ? 'amber' : 'slate'}>{weekState(week)}</Badge>
+                    </div>
+                    <InfoRow icon={UsersIcon} label={isQuick(week) ? 'الطلاب المسجلين' : 'الطلاب'} value={`${headcount(week)} طالب`} />
+                    {canMoney && <InfoRow icon={TrendingUp} label="إجمالي الإيراد" value={`${fmt(L.revenue(week))} ر.س`} />}
+                    <InfoRow icon={Calendar} label="التاريخ" value={week.date || 'ما تحدد'} />
+
+                    {isQuick(week) ? (
+                      <>
+                        <button className={btnPrimary + ' w-full mt-2'} disabled={ledgerLocked}
+                          onClick={() => { setForm({ quickCount: week.quickCount || 0, quickRevenue: week.quickRevenue || '', date: week.date || '' }); setModal('quickRegister'); }}>
+                          <Pencil size={16} /> {weekState(week) === 'لم يبدأ' ? 'تسجيل الطلاب والإيراد' : 'تعديل التسجيل'}
+                        </button>
+                        <button onClick={() => askConfirm('تحويل هذا اليوم لتسجيل بالأسماء؟ راح تقدر تسجّل كل طالب باسمه وتحضّره، والعدد والمبلغ الحاليين ما راح ينحسبون.', () => patchWeek({ mode: 'named' }))}
+                          className="w-full text-xs text-slate-500 py-2 hover:text-emerald-700">أو سجّل الطلاب بأسمائهم وحضورهم</button>
+                      </>
+                    ) : (
+                      <>
+                        <button className={btnPrimary + ' w-full mt-2'} onClick={() => setWeekTab('participants')}>
+                          <UsersIcon size={16} /> الطلاب والحضور
+                        </button>
+                        {!(week.participants || []).length && (
+                          <button onClick={() => patchWeek({ mode: 'quick' })} className="w-full text-xs text-slate-500 py-2 hover:text-emerald-700">
+                            أو سجّل بالعدد والمبلغ فقط (أسرع)
+                          </button>
+                        )}
+                      </>
+                    )}
+                    {weekState(week) !== 'لم يبدأ' && (
+                      <button className="w-full text-sm font-semibold text-emerald-800 bg-emerald-50 py-3 rounded-xl" onClick={() => setWeekTab('report')}>
+                        عرض التقرير
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 {activeWeekTab === 'finance' && canMoney && (
                   <div className="space-y-4">
                     <div className={cardCls}>
@@ -1367,7 +1433,7 @@ export default function App() {
                   </div>
                 )}
 
-                {activeWeekTab === 'report' && <WeekReport week={week} accounts={data.faidAccounts} canMoney={canMoney} />}
+                {activeWeekTab === 'report' && <WeekReport week={week} accounts={data.faidAccounts} canMoney={canMoney} programName={program.name} />}
               </>
             )}
           </div>
@@ -1997,6 +2063,29 @@ export default function App() {
         </Modal>
       )}
 
+      {/* تسجيل الطلاب والإيراد للبرنامج المنفصل — شاشة 10 بالتصميم */}
+      {modal === 'quickRegister' && week && (
+        <Modal title="تسجيل الطلاب والإيراد" onClose={closeModal}>
+          <Field label="عدد الطلاب">
+            <Stepper value={form.quickCount ?? 0} min={0} max={999} onChange={(v) => setForm({ ...form, quickCount: v })} />
+          </Field>
+          <Field label="مبلغ الإيراد (ريال)" hint="إجمالي اللي تحصّل من الطلاب في هذا اليوم.">
+            <input type="number" className={inputCls} value={form.quickRevenue ?? ''}
+              onChange={(e) => setForm({ ...form, quickRevenue: e.target.value })} placeholder="1500" />
+          </Field>
+          <Field label="التاريخ (هـ)">
+            <input className={inputCls} value={form.date || ''} onChange={(e) => setForm({ ...form, date: e.target.value })} placeholder="1447/01/19" />
+          </Field>
+          <div className="flex gap-2 mt-5">
+            <button className={btnPrimary + ' flex-1'} onClick={() => {
+              patchWeek({ quickCount: Number(form.quickCount || 0), quickRevenue: Number(form.quickRevenue || 0), date: form.date || '' });
+              closeModal();
+            }}>حفظ</button>
+            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+          </div>
+        </Modal>
+      )}
+
       {modal === 'account' && currentUser && (
         <Modal title="الحساب" onClose={closeModal}>
           <div className="flex items-center gap-3 mb-5">
@@ -2055,6 +2144,12 @@ function LedgerFinance({ ledger, accounts, locked, canTransfer, onAdd, onRemove,
       {locked && (
         <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-sm text-amber-800 flex items-center gap-2">
           <Lock size={15} /> مغلق — افتحه من الأعلى عشان تعدّل البنود المالية.
+        </div>
+      )}
+      {isQuick(ledger) && (
+        <div className="bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-3 text-sm text-emerald-900">
+          الإيراد الأساسي ({fmt(ledger.quickRevenue)} ر.س من {ledger.quickCount} طالب) مسجّل من تبويب «نظرة عامة».
+          اللي تضيفه هنا مصروفات وتحصيل إضافي وتوزيع.
         </div>
       )}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -2213,8 +2308,8 @@ function ProgramTotals({ program }) {
 function SeparateReport({ program, accounts, canMoney }) {
   const rows = program.weeks;
   const t = rows.reduce((a, w) => ({
-    p: a.p + w.participants.length,
-    present: a.present + w.participants.filter((x) => x.attendance === 'حاضر').length,
+    p: a.p + headcount(w),
+    present: a.present + (isQuick(w) ? 0 : w.participants.filter((x) => x.attendance === 'حاضر').length),
     revenue: a.revenue + L.revenue(w), expenses: a.expenses + L.expenses(w),
     net: a.net + L.net(w), school: a.school + L.school(w), faid: a.faid + L.faid(w),
   }), { p: 0, present: 0, revenue: 0, expenses: 0, net: 0, school: 0, faid: 0 });
@@ -2241,7 +2336,9 @@ function SeparateReport({ program, accounts, canMoney }) {
             {rows.map((w) => (
               <tr key={w.id} className="border-t border-slate-50">
                 <td className="px-4 py-3 font-semibold text-slate-800">{w.name}</td>
-                <td className="px-4 py-3 text-slate-600">{w.participants.filter((x) => x.attendance === 'حاضر').length} / {w.participants.length}</td>
+                <td className="px-4 py-3 text-slate-600">
+                  {isQuick(w) ? `${headcount(w)} طالب` : `${w.participants.filter((x) => x.attendance === 'حاضر').length} / ${w.participants.length}`}
+                </td>
                 {canMoney && <>
                   <td className="px-4 py-3 text-green-600">{fmt(L.revenue(w))}</td>
                   <td className="px-4 py-3 text-red-500">{fmt(L.expenses(w))}</td>
@@ -2267,10 +2364,10 @@ function SeparateReport({ program, accounts, canMoney }) {
           </tbody>
         </table>
       </div>
-      {canMoney && (
+      {canMoney && rows.some((w) => !isQuick(w) && w.participants.length) && (
         <div className={cardCls}>
-          <div className="text-sm font-semibold text-slate-700 mb-4">توزيع المشاركين حسب طريقة الدفع (كل الأيام)</div>
-          <PaymentPie participants={rows.flatMap((w) => w.participants)} accounts={accounts} />
+          <div className="text-sm font-semibold text-slate-700 mb-4">توزيع المشاركين حسب طريقة الدفع (الأيام المسجّلة بالأسماء)</div>
+          <PaymentPie participants={rows.filter((w) => !isQuick(w)).flatMap((w) => w.participants)} accounts={accounts} />
         </div>
       )}
     </div>
@@ -2434,25 +2531,62 @@ function TermReport({ programs, year, term, balance, onOpenProgram }) {
   );
 }
 
-function WeekReport({ week, accounts, canMoney }) {
+/** نص التقرير للمشاركة عبر واتساب أو أي تطبيق. */
+function weekReportText(week, programName, canMoney) {
+  const lines = [`تقرير ${week.name} - ${programName}`];
+  if (week.date) lines.push(`التاريخ: ${week.date}`);
+  lines.push(`الطلاب المسجلين: ${headcount(week)}`);
+  if (!isQuick(week)) {
+    lines.push(`الحاضرون: ${(week.participants || []).filter((p) => p.attendance === 'حاضر').length} من ${(week.participants || []).length}`);
+  }
+  if (canMoney) {
+    lines.push(`إجمالي الإيراد: ${fmt(L.revenue(week))} ر.س`);
+    lines.push(`المصروفات: ${fmt(L.expenses(week))} ر.س`);
+    lines.push(`الصافي: ${fmt(L.net(week))} ر.س`);
+    lines.push(`نصيب مدارس الرواد: ${fmt(L.school(week))} ر.س`);
+    lines.push(`نصيب فريق فيض: ${fmt(L.faid(week))} ر.س`);
+  }
+  return lines.join('\n');
+}
+
+function WeekReport({ week, accounts, canMoney, programName }) {
+  const [shared, setShared] = useState('');
+  const share = async () => {
+    const text = weekReportText(week, programName, canMoney);
+    try {
+      if (navigator.share) { await navigator.share({ title: `تقرير ${week.name}`, text }); return; }
+      await navigator.clipboard.writeText(text);
+      setShared('اننسخ التقرير، الصقه وين ما تبي');
+    } catch {
+      setShared('ما قدر ينسخ. حدّد النص ونسخه يدويًا.');
+    }
+    setTimeout(() => setShared(''), 3000);
+  };
+
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <StatCard label="الحاضرون" value={`${week.participants.filter((p) => p.attendance === 'حاضر').length} / ${week.participants.length}`} icon={Check} tone="green" />
-        {canMoney && <>
-          <StatCard label="الإيراد" value={fmt(L.revenue(week)) + ' ر.س'} icon={TrendingUp} tone="emerald" />
-          <StatCard label="المصروفات" value={fmt(L.expenses(week)) + ' ر.س'} icon={TrendingDown} tone="red" />
-          <StatCard label="الصافي" value={fmt(L.net(week)) + ' ر.س'} icon={Wallet} tone="emerald" />
-          <StatCard label="نصيب المدرسة" value={fmt(L.school(week)) + ' ر.س'} icon={Layers} tone="blue" />
-          <StatCard label="نصيب فيض" value={fmt(L.faid(week)) + ' ر.س'} icon={ShieldCheck} tone="green" />
-        </>}
-      </div>
-      {canMoney && (
+    <div className="space-y-3">
+      <InfoRow icon={UsersIcon} label="الطلاب المسجلين" value={`${headcount(week)} طالب`} />
+      {!isQuick(week) && (
+        <InfoRow icon={Check} label="الحاضرون" value={`${(week.participants || []).filter((p) => p.attendance === 'حاضر').length} من ${(week.participants || []).length}`} />
+      )}
+      {canMoney && <>
+        <InfoRow icon={TrendingUp} label="إجمالي الإيراد" value={`${fmt(L.revenue(week))} ر.س`} />
+        <InfoRow icon={TrendingDown} label="المصروفات" value={`${fmt(L.expenses(week))} ر.س`} />
+        <InfoRow icon={Wallet} label="الصافي" value={`${fmt(L.net(week))} ر.س`} />
+        <InfoRow icon={Layers} label="نصيب مدارس الرواد" value={`${fmt(L.school(week))} ر.س`} />
+        <InfoRow icon={ShieldCheck} label="نصيب فريق فيض" value={`${fmt(L.faid(week))} ر.س`} />
+      </>}
+      <InfoRow icon={Calendar} label="التاريخ" value={week.date || 'ما تحدد'} />
+
+      {canMoney && !isQuick(week) && (week.participants || []).length > 0 && (
         <div className={cardCls}>
           <div className="text-sm font-semibold text-slate-700 mb-4">توزيع التحصيل حسب طريقة الدفع</div>
           <PaymentPie participants={week.participants} accounts={accounts} />
         </div>
       )}
+
+      <button className={btnPrimary + ' w-full'} onClick={share}><Send size={16} /> مشاركة التقرير</button>
+      {shared && <div className="text-xs text-center text-slate-500">{shared}</div>}
     </div>
   );
 }
