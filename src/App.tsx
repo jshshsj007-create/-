@@ -461,6 +461,57 @@ function FilterChips({ options, value, onChange }) {
   );
 }
 
+/** وين راحت الفلوس: تجميع حسب البند وحسب المستفيد، مع نسبة كل واحد. */
+function FaidAnalysis({ breakdown, onDrill }) {
+  const [type, setType] = useState('مصروف');
+  const projects = breakdown('project', type);
+  const payees = breakdown('payee', type);
+  const isExp = type === 'مصروف';
+  const bar = isExp ? 'bg-red-400' : 'bg-green-500';
+  const money = isExp ? 'text-red-600' : 'text-green-700';
+
+  const Group = ({ title, hint, data: g, keyName }) => (
+    <div className={cardCls}>
+      <div className="text-sm font-semibold text-slate-700">{title}</div>
+      <div className="text-xs text-slate-400 mt-0.5 mb-3">{hint}</div>
+      {!g.rows.length ? (
+        <div className="text-sm text-slate-400">ما فيه شي موسوم بعد. أضف البند أو المستفيد وأنت تسجّل العملية.</div>
+      ) : (
+        <div className="space-y-3">
+          {g.rows.map((r) => (
+            <button key={r.name} onClick={() => onDrill({ [keyName]: r.name, type })} className="w-full text-right group">
+              <div className="flex items-center justify-between text-sm mb-1">
+                <span className="text-slate-700 font-medium group-hover:text-brand-700">{r.name}</span>
+                <span className={`font-bold ${money}`}>{fmt(r.amount)} ر.س</span>
+              </div>
+              <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                <div className={`h-full ${bar} rounded-full`} style={{ width: `${g.total ? (r.amount / g.total) * 100 : 0}%` }} />
+              </div>
+            </button>
+          ))}
+          {g.untagged > 0 && (
+            <div className="flex items-center justify-between text-xs text-slate-400 pt-1 border-t border-slate-50">
+              <span>بدون تصنيف</span>
+              <span>{fmt(g.untagged)} ر.س</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="space-y-3">
+      <FilterChips
+        options={[{ id: 'مصروف', label: 'المصروفات' }, { id: 'إيراد', label: 'الإيرادات' }]}
+        value={type} onChange={setType} />
+      <Group title="حسب البند" hint="على وش انصرفت: برنامج خيركم، رواتب…" data={projects} keyName="project" />
+      <Group title="حسب المستفيد" hint="مين استلمها خلال الترم" data={payees} keyName="payee" />
+      <div className="text-xs text-slate-400 px-1">اضغط أي اسم عشان تشوف عملياته بالتفصيل.</div>
+    </div>
+  );
+}
+
 /** بنود سفرة بأسماء حرة (أكل، سكن…) مع مجموعها. */
 function TripItems({ title, subtitle, items, tone, onAdd, onRemove }) {
   const list = items || [];
@@ -579,6 +630,9 @@ export default function App() {
   const [clubTab, setClubTab] = useState('competitions');
   const [payFilter, setPayFilter] = useState('all');   // فلترة الطلاب حسب طريقة الدفع
   const [faidFilter, setFaidFilter] = useState('الكل'); // فلترة عمليات فيض حسب النوع
+  const [faidTab, setFaidTab] = useState('txns');        // العمليات أو التحليل
+  const [faidProject, setFaidProject] = useState('');    // فلترة ببند معيّن
+  const [faidPayee, setFaidPayee] = useState('');        // فلترة بمستفيد معيّن
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
   const [confirm, setConfirm] = useState(null);
@@ -657,6 +711,7 @@ export default function App() {
         const parts = withNames.filter((x) => x.batchId === a.batchId);
         grouped.push({
           id: a.batchId, batchId: a.batchId, date: a.date, type: a.type, note: a.note, source: a.source,
+          project: a.project, payee: a.payee,
           amount: sumAmt(parts),
           accountName: parts.map((x) => `${x.accountName} ${fmt(x.amount)}`).join(' + '),
         });
@@ -667,7 +722,18 @@ export default function App() {
     return grouped.sort((x, y) => (y.date || '').localeCompare(x.date || ''));
   })();
 
-  const shownFaid = faidFilter === 'الكل' ? faidTransactions : faidTransactions.filter((t) => t.type === faidFilter);
+  const shownFaid = faidTransactions.filter((t) =>
+    (faidFilter === 'الكل' || t.type === faidFilter)
+    && (!faidProject || (t.project || '').trim() === faidProject)
+    && (!faidPayee || (t.payee || '').trim() === faidPayee));
+
+  /** يفتح العمليات مفلترة على بند أو مستفيد. */
+  const drillFaid = ({ project = '', payee = '', type }) => {
+    setFaidProject(project); setFaidPayee(payee);
+    if (type) setFaidFilter(type);
+    setFaidTab('txns');
+  };
+  const clearFaidDrill = () => { setFaidProject(''); setFaidPayee(''); };
 
   const goto = (v) => { setView(v); setModal(null); setSearch(''); setPayFilter('all'); };
   const closeModal = () => { setModal(null); setForm({}); };
@@ -793,7 +859,7 @@ export default function App() {
     const label = isGrouped ? program.name : `${program.name} - ${week.name}`;
     const source = { ...activeRef, label };
     const txns = rows.map((r) => ({
-      id: uid(), batchId, source, accountId: r.accountId,
+      id: uid(), batchId, source, accountId: r.accountId, project: program.name,
       date: form.date || (isGrouped ? '' : week?.date) || '',
       type: 'إيراد', amount: Number(r.amount),
       note: form.note || `نصيب فيض - ${label}`,
@@ -821,18 +887,36 @@ export default function App() {
 
   /* ------------------------------ عمليات فيض ------------------------------ */
   const addFaidAdjustment = () => {
+    // البند = على وش صُرف (برنامج خيركم، رواتب…)، المستفيد = لمين راح (فهد، عبدالعزيز)
+    const tags = { project: (form.project || '').trim(), payee: (form.payee || '').trim() };
     if (form.splitMode) {
       const rows = (form.splitRows || []).filter((r) => r.accountId && Number(r.amount) > 0);
       if (!rows.length) return;
       const batchId = uid();
-      const txns = rows.map((r) => ({ id: uid(), batchId, accountId: r.accountId, date: form.date || '', type: form.type || 'إيراد', amount: Number(r.amount), note: form.note || '' }));
+      const txns = rows.map((r) => ({ id: uid(), batchId, accountId: r.accountId, date: form.date || '', type: form.type || 'إيراد', amount: Number(r.amount), note: form.note || '', ...tags }));
       save({ ...data, faidAdjustments: [...data.faidAdjustments, ...txns] });
       closeModal();
       return;
     }
     if (!form.amount || !form.accountId) return;
-    save({ ...data, faidAdjustments: [...data.faidAdjustments, { id: uid(), accountId: form.accountId, date: form.date || '', type: form.type || 'إيراد', amount: Number(form.amount), note: form.note || '' }] });
+    save({ ...data, faidAdjustments: [...data.faidAdjustments, { id: uid(), accountId: form.accountId, date: form.date || '', type: form.type || 'إيراد', amount: Number(form.amount), note: form.note || '', ...tags }] });
     closeModal();
+  };
+
+  /** القيم المستخدمة سابقًا تُقترح عند الكتابة عشان الأسماء تتوحّد. */
+  const faidValues = (key) => [...new Set(data.faidAdjustments.map((a) => (a[key] || '').trim()).filter(Boolean))].sort();
+
+  /** تجميع المصروفات أو الإيرادات حسب البند أو المستفيد. */
+  const faidBreakdown = (key, type) => {
+    const totals = new Map();
+    data.faidAdjustments.filter((a) => a.type === type && (a[key] || '').trim()).forEach((a) => {
+      const k = a[key].trim();
+      totals.set(k, (totals.get(k) || 0) + Number(a.amount || 0));
+    });
+    const untagged = data.faidAdjustments.filter((a) => a.type === type && !(a[key] || '').trim())
+      .reduce((sy, a) => sy + Number(a.amount || 0), 0);
+    const rows = [...totals.entries()].map(([name, amount]) => ({ name, amount })).sort((x, y) => y.amount - x.amount);
+    return { rows, untagged, total: rows.reduce((sy, r) => sy + r.amount, 0) + untagged };
   };
   const updateSplitRow = (idx, patch) => {
     const rows = [...(form.splitRows || [{}, {}])];
@@ -1801,9 +1885,35 @@ export default function App() {
             </div>
 
             <div className="flex items-center justify-between mb-3">
-              <h3 className="font-bold text-slate-700">آخر العمليات</h3>
+              <h3 className="font-bold text-slate-700">الحركة المالية</h3>
               <button className={btnPrimary} onClick={() => { setForm({}); setModal('addFaid'); }}><Plus size={16} /> عملية يدوية</button>
             </div>
+
+            <Tabs value={faidTab} onChange={(t) => { setFaidTab(t); if (t === 'analysis') clearFaidDrill(); }} tabs={[
+              { id: 'txns', label: 'العمليات' },
+              { id: 'analysis', label: 'وين راحت الفلوس' },
+            ]} />
+
+            {faidTab === 'analysis' && (
+              <FaidAnalysis
+                breakdown={faidBreakdown}
+                onDrill={drillFaid}
+              />
+            )}
+
+            {faidTab === 'txns' && <>
+            {(faidProject || faidPayee) && (
+              <div className="bg-brand-50 border border-brand-100 rounded-xl px-4 py-3 mb-3 flex items-center justify-between gap-3 flex-wrap">
+                <div className="text-sm text-brand-900">
+                  معروض:{' '}
+                  {faidProject && <b>{faidProject}</b>}
+                  {faidProject && faidPayee && ' · '}
+                  {faidPayee && <b>{faidPayee}</b>}
+                  <span className="mr-2 text-brand-700">({fmt(sumAmt(shownFaid))} ر.س من {shownFaid.length} عملية)</span>
+                </div>
+                <button onClick={clearFaidDrill} className="text-xs text-brand-700 font-semibold hover:underline">إلغاء الفلترة</button>
+              </div>
+            )}
             {faidTransactions.length > 0 && (
               <div className="mb-3">
                 <FilterChips
@@ -1831,6 +1941,7 @@ export default function App() {
                 <table className="w-full text-sm min-w-[620px]">
                   <thead className="bg-slate-50 text-slate-500 text-xs"><tr>
                     <th className="text-right px-4 py-3 font-medium">البيان</th>
+                    <th className="text-right px-4 py-3 font-medium">البند / المستفيد</th>
                     <th className="text-right px-4 py-3 font-medium">الحساب</th>
                     <th className="text-right px-4 py-3 font-medium">النوع</th>
                     <th className="text-right px-4 py-3 font-medium">التاريخ</th>
@@ -1843,6 +1954,11 @@ export default function App() {
                         <td className="px-4 py-3 text-slate-700">
                           {t.note || '-'}
                           {t.source && <span className="mr-2"><Badge tone="blue">مُرحّل من برنامج</Badge></span>}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          {t.project && <div className="text-slate-700 text-xs font-semibold">{t.project}</div>}
+                          {t.payee && <div className="text-slate-400 text-[11px]">← {t.payee}</div>}
+                          {!t.project && !t.payee && <span className="text-slate-300">-</span>}
                         </td>
                         <td className="px-4 py-3"><Badge tone="slate">{t.accountName}</Badge></td>
                         <td className="px-4 py-3"><Badge tone={t.type === 'إيراد' ? 'green' : 'red'}>{t.type}</Badge></td>
@@ -1858,6 +1974,7 @@ export default function App() {
                 </table>
               </div>
             )}
+            </>}
           </div>
         )}
 
@@ -2463,8 +2580,16 @@ export default function App() {
             </Field>
           )}
 
-          <Field label="البيان"><input className={inputCls} value={form.note || ''} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="مثال: دعم من عضو" /></Field>
-          <Field label="التاريخ (هـ)"><input className={inputCls} value={form.date || ''} onChange={(e) => setForm({ ...form, date: e.target.value })} placeholder="1447/02/01" /></Field>
+          <Field label="البند" hint="على وش صُرف أو منين جا: برنامج خيركم، رواتب، تشغيلي…">
+            <input className={inputCls} list="faid-projects" value={form.project || ''} onChange={(e) => setForm({ ...form, project: e.target.value })} placeholder="برنامج خيركم" />
+            <datalist id="faid-projects">{faidValues('project').map((v) => <option key={v} value={v} />)}</datalist>
+          </Field>
+          <Field label="المستفيد (اختياري)" hint="مين استلم المبلغ: فهد، عبدالعزيز…">
+            <input className={inputCls} list="faid-payees" value={form.payee || ''} onChange={(e) => setForm({ ...form, payee: e.target.value })} placeholder="فهد" />
+            <datalist id="faid-payees">{faidValues('payee').map((v) => <option key={v} value={v} />)}</datalist>
+          </Field>
+          <Field label="البيان"><input className={inputCls} value={form.note || ''} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="مثال: راتب الترم الأول" /></Field>
+          <Field label="التاريخ (هـ)"><input className={inputCls} value={form.date || ''} onChange={(e) => setForm({ ...form, date: e.target.value })} placeholder="1448/02/01" /></Field>
           <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={addFaidAdjustment}>إضافة</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
         </Modal>
       )}

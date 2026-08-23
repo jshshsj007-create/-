@@ -45,4 +45,5 @@ node tests/ledger.test.mjs
 node tests/auth.test.mjs
 node tests/quick.test.mjs
 node tests/club.test.mjs
+node tests/faid.test.mjs
 rm -rf "$STUB" tests/build
