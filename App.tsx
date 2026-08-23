@@ -3,7 +3,7 @@ import {
   Home, BookOpen, Wallet, Settings, Plus, X, Check, ChevronLeft, Trash2, Pencil,
   Users as UsersIcon, Calendar, TrendingUp, TrendingDown, Layers, ShieldCheck,
   Lock, Unlock, Trophy, LogOut, KeyRound, Plane, Search, AlertTriangle, Send,
-  RotateCcw, Wand2, CalendarDays,
+  RotateCcw, Wand2, CalendarDays, FileText,
 } from 'lucide-react';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
@@ -11,6 +11,9 @@ const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصر�
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
 const LEVELS = ['أولية', 'متوسطة', 'عليا'];
+export const ORDINALS = ['الأول', 'الثاني', 'الثالث', 'الرابع', 'الخامس', 'السادس', 'السابع', 'الثامن', 'التاسع', 'العاشر',
+  'الحادي عشر', 'الثاني عشر', 'الثالث عشر', 'الرابع عشر', 'الخامس عشر', 'السادس عشر', 'السابع عشر', 'الثامن عشر',
+  'التاسع عشر', 'العشرون'];
 
 const uid = () => Math.random().toString(36).slice(2, 9);
 const fmt = (n) => Number(n || 0).toLocaleString('en-US');
@@ -90,7 +93,7 @@ const defaultData = () => ({
 });
 
 /** ترقية البيانات القديمة للشكل الجديد بدون فقدان أي شيء مسجّل سابقًا. */
-function migrate(loaded) {
+export function migrate(loaded) {
   const d = { ...defaultData(), ...loaded };
   if (!d.faidAccounts?.length) d.faidAccounts = defaultData().faidAccounts;
   if (!d.faidAccounts.some((a) => a.name === 'كاش')) d.faidAccounts.push({ id: uid(), name: 'كاش' });
@@ -110,15 +113,22 @@ function migrate(loaded) {
   });
   d.faidAdjustments = (d.faidAdjustments || []).map((a) => ({ ...a }));
   d.trips = (d.trips || []).map((t) => ({ ...t }));
-  d.users = (d.users || []).map((u) => ({ accessScope: 'all', allowedWeeks: [], permissions: [], ...u }));
+  // الدخول صار باسم مستخدم وكلمة مرور بدل «اختر اسمك + رمز»؛ نحوّل المستخدمين القدامى
+  d.users = (d.users || []).map((u, i) => {
+    const user = { accessScope: 'all', allowedWeeks: [], permissions: [], ...u };
+    if (!user.username) user.username = (user.name || `user${i + 1}`).split(' ')[0];
+    if (!user.password) user.password = user.code || '';
+    delete user.code;
+    return user;
+  });
   return d;
 }
 
 /* ------------------------------ عناصر واجهة عامة ------------------------------ */
 
-function Badge({ children, tone = 'violet' }) {
+function Badge({ children, tone = 'emerald' }) {
   const tones = {
-    violet: 'bg-violet-100 text-violet-700',
+    emerald: 'bg-emerald-100 text-emerald-700',
     green: 'bg-green-100 text-green-700',
     red: 'bg-red-100 text-red-700',
     blue: 'bg-blue-100 text-blue-700',
@@ -155,16 +165,16 @@ function Field({ label, children, hint }) {
   );
 }
 
-const inputCls = 'w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-transparent';
-const btnPrimary = 'bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors flex items-center gap-1.5 justify-center disabled:opacity-40 disabled:cursor-not-allowed';
+const inputCls = 'w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent';
+const btnPrimary = 'bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors flex items-center gap-1.5 justify-center disabled:opacity-40 disabled:cursor-not-allowed';
 const btnGhost = 'text-slate-500 hover:text-slate-800 text-sm font-medium px-4 py-2.5 rounded-lg transition-colors';
 const btnDanger = 'bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors flex items-center gap-1.5 justify-center';
 const cardCls = 'bg-white rounded-2xl border border-slate-100 p-5';
 const emptyCls = 'bg-white rounded-2xl border border-dashed border-slate-200 p-10 text-center text-slate-400';
 
-function StatCard({ label, value, icon: Icon, tone = 'violet' }) {
+function StatCard({ label, value, icon: Icon, tone = 'emerald' }) {
   const tones = {
-    violet: 'text-violet-600 bg-violet-50',
+    emerald: 'text-emerald-600 bg-emerald-50',
     green: 'text-green-600 bg-green-50',
     red: 'text-red-600 bg-red-50',
     blue: 'text-blue-600 bg-blue-50',
@@ -191,7 +201,7 @@ function ItemList({ title, subtitle, items, accounts, onAdd, onRemove, tone = 'r
           <div className="text-sm font-semibold text-slate-700">{title}</div>
           {subtitle && <div className="text-xs text-slate-400 mt-0.5">{subtitle}</div>}
         </div>
-        <button onClick={onAdd} disabled={locked} className="text-xs text-violet-600 flex items-center gap-1 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed">
+        <button onClick={onAdd} disabled={locked} className="text-xs text-emerald-600 flex items-center gap-1 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed">
           <Plus size={14} /> إضافة
         </button>
       </div>
@@ -296,7 +306,7 @@ function DistributionPanel({ ledger, onDistributeRest, onTransfer, onUndoTransfe
           </span>
         </div>
         {rest > 0 && !locked && (
-          <button onClick={onDistributeRest} className="text-xs text-violet-700 font-semibold flex items-center gap-1 hover:underline">
+          <button onClick={onDistributeRest} className="text-xs text-emerald-700 font-semibold flex items-center gap-1 hover:underline">
             <Wand2 size={13} /> أضف الباقي لنصيب فيض
           </button>
         )}
@@ -328,11 +338,82 @@ function DistributionPanel({ ledger, onDistributeRest, onTransfer, onUndoTransfe
   );
 }
 
+/** شعار فيض: قطرة فيها ورقة. */
+function FaidLogo({ size = 64, tone = 'light' }) {
+  const stroke = tone === 'light' ? '#D7E9DF' : '#1E5B45';
+  return (
+    <svg width={size} height={size} viewBox="0 0 64 64" fill="none" aria-hidden="true">
+      <path d="M32 4C32 4 14 24 14 38a18 18 0 0 0 36 0C50 24 32 4 32 4Z" stroke={stroke} strokeWidth="3" strokeLinejoin="round" />
+      <path d="M32 44V26" stroke={stroke} strokeWidth="3" strokeLinecap="round" />
+      <path d="M32 32c0-5 4-9 9-9 0 5-4 9-9 9Z" fill={stroke} />
+      <path d="M32 38c0-5-4-9-9-9 0 5 4 9 9 9Z" fill={stroke} />
+    </svg>
+  );
+}
+
+/** إطار الشاشة: عرض محدود يشبه الجوال، ويتمدّد على الشاشات الكبيرة. */
+function Shell({ children, dark }) {
+  return (
+    <div dir="rtl" className={`min-h-screen flex flex-col ${dark ? 'bg-emerald-900' : 'bg-[#F3F5F4]'}`} style={{ fontFamily: "'Tajawal', sans-serif" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap');`}</style>
+      <div className="w-full max-w-md mx-auto flex-1 flex flex-col">{children}</div>
+    </div>
+  );
+}
+
+function PickHeader({ title, subtitle, onBack }) {
+  return (
+    <div className="px-5 pt-8 pb-6">
+      {onBack && <button onClick={onBack} className="text-slate-400 mb-4 block"><ChevronLeft size={22} className="rotate-180" /></button>}
+      <h1 className="text-2xl font-extrabold text-slate-800">{title}</h1>
+      {subtitle && <div className="text-sm text-slate-400 mt-1">{subtitle}</div>}
+    </div>
+  );
+}
+
+/** كرت اختيار كبير (سنة، ترم، نوع برنامج، قسم). */
+function PickCard({ icon: Icon, title, note, onClick, chevron }) {
+  return (
+    <button onClick={onClick} className="w-full bg-white rounded-2xl p-4 flex items-center gap-4 text-right hover:shadow-md transition-shadow border border-slate-100">
+      <span className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0"><Icon size={21} /></span>
+      <span className="flex-1 min-w-0">
+        <span className="block font-bold text-slate-800">{title}</span>
+        {note && <span className="block text-xs text-slate-400 mt-0.5">{note}</span>}
+      </span>
+      {chevron && <ChevronLeft size={18} className="text-slate-300 shrink-0" />}
+    </button>
+  );
+}
+
+/** عدّاد + / − للأعداد (عدد الأسابيع، عدد الطلاب). */
+function Stepper({ value, onChange, min = 1, max = 60 }) {
+  const set = (v) => onChange(Math.min(max, Math.max(min, v)));
+  return (
+    <div className="flex items-center gap-3">
+      <button type="button" onClick={() => set(Number(value || min) - 1)} className="w-11 h-11 rounded-xl bg-slate-100 text-slate-600 font-bold text-xl">−</button>
+      <input type="number" value={value} onChange={(e) => set(Number(e.target.value))}
+        className="flex-1 text-center text-xl font-extrabold text-slate-800 border border-slate-200 rounded-xl py-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+      <button type="button" onClick={() => set(Number(value || min) + 1)} className="w-11 h-11 rounded-xl bg-emerald-600 text-white font-bold text-xl">+</button>
+    </div>
+  );
+}
+
+function MiniStat({ label, value, icon: Icon, tone = 'emerald' }) {
+  const tones = { emerald: 'text-emerald-700 bg-emerald-50', green: 'text-green-700 bg-green-50', red: 'text-red-600 bg-red-50' };
+  return (
+    <div className="bg-white rounded-2xl border border-slate-100 p-4">
+      <span className={`w-9 h-9 rounded-xl flex items-center justify-center mb-2 ${tones[tone]}`}><Icon size={17} /></span>
+      <div className="text-lg font-extrabold text-slate-800 truncate">{value}</div>
+      <div className="text-[11px] text-slate-400">{label}</div>
+    </div>
+  );
+}
+
 function NavItem({ id, label, icon: Icon, active, onClick }) {
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-colors ${active ? 'bg-white text-violet-700' : 'text-violet-100 hover:bg-violet-800/50'}`}
+      className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-colors ${active ? 'bg-white text-emerald-700' : 'text-emerald-100 hover:bg-emerald-800/50'}`}
     >
       <Icon size={18} />
       {label}
@@ -360,7 +441,7 @@ function Tabs({ tabs, value, onChange }) {
         <button
           key={t.id}
           onClick={() => onChange(t.id)}
-          className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap ${value === t.id ? 'bg-violet-600 text-white' : 'text-slate-500 hover:text-slate-700'}`}
+          className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap ${value === t.id ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:text-slate-700'}`}
         >
           {t.label}
         </button>
@@ -382,13 +463,22 @@ export default function App() {
   const [programTab, setProgramTab] = useState('days');
   const [settingsTab, setSettingsTab] = useState('users');
   const [setupLevel, setSetupLevel] = useState('الكل');
+  const [clubTab, setClubTab] = useState('competitions');
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
   const [confirm, setConfirm] = useState(null);
   const [search, setSearch] = useState('');
   const [currentUser, setCurrentUser] = useState(null);
-  const [loginForm, setLoginForm] = useState({ userId: '', code: '' });
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+  const [stage, setStage] = useState('splash'); // splash → login → year → term → app
+  const [savedAt, setSavedAt] = useState(null); // وقت آخر حفظ تلقائي
   const [loginError, setLoginError] = useState('');
+
+  useEffect(() => {
+    if (!savedAt) return;
+    const t = setTimeout(() => setSavedAt(null), 2000);
+    return () => clearTimeout(t);
+  }, [savedAt]);
 
   useEffect(() => {
     (async () => {
@@ -402,9 +492,11 @@ export default function App() {
     })();
   }, []);
 
+  /** حفظ تلقائي: كل تعديل ينحفظ فورًا، ما فيه زر حفظ. */
   const save = useCallback(async (next) => {
     setData(next);
     await storage.set(STORAGE_KEY, JSON.stringify(next));
+    setSavedAt(Date.now());
   }, []);
 
   if (loading || !data) {
@@ -648,8 +740,17 @@ export default function App() {
   /* ------------------------- البرامج والأسابيع ------------------------- */
   const addProgram = () => {
     if (!form.name) return;
-    save({ ...data, programs: [...data.programs, { id: uid(), name: form.name.trim(), type: form.type || 'منفصل', termKey, status: 'مفتوح', dayPrice: Number(form.dayPrice || 0), weeks: [], attendance: {}, ...emptyLedger() }] });
-    closeModal();
+    const type = form.type || 'منفصل';
+    const count = Math.max(0, Math.min(60, Number(form.weekCount || 0)));
+    const unit = type === 'مجمع' ? 'اليوم' : 'الأسبوع';
+    // ننشئ الأيام/الأسابيع دفعة وحدة بدل ما يضيفها وحدة وحدة
+    const weeks = Array.from({ length: count }, (_, i) => ({
+      id: uid(), name: `${unit} ${ORDINALS[i] || i + 1}`, date: '', status: 'مفتوح', ...emptyLedger(),
+    }));
+    const id = uid();
+    save({ ...data, programs: [...data.programs, { id, name: form.name.trim(), type, termKey, status: 'مفتوح', dayPrice: Number(form.dayPrice || 0), weeks, attendance: {}, ...emptyLedger() }] });
+    setSelectedProgramId(id); setProgramTab('days'); goto('programDetail');
+    setForm({});
   };
   const patchProgram = (patch) => save({ ...data, programs: data.programs.map((p) => (p.id !== selectedProgramId ? p : { ...p, ...patch })) });
   const removeProgram = (pid) => {
@@ -679,9 +780,23 @@ export default function App() {
   };
 
   /* --------------------------- بقية الكيانات --------------------------- */
-  const addUser = () => {
-    if (!form.name || !form.code) return;
-    save({ ...data, users: [...data.users, { id: uid(), name: form.name.trim(), code: form.code, role: form.role || ROLES[0], permissions: form.permissions || [], accessScope: form.accessScope || 'all', allowedWeeks: form.allowedWeeks || [], status: 'نشط' }] });
+  const saveUser = () => {
+    const username = (form.username || '').trim().toLowerCase();
+    if (!form.name || !username) { setForm({ ...form, error: 'الاسم واسم المستخدم مطلوبين' }); return; }
+    if (!/^[a-z0-9._-]{3,}$/.test(username)) { setForm({ ...form, error: 'اسم المستخدم: حروف إنجليزية وأرقام، ٣ خانات على الأقل' }); return; }
+    if (data.users.some((u) => u.username === username && u.id !== form.id)) { setForm({ ...form, error: 'اسم المستخدم هذا مستخدم من قبل' }); return; }
+    if (!form.id && !form.password) { setForm({ ...form, error: 'اكتب كلمة مرور' }); return; }
+
+    const fields = {
+      name: form.name.trim(), username, role: form.role || ROLES[0],
+      permissions: form.permissions || [], accessScope: form.accessScope || 'all', allowedWeeks: form.allowedWeeks || [],
+    };
+    if (form.id) {
+      // كلمة المرور تتغيّر فقط لو كتب وحدة جديدة
+      save({ ...data, users: data.users.map((u) => (u.id !== form.id ? u : { ...u, ...fields, ...(form.password ? { password: form.password } : {}) })) });
+    } else {
+      save({ ...data, users: [...data.users, { id: uid(), ...fields, password: form.password, status: 'نشط' }] });
+    }
     closeModal();
   };
   const toggleUserStatus = (userId) =>
@@ -701,7 +816,7 @@ export default function App() {
     closeModal();
   };
   const patchTrip = (patch) => save({ ...data, trips: data.trips.map((t) => (t.id !== selectedTripId ? t : { ...t, ...patch })) });
-  const removeTrip = (tid) => { save({ ...data, trips: data.trips.filter((t) => t.id !== tid) }); goto('trips'); };
+  const removeTrip = (tid) => { save({ ...data, trips: data.trips.filter((t) => t.id !== tid) }); goto('club'); };
 
   const addYearOrTerm = (which) => {
     if (!form.value) return;
@@ -729,51 +844,137 @@ export default function App() {
   const canTransfer = can('فيض - الإيرادات والمصروفات') && canMoney;
 
   const doLogin = () => {
-    const u = data.users.find((x) => x.id === loginForm.userId);
-    if (!u || u.status !== 'نشط') { setLoginError('اختر مستخدم نشط'); return; }
-    if (u.code !== loginForm.code) { setLoginError('رمز الدخول غير صحيح'); return; }
-    setCurrentUser(u); setLoginError(''); setLoginForm({ userId: '', code: '' });
+    const entered = (loginForm.username || '').trim().toLowerCase();
+    const u = data.users.find((x) => (x.username || '').toLowerCase() === entered);
+    // رسالة واحدة للحالتين عشان ما نكشف أي أسماء مستخدمين موجودة
+    if (!u || u.password !== loginForm.password) { setLoginError('اسم المستخدم أو كلمة المرور غير صحيحة'); return; }
+    if (u.status !== 'نشط') { setLoginError('هذا الحساب غير مفعّل. راجع المدير.'); return; }
+    setCurrentUser(u); setLoginError(''); setLoginForm({ username: '', password: '' });
+    setStage('year');
   };
-  const doLogout = () => { setCurrentUser(null); goto('home'); };
+  const doLogout = () => { setCurrentUser(null); setStage('year'); goto('home'); };
 
-  /* ------------------------------ شاشة الدخول ------------------------------ */
-  if (data.users.length > 0 && !currentUser) {
+  /* ------------------------------ الشاشة الأولى ------------------------------ */
+  if (stage === 'splash') {
     return (
-      <div dir="rtl" className="min-h-screen bg-violet-900 flex items-center justify-center p-4" style={{ fontFamily: "'Tajawal', sans-serif" }}>
-        <style>{`@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap');`}</style>
-        <div className="bg-white rounded-2xl w-full max-w-sm p-7 shadow-2xl">
-          <div className="w-12 h-12 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center mb-4"><KeyRound size={22} /></div>
-          <h2 className="font-bold text-lg text-slate-800 mb-1">تسجيل الدخول</h2>
-          <div className="text-sm text-slate-400 mb-5">نادي مدارس الأحياء</div>
-          <Field label="المستخدم">
-            <select className={inputCls} value={loginForm.userId} onChange={(e) => setLoginForm({ ...loginForm, userId: e.target.value })}>
-              <option value="">اختر اسمك</option>
-              {data.users.filter((u) => u.status === 'نشط').map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-            </select>
-          </Field>
-          <Field label="رمز الدخول">
-            <input type="password" className={inputCls} value={loginForm.code} onChange={(e) => setLoginForm({ ...loginForm, code: e.target.value })}
-              onKeyDown={(e) => e.key === 'Enter' && doLogin()} placeholder="****" />
-          </Field>
-          {loginError && <div className="text-red-500 text-xs mb-3">{loginError}</div>}
-          <button className={btnPrimary + ' w-full'} onClick={doLogin}>دخول</button>
+      <Shell dark>
+        <div className="flex-1 flex flex-col items-center justify-center px-8 text-center">
+          <FaidLogo size={92} />
+          <div className="text-white text-4xl font-extrabold mt-6 mb-3">فيض</div>
+          <div className="text-emerald-200 text-sm leading-relaxed">إدارة البرامج والإيرادات<br />لفريق فيض</div>
+          <button onClick={() => setStage(data.users.length > 0 && !currentUser ? 'login' : 'year')}
+            className="mt-12 bg-white text-emerald-900 font-bold text-sm px-10 py-3.5 rounded-2xl">
+            ابدأ
+          </button>
         </div>
-      </div>
+      </Shell>
     );
   }
+
+  /* ------------------------------ تسجيل الدخول ------------------------------ */
+  if (data.users.length > 0 && !currentUser) {
+    return (
+      <Shell dark>
+        <div className="flex-1 flex flex-col justify-center px-6">
+          <div className="flex flex-col items-center mb-8">
+            <FaidLogo size={56} />
+            <div className="text-white text-2xl font-extrabold mt-3">فيض</div>
+          </div>
+          <div className="bg-white rounded-3xl p-6 shadow-xl">
+            <h2 className="font-bold text-lg text-slate-800 mb-1">تسجيل الدخول</h2>
+            <div className="text-sm text-slate-400 mb-5">ادخل باسم المستخدم وكلمة المرور</div>
+            <Field label="اسم المستخدم">
+              <input className={inputCls} autoComplete="username" value={loginForm.username || ''}
+                onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })}
+                onKeyDown={(e) => e.key === 'Enter' && doLogin()} placeholder="مثال: saad" />
+            </Field>
+            <Field label="كلمة المرور">
+              <input type="password" autoComplete="current-password" className={inputCls} value={loginForm.password || ''}
+                onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                onKeyDown={(e) => e.key === 'Enter' && doLogin()} placeholder="••••••" />
+            </Field>
+            {loginError && <div className="text-red-500 text-xs mb-3">{loginError}</div>}
+            <button className={btnPrimary + ' w-full'} onClick={doLogin}><KeyRound size={16} /> دخول</button>
+          </div>
+        </div>
+      </Shell>
+    );
+  }
+
+  /* --------------------------- اختيار السنة والترم --------------------------- */
+  if (stage === 'year') {
+    return (
+      <Shell>
+        <PickHeader title="اختيار السنة الهجرية" subtitle="اختر السنة اللي تبي تشتغل عليها" />
+        <div className="px-5 space-y-3">
+          {data.years.map((y, i) => (
+            <PickCard key={y} icon={Calendar} title={`${y} هـ`} note={i === 0 ? 'السنة الجالية' : 'السنة القادمة'}
+              onClick={() => { save({ ...data, currentYear: y }); setStage('term'); }} />
+          ))}
+          {isAdmin && (
+            <button onClick={() => { setForm({ value: '' }); setModal('addYear'); }} className="w-full text-sm text-emerald-700 font-semibold py-3 flex items-center justify-center gap-1.5">
+              <Plus size={16} /> إضافة سنة
+            </button>
+          )}
+        </div>
+        {modal === 'addYear' && (
+          <Modal title="إضافة سنة" onClose={closeModal}>
+            <Field label="السنة (هـ)"><input className={inputCls} value={form.value || ''} onChange={(e) => setForm({ ...form, value: e.target.value })} placeholder="1449" /></Field>
+            <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={() => addYearOrTerm('year')}>إضافة</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
+          </Modal>
+        )}
+      </Shell>
+    );
+  }
+
+  if (stage === 'term') {
+    return (
+      <Shell>
+        <PickHeader title={`السنة ${data.currentYear} هـ`} subtitle="اختر الترم" onBack={() => setStage('year')} />
+        <div className="px-5 space-y-3">
+          {data.terms.map((t, i) => (
+            <PickCard key={t} icon={i === 0 ? BookOpen : Layers} title={`الترم ${t}`}
+              note={i === 0 ? 'من بداية السنة إلى منتصفها' : 'من منتصف السنة إلى نهايتها'}
+              onClick={() => { save({ ...data, currentTerm: t }); setStage('app'); goto('home'); }} />
+          ))}
+          {isAdmin && (
+            <button onClick={() => { setForm({ value: '' }); setModal('addTerm'); }} className="w-full text-sm text-emerald-700 font-semibold py-3 flex items-center justify-center gap-1.5">
+              <Plus size={16} /> إضافة ترم
+            </button>
+          )}
+        </div>
+        {modal === 'addTerm' && (
+          <Modal title="إضافة فصل" onClose={closeModal}>
+            <Field label="اسم الفصل"><input className={inputCls} value={form.value || ''} onChange={(e) => setForm({ ...form, value: e.target.value })} placeholder="الثالث" /></Field>
+            <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={() => addYearOrTerm('term')}>إضافة</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
+          </Modal>
+        )}
+      </Shell>
+    );
+  }
+
+  // «النادي» يجمع المسابقات والسفرات في قسم واحد مثل التصميم
+  const canClub = can('الإعداد (المسابقات)') || can('السفرات');
+  const sections = [
+    { id: 'programs', label: 'البرامج', desc: 'عرض وإدارة البرامج', icon: BookOpen, show: can('البرامج') || can('الأسابيع والحضور') },
+    { id: 'faid', label: 'فيض', desc: 'حسابات فيض والأرصدة', icon: Wallet, show: can('فيض - الإيرادات والمصروفات') },
+    { id: 'club', label: 'النادي', desc: 'المسابقات والسفرات', icon: Trophy, show: canClub },
+    { id: 'reports', label: 'التقارير', desc: 'التقارير والإحصائيات', icon: FileText, show: canMoney },
+    { id: 'settings', label: 'الإعدادات', desc: 'المستخدمون والصلاحيات', icon: Settings, show: isAdmin },
+  ].filter((c) => c.show);
 
   const navItems = [
     { id: 'home', label: 'الرئيسية', icon: Home, show: true },
     { id: 'programs', label: 'البرامج', icon: BookOpen, show: can('البرامج') || can('الأسابيع والحضور') },
     { id: 'faid', label: 'فيض', icon: Wallet, show: can('فيض - الإيرادات والمصروفات') },
-    { id: 'setup', label: 'الإعداد', icon: Trophy, show: can('الإعداد (المسابقات)') },
-    { id: 'trips', label: 'السفرات', icon: Plane, show: can('السفرات') },
+    { id: 'reports', label: 'التقارير', icon: FileText, show: canMoney },
     { id: 'settings', label: 'الإعدادات', icon: Settings, show: isAdmin },
   ].filter((n) => n.show);
   const isNavActive = (id) =>
     view === id ||
     (id === 'programs' && (view === 'programDetail' || view === 'weekDetail')) ||
-    (id === 'trips' && view === 'tripDetail');
+    (id === 'reports' && view === 'club') ||
+    (id === 'home' && (view === 'club' || view === 'tripDetail'));
 
   /** مشاركو الدفتر بعد البحث. */
   const visibleParticipants = (activeLedger?.participants || [])
@@ -800,67 +1001,44 @@ export default function App() {
   const activeWeekTab = weekTabs.some((t) => t.id === weekTab) ? weekTab : weekTabs[0]?.id;
 
   return (
-    <div dir="rtl" className="min-h-screen bg-violet-50 flex" style={{ fontFamily: "'Tajawal', sans-serif" }}>
+    <div dir="rtl" className="min-h-screen bg-[#F3F5F4]" style={{ fontFamily: "'Tajawal', sans-serif" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap');`}</style>
 
-      {/* Sidebar - شاشات كبيرة */}
-      <aside className="hidden md:flex w-60 shrink-0 bg-violet-900 min-h-screen p-4 flex-col gap-1 sticky top-0 h-screen">
-        <div className="flex items-center gap-3 px-2 py-4 mb-2">
-          <div className="w-10 h-10 rounded-xl bg-violet-700 flex items-center justify-center text-white font-bold">ن</div>
-          <div>
-            <div className="text-white font-bold text-sm leading-tight">نادي مدارس الأحياء</div>
-            <div className="text-violet-300 text-[11px]">تنظيم - دقة - نمو</div>
+      <div className="w-full max-w-md mx-auto min-h-screen flex flex-col">
+        {/* الهيدر: الترم الحالي + قائمة الحساب */}
+        <header className="px-5 pt-6 pb-4 flex items-center justify-between gap-3">
+          <button onClick={() => setStage('year')} className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+            الترم {data.currentTerm} {data.currentYear} هـ
+            <ChevronLeft size={15} className="text-slate-400 -rotate-90" />
+          </button>
+          <div className="flex items-center gap-3">
+            {savedAt && <span className="text-[11px] text-emerald-600 flex items-center gap-1"><Check size={12} /> محفوظ</span>}
+            {currentUser && (
+              <button onClick={() => setModal('account')} className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold flex items-center justify-center">
+                {currentUser.name.slice(0, 1)}
+              </button>
+            )}
           </div>
-        </div>
-        {navItems.map((n) => <NavItem key={n.id} {...n} active={isNavActive(n.id)} onClick={() => goto(n.id)} />)}
-        {currentUser && (
-          <div className="mt-auto pt-3 border-t border-violet-800">
-            <div className="text-violet-300 text-xs px-3 mb-2">مسجّل الدخول: <span className="text-white font-medium">{currentUser.name}</span></div>
-            <button onClick={doLogout} className="w-full flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm text-violet-100 hover:bg-violet-800/50"><LogOut size={16} /> تسجيل خروج</button>
-          </div>
-        )}
-      </aside>
+        </header>
 
-      {/* Main */}
-      <main className="flex-1 p-4 sm:p-6 pb-24 md:pb-6 max-w-5xl w-full">
-        <div className="flex items-center justify-between gap-3 mb-5">
-          <div className="md:hidden font-bold text-violet-900">نادي مدارس الأحياء</div>
-          <div className="flex items-center gap-2 sm:gap-3 mr-auto">
-            <select value={data.currentTerm} onChange={(e) => save({ ...data, currentTerm: e.target.value })} className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-600">
-              {data.terms.map((t) => <option key={t} value={t}>الترم {t}</option>)}
-            </select>
-            <select value={data.currentYear} onChange={(e) => save({ ...data, currentYear: e.target.value })} className="bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-600">
-              {data.years.map((y) => <option key={y} value={y}>{y} هـ</option>)}
-            </select>
-            {currentUser && <button onClick={doLogout} className="md:hidden text-slate-400"><LogOut size={18} /></button>}
-          </div>
-        </div>
+      <main className="flex-1 px-5 pb-28 w-full">
 
         {/* ------------------------------- الرئيسية ------------------------------- */}
         {view === 'home' && (
           <div>
-            <div className="bg-violet-600 rounded-2xl p-6 mb-6 text-white">
-              <div className="text-lg font-bold mb-1">مرحبًا بك 👋</div>
-              <div className="text-violet-100 text-sm">اختر القسم اللي تريد العمل عليه</div>
+            <div className="bg-emerald-800 rounded-3xl p-6 mb-5 text-white">
+              <div className="text-lg font-bold mb-1">{currentUser ? `أهلًا ${currentUser.name}` : 'مرحبًا بك'} 👋</div>
+              <div className="text-emerald-200 text-sm">اختر القسم اللي تبي تشتغل عليه</div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-              <StatCard label="برامج هذا الترم" value={termPrograms.length} icon={BookOpen} />
-              <StatCard label="أيام مفتوحة" value={termPrograms.flatMap((p) => p.weeks).filter((w) => w.status === 'مفتوح').length} icon={Calendar} tone="blue" />
-              <StatCard label="رصيد فيض" value={fmt(balance) + ' ر.س'} icon={Wallet} tone={balance >= 0 ? 'green' : 'red'} />
+            <div className="grid grid-cols-2 gap-3 mb-5">
+              <MiniStat label="برامج الترم" value={termPrograms.length} icon={BookOpen} />
+              {can('فيض - الإيرادات والمصروفات')
+                ? <MiniStat label="رصيد فيض" value={fmt(balance)} icon={Wallet} tone={balance >= 0 ? 'green' : 'red'} />
+                : <MiniStat label="أيام مفتوحة" value={termPrograms.flatMap((p) => p.weeks).filter((w) => w.status === 'مفتوح').length} icon={Calendar} />}
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {[
-                { id: 'programs', label: 'البرامج', desc: 'البرامج والأيام والحضور والتوزيع', icon: BookOpen, show: can('البرامج') || can('الأسابيع والحضور') },
-                { id: 'faid', label: 'فيض', desc: 'رصيد الفريق والإيرادات والمصروفات', icon: Wallet, show: can('فيض - الإيرادات والمصروفات') },
-                { id: 'setup', label: 'الإعداد', desc: 'المسابقات حسب المرحلة', icon: Trophy, show: can('الإعداد (المسابقات)') },
-                { id: 'trips', label: 'السفرات', desc: 'إيرادات ومصروفات كل سفرة', icon: Plane, show: can('السفرات') },
-                { id: 'settings', label: 'الإعدادات', desc: 'المستخدمون والصلاحيات والسنوات', icon: Settings, show: isAdmin },
-              ].filter((c) => c.show).map((c) => (
-                <button key={c.id} onClick={() => goto(c.id)} className="bg-white rounded-2xl border border-slate-100 p-5 text-right hover:border-violet-300 hover:shadow-md transition-all">
-                  <div className="w-10 h-10 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center mb-3"><c.icon size={20} /></div>
-                  <div className="font-bold text-slate-800 mb-1">{c.label}</div>
-                  <div className="text-xs text-slate-400">{c.desc}</div>
-                </button>
+            <div className="space-y-3">
+              {sections.map((c) => (
+                <PickCard key={c.id} icon={c.icon} title={c.label} note={c.desc} chevron onClick={() => goto(c.id)} />
               ))}
             </div>
           </div>
@@ -870,11 +1048,16 @@ export default function App() {
         {view === 'programs' && (
           <div>
             <div className="flex items-center justify-between mb-5 gap-3">
-              <h2 className="text-lg sm:text-xl font-bold text-slate-800">البرامج - الترم {data.currentTerm} {data.currentYear}هـ</h2>
-              {can('البرامج') && <button className={btnPrimary} onClick={() => { setForm({}); setModal('addProgram'); }}><Plus size={16} /> برنامج جديد</button>}
+              <h2 className="text-xl font-extrabold text-slate-800">البرامج</h2>
+              {can('البرامج') && <button className={btnPrimary} onClick={() => { setForm({}); setModal('pickProgramType'); }}><Plus size={16} /> برنامج جديد</button>}
             </div>
             {termPrograms.length === 0 ? (
-              <div className={emptyCls}>لا توجد برامج بعد لهذا الترم. أضف أول برنامج.</div>
+              <div className="bg-white rounded-2xl border border-dashed border-slate-200 p-10 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center mx-auto mb-4"><BookOpen size={26} /></div>
+                <div className="font-bold text-slate-700 mb-1">لا توجد برامج حاليًا</div>
+                <div className="text-sm text-slate-400 mb-5">يمكنك إضافة برنامج جديد للبدء</div>
+                {can('البرامج') && <button className={btnPrimary + ' w-full'} onClick={() => { setForm({}); setModal('pickProgramType'); }}><Plus size={16} /> إضافة برنامج</button>}
+              </div>
             ) : (
               <div className="bg-white rounded-2xl border border-slate-100 overflow-x-auto">
                 <table className="w-full text-sm min-w-[520px]">
@@ -892,7 +1075,7 @@ export default function App() {
                         <tr key={p.id} className="border-t border-slate-50 hover:bg-slate-50/50 cursor-pointer"
                           onClick={() => { setSelectedProgramId(p.id); setProgramTab('days'); goto('programDetail'); }}>
                           <td className="px-4 py-3 font-semibold text-slate-800">{p.name}</td>
-                          <td className="px-4 py-3"><Badge tone={p.type === 'مجمع' ? 'blue' : 'violet'}>{p.type}</Badge></td>
+                          <td className="px-4 py-3"><Badge tone={p.type === 'مجمع' ? 'blue' : 'emerald'}>{p.type}</Badge></td>
                           <td className="px-4 py-3 text-slate-600">{p.weeks.length}</td>
                           <td className="px-4 py-3 font-semibold text-slate-700">{canMoney ? fmt(net) + ' ر.س' : '-'}</td>
                           <td className="px-4 py-3 text-left"><ChevronLeft size={16} className="text-slate-300" /></td>
@@ -913,10 +1096,10 @@ export default function App() {
             <div className="flex items-center justify-between mb-4 mt-2 gap-3 flex-wrap">
               <div className="flex items-center gap-2">
                 <h2 className="text-lg sm:text-xl font-bold text-slate-800">{program.name}</h2>
-                <Badge tone={isGrouped ? 'blue' : 'violet'}>{program.type}</Badge>
+                <Badge tone={isGrouped ? 'blue' : 'emerald'}>{program.type}</Badge>
                 {can('البرامج') && (
                   <>
-                    <button onClick={() => { setForm({ name: program.name, dayPrice: program.dayPrice || '' }); setModal('editProgram'); }} className="text-slate-300 hover:text-violet-600"><Pencil size={15} /></button>
+                    <button onClick={() => { setForm({ name: program.name, dayPrice: program.dayPrice || '' }); setModal('editProgram'); }} className="text-slate-300 hover:text-emerald-600"><Pencil size={15} /></button>
                     <button onClick={() => askConfirm(`حذف برنامج «${program.name}» وكل أيامه وبياناته؟`, () => removeProgram(program.id))} className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>
                   </>
                 )}
@@ -1197,13 +1380,13 @@ export default function App() {
             <div className="text-sm text-slate-400 mb-5">رصيد الفريق — يتغيّر فقط بالعمليات اليدوية أو بترحيل نصيب فيض من البرامج.</div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
               <StatCard label="الرصيد الحالي (الإجمالي)" value={fmt(balance) + ' ر.س'} icon={Wallet} tone={balance >= 0 ? 'green' : 'red'} />
-              <StatCard label="إجمالي الإيرادات" value={fmt(totalRevenue) + ' ر.س'} icon={TrendingUp} tone="violet" />
+              <StatCard label="إجمالي الإيرادات" value={fmt(totalRevenue) + ' ر.س'} icon={TrendingUp} tone="emerald" />
               <StatCard label="إجمالي المصروفات" value={fmt(totalExpenses) + ' ر.س'} icon={TrendingDown} tone="red" />
             </div>
 
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-bold text-slate-700">الحسابات</h3>
-              <button onClick={() => { setForm({ value: '' }); setModal('addFaidAccount'); }} className="text-xs text-violet-600 flex items-center gap-1"><Plus size={14} /> حساب جديد</button>
+              <button onClick={() => { setForm({ value: '' }); setModal('addFaidAccount'); }} className="text-xs text-emerald-600 flex items-center gap-1"><Plus size={14} /> حساب جديد</button>
             </div>
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
               {accountStats.map((a) => (
@@ -1260,11 +1443,22 @@ export default function App() {
           </div>
         )}
 
-        {/* -------------------------------- الإعداد -------------------------------- */}
-        {view === 'setup' && (
+        {/* -------------------------------- النادي -------------------------------- */}
+        {view === 'club' && (
+          <div className="mb-4">
+            <h2 className="text-xl font-extrabold text-slate-800 mb-1">النادي</h2>
+            <div className="text-sm text-slate-400 mb-4">المسابقات والسفرات</div>
+            <Tabs value={clubTab} onChange={setClubTab} tabs={[
+              ...(can('الإعداد (المسابقات)') ? [{ id: 'competitions', label: 'المسابقات' }] : []),
+              ...(can('السفرات') ? [{ id: 'trips', label: 'السفرات' }] : []),
+            ]} />
+          </div>
+        )}
+
+        {view === 'club' && clubTab === 'competitions' && can('الإعداد (المسابقات)') && (
           <div>
             <div className="flex items-center justify-between mb-5 gap-3">
-              <h2 className="text-lg sm:text-xl font-bold text-slate-800">الإعداد - المسابقات</h2>
+              <h3 className="font-bold text-slate-700">المسابقات</h3>
               <button className={btnPrimary} onClick={() => { setForm({}); setModal('addCompetition'); }}><Plus size={16} /> مسابقة جديدة</button>
             </div>
             <Tabs value={setupLevel} onChange={setSetupLevel} tabs={['الكل', ...LEVELS].map((lv) => ({ id: lv, label: lv }))} />
@@ -1286,7 +1480,7 @@ export default function App() {
                       {list.map((c) => (
                         <tr key={c.id} className="border-t border-slate-50">
                           <td className="px-4 py-3 font-semibold text-slate-800">{c.name}</td>
-                          <td className="px-4 py-3"><Badge tone="violet">{c.level}</Badge></td>
+                          <td className="px-4 py-3"><Badge tone="emerald">{c.level}</Badge></td>
                           <td className="px-4 py-3 text-slate-500">{c.date || '-'}</td>
                           <td className="px-4 py-3 text-slate-600">{c.participants}</td>
                           <td className="px-4 py-3 text-left">
@@ -1303,10 +1497,10 @@ export default function App() {
         )}
 
         {/* ------------------------------- السفرات ------------------------------- */}
-        {view === 'trips' && (
+        {view === 'club' && clubTab === 'trips' && can('السفرات') && (
           <div>
             <div className="flex items-center justify-between mb-1 gap-3">
-              <h2 className="text-lg sm:text-xl font-bold text-slate-800">السفرات</h2>
+              <h3 className="font-bold text-slate-700">السفرات</h3>
               <button className={btnPrimary} onClick={() => { setForm({}); setModal('addTrip'); }}><Plus size={16} /> سفرة جديدة</button>
             </div>
             <div className="text-sm text-slate-400 mb-5">إيرادات ومصروفات كل سفرة على حدة - مستقلة عن فيض</div>
@@ -1346,7 +1540,7 @@ export default function App() {
 
         {view === 'tripDetail' && trip && (
           <div>
-            <Breadcrumb items={[{ label: 'السفرات', onClick: () => goto('trips') }, { label: trip.name }]} />
+            <Breadcrumb items={[{ label: 'السفرات', onClick: () => { setClubTab('trips'); goto('club'); } }, { label: trip.name }]} />
             <div className="flex items-center gap-2 mb-5 mt-2">
               <h2 className="text-lg sm:text-xl font-bold text-slate-800">{trip.name}</h2>
               <button onClick={() => askConfirm(`حذف سفرة «${trip.name}»؟`, () => removeTrip(trip.id))} className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>
@@ -1400,13 +1594,17 @@ export default function App() {
                       <tbody>
                         {data.users.map((u) => (
                           <tr key={u.id} className="border-t border-slate-50">
-                            <td className="px-4 py-3 font-semibold text-slate-800">{u.name}</td>
-                            <td className="px-4 py-3"><Badge tone="violet">{u.role}</Badge></td>
+                            <td className="px-4 py-3">
+                              <div className="font-semibold text-slate-800">{u.name}</div>
+                              <div className="text-[11px] text-slate-400" dir="ltr">{u.username}</div>
+                            </td>
+                            <td className="px-4 py-3"><Badge tone="emerald">{u.role}</Badge></td>
                             <td className="px-4 py-3"><div className="flex flex-wrap gap-1">{u.permissions.length ? u.permissions.map((p) => <Badge key={p} tone="slate">{p}</Badge>) : <span className="text-slate-300 text-xs">-</span>}</div></td>
                             <td className="px-4 py-3">{u.accessScope === 'limited' ? <Badge tone="amber">{(u.allowedWeeks || []).length} محدد</Badge> : <Badge tone="slate">الكل</Badge>}</td>
                             <td className="px-4 py-3"><Badge tone={u.status === 'نشط' ? 'green' : 'slate'}>{u.status}</Badge></td>
                             <td className="px-4 py-3 text-left whitespace-nowrap">
-                              <button onClick={() => toggleUserStatus(u.id)} className="text-xs text-violet-600 hover:underline">{u.status === 'نشط' ? 'تعطيل' : 'تفعيل'}</button>
+                              <button onClick={() => { setForm({ ...u, password: '' }); setModal('editUser'); }} className="text-slate-300 hover:text-emerald-600 align-middle"><Pencil size={14} /></button>
+                              <button onClick={() => toggleUserStatus(u.id)} className="text-xs text-emerald-600 hover:underline mr-3">{u.status === 'نشط' ? 'تعطيل' : 'تفعيل'}</button>
                               <button onClick={() => askConfirm(`حذف المستخدم «${u.name}»؟`, () => removeUser(u.id))} className="text-slate-300 hover:text-red-500 mr-3 align-middle"><Trash2 size={14} /></button>
                             </td>
                           </tr>
@@ -1423,49 +1621,70 @@ export default function App() {
                 <div className={cardCls}>
                   <div className="flex items-center justify-between mb-3">
                     <div className="font-semibold text-slate-700">السنوات</div>
-                    <button onClick={() => { setForm({ value: '' }); setModal('addYear'); }} className="text-violet-600"><Plus size={18} /></button>
+                    <button onClick={() => { setForm({ value: '' }); setModal('addYear'); }} className="text-emerald-600"><Plus size={18} /></button>
                   </div>
-                  <div className="flex flex-wrap gap-2">{data.years.map((y) => <Badge key={y} tone="violet">{y} هـ</Badge>)}</div>
+                  <div className="flex flex-wrap gap-2">{data.years.map((y) => <Badge key={y} tone="emerald">{y} هـ</Badge>)}</div>
                 </div>
                 <div className={cardCls}>
                   <div className="flex items-center justify-between mb-3">
                     <div className="font-semibold text-slate-700">الفصول</div>
-                    <button onClick={() => { setForm({ value: '' }); setModal('addTerm'); }} className="text-violet-600"><Plus size={18} /></button>
+                    <button onClick={() => { setForm({ value: '' }); setModal('addTerm'); }} className="text-emerald-600"><Plus size={18} /></button>
                   </div>
-                  <div className="flex flex-wrap gap-2">{data.terms.map((t) => <Badge key={t} tone="violet">الترم {t}</Badge>)}</div>
+                  <div className="flex flex-wrap gap-2">{data.terms.map((t) => <Badge key={t} tone="emerald">الترم {t}</Badge>)}</div>
                 </div>
               </div>
             )}
           </div>
         )}
+        {/* ------------------------------- التقارير ------------------------------- */}
+        {view === 'reports' && canMoney && (
+          <TermReport programs={termPrograms} year={data.currentYear} term={data.currentTerm} balance={balance}
+            onOpenProgram={(p) => { setSelectedProgramId(p.id); setProgramTab('days'); goto('programDetail'); }} />
+        )}
       </main>
 
-      {/* شريط تنقل سفلي - الجوال */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 bg-violet-900 flex justify-around px-1 py-2 z-40">
-        {navItems.slice(0, 5).map((n) => (
-          <button key={n.id} onClick={() => goto(n.id)}
-            className={`flex flex-col items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-medium ${isNavActive(n.id) ? 'text-white' : 'text-violet-300'}`}>
-            <n.icon size={19} />
-            {n.label}
-          </button>
-        ))}
+      {/* شريط التنقل السفلي */}
+      <nav className="fixed bottom-0 inset-x-0 z-40 bg-white border-t border-slate-100">
+        <div className="max-w-md mx-auto flex justify-around px-1 py-2">
+          {navItems.slice(0, 5).map((n) => {
+            const on = isNavActive(n.id);
+            return (
+              <button key={n.id} onClick={() => goto(n.id)}
+                className={`flex flex-col items-center gap-1 px-3 py-1 rounded-xl text-[10px] font-semibold ${on ? 'text-emerald-800' : 'text-slate-400'}`}>
+                <n.icon size={20} />
+                {n.label}
+              </button>
+            );
+          })}
+        </div>
       </nav>
+      </div>
 
       {/* --------------------------------- المودالات --------------------------------- */}
+      {/* اختيار نوع البرنامج أولًا، مثل التصميم */}
+      {modal === 'pickProgramType' && (
+        <Modal title="إضافة برنامج جديد" onClose={closeModal}>
+          <div className="text-sm text-slate-400 -mt-3 mb-4">اختر نوع البرنامج</div>
+          <div className="space-y-3">
+            <PickCard icon={Calendar} title="منفصل" note="كل يوم برنامج مستقل بمشاركيه وحسابه"
+              onClick={() => { setForm({ type: 'منفصل', weekCount: 8 }); setModal('addProgram'); }} />
+            <PickCard icon={Layers} title="مجمع" note="عدة أيام في برنامج واحد، والمشترك يختار أيامه"
+              onClick={() => { setForm({ type: 'مجمع', weekCount: 4 }); setModal('addProgram'); }} />
+          </div>
+        </Modal>
+      )}
+
       {modal === 'addProgram' && (
-        <Modal title="برنامج جديد" onClose={closeModal}>
+        <Modal title={`إضافة برنامج ${form.type || 'منفصل'}`} onClose={closeModal}>
           <Field label="اسم البرنامج"><input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="مثال: جمعة الرواد" /></Field>
-          <Field label="نوع البرنامج" hint={(form.type || 'منفصل') === 'مجمع'
-            ? 'مجمّع: المشترك يسجّل مرة وحدة لكل الأيام، والحساب المالي على مستوى البرنامج كله.'
-            : 'منفصل: كل يوم له مشاركوه وحسابه المالي المستقل.'}>
-            <div className="flex gap-2">
-              {['منفصل', 'مجمع'].map((t) => (
-                <button key={t} onClick={() => setForm({ ...form, type: t })}
-                  className={`flex-1 py-2 rounded-lg text-sm font-medium border ${(form.type || 'منفصل') === t ? 'bg-violet-600 text-white border-violet-600' : 'border-slate-200 text-slate-600'}`}>{t}</button>
-              ))}
-            </div>
+          <Field label={form.type === 'مجمع' ? 'عدد الأيام' : 'عدد الأسابيع'}
+            hint={Number(form.weekCount || 0) > 0
+              ? `سيتم إنشاء ${form.weekCount} ${form.type === 'مجمع' ? 'يوم داخل البرنامج' : 'أسبوع مستقل'}. تقدر تزيد أو تحذف بعدين.`
+              : 'تقدر تبدأ بصفر وتضيف الأيام يدويًا.'}>
+            <Stepper value={form.weekCount ?? (form.type === 'مجمع' ? 4 : 8)} min={0} max={60}
+              onChange={(v) => setForm({ ...form, weekCount: v })} />
           </Field>
-          {(form.type || 'منفصل') === 'مجمع' && (
+          {form.type === 'مجمع' && (
             <Field label="سعر اليوم (اختياري)" hint="لو حطيته، يُقترح مبلغ كل مشترك تلقائيًا حسب عدد أيامه، وتقدر تعدّله دايم.">
               <input type="number" className={inputCls} value={form.dayPrice || ''} onChange={(e) => setForm({ ...form, dayPrice: e.target.value })} placeholder="مثال: 50" />
             </Field>
@@ -1511,7 +1730,7 @@ export default function App() {
           {isGrouped && (
             <Field label="الأيام المسجّل فيها" hint="يقدر يسجّل كل الأيام، أو يوم واحد، أو يجي متأخر ويسجّل من اليوم الثالث.">
               <div className="flex items-center gap-2 mb-2">
-                <button type="button" onClick={() => toggleAllParticipantDays(true)} className="text-xs text-violet-600 hover:underline">تحديد الكل</button>
+                <button type="button" onClick={() => toggleAllParticipantDays(true)} className="text-xs text-emerald-600 hover:underline">تحديد الكل</button>
                 <span className="text-slate-200">|</span>
                 <button type="button" onClick={() => toggleAllParticipantDays(false)} className="text-xs text-slate-500 hover:underline">إلغاء الكل</button>
               </div>
@@ -1520,8 +1739,8 @@ export default function App() {
                   const on = (form.days || []).includes(w.id);
                   return (
                     <button key={w.id} type="button" onClick={() => toggleParticipantDay(w.id)}
-                      className={`text-xs px-3 py-2 rounded-lg border text-right ${on ? 'bg-violet-600 text-white border-violet-600' : 'border-slate-200 text-slate-600'}`}>
-                      {w.name}{w.date ? <span className={`block text-[10px] ${on ? 'text-violet-200' : 'text-slate-400'}`}>{w.date}</span> : null}
+                      className={`text-xs px-3 py-2 rounded-lg border text-right ${on ? 'bg-emerald-600 text-white border-emerald-600' : 'border-slate-200 text-slate-600'}`}>
+                      {w.name}{w.date ? <span className={`block text-[10px] ${on ? 'text-emerald-200' : 'text-slate-400'}`}>{w.date}</span> : null}
                     </button>
                   );
                 })}
@@ -1578,14 +1797,14 @@ export default function App() {
 
       {modal === 'transferFaid' && activeLedger && (
         <Modal title="ترحيل نصيب فيض إلى الرصيد" onClose={closeModal} wide>
-          <div className="bg-violet-50 rounded-xl px-4 py-3 mb-4 text-sm text-violet-800">
+          <div className="bg-emerald-50 rounded-xl px-4 py-3 mb-4 text-sm text-emerald-800">
             المبلغ المُرحّل: <b>{fmt(L.faid(activeLedger))} ر.س</b>
-            <div className="text-xs text-violet-600 mt-1">راح تُسجَّل عملية «إيراد» في فيض، ويقدر ترجع عنها بإلغاء الترحيل.</div>
+            <div className="text-xs text-emerald-600 mt-1">راح تُسجَّل عملية «إيراد» في فيض، ويقدر ترجع عنها بإلغاء الترحيل.</div>
           </div>
 
           <div className="flex items-center gap-2 mb-4">
             <button type="button" onClick={() => setForm({ ...form, splitMode: !form.splitMode, splitRows: [{}, {}], error: '' })}
-              className={`text-xs px-3 py-1.5 rounded-lg border ${form.splitMode ? 'bg-violet-600 text-white border-violet-600' : 'border-slate-200 text-slate-600'}`}>
+              className={`text-xs px-3 py-1.5 rounded-lg border ${form.splitMode ? 'bg-emerald-600 text-white border-emerald-600' : 'border-slate-200 text-slate-600'}`}>
               تقسيم المبلغ على أكثر من حساب
             </button>
           </div>
@@ -1610,7 +1829,7 @@ export default function App() {
                     <button type="button" onClick={() => removeSplitRow(idx)} className="text-slate-400 hover:text-red-500 shrink-0"><X size={16} /></button>
                   </div>
                 ))}
-                <button type="button" onClick={addSplitRow} className="text-xs text-violet-600 flex items-center gap-1"><Plus size={14} /> إضافة حساب</button>
+                <button type="button" onClick={addSplitRow} className="text-xs text-emerald-600 flex items-center gap-1"><Plus size={14} /> إضافة حساب</button>
                 <div className="text-xs text-slate-400 pt-1">
                   المجموع: {fmt(sumAmt(form.splitRows))} من {fmt(L.faid(activeLedger))} ر.س
                 </div>
@@ -1632,14 +1851,14 @@ export default function App() {
             <div className="flex gap-2">
               {['إيراد', 'مصروف'].map((t) => (
                 <button key={t} onClick={() => setForm({ ...form, type: t })}
-                  className={`flex-1 py-2 rounded-lg text-sm font-medium border ${(form.type || 'إيراد') === t ? 'bg-violet-600 text-white border-violet-600' : 'border-slate-200 text-slate-600'}`}>{t}</button>
+                  className={`flex-1 py-2 rounded-lg text-sm font-medium border ${(form.type || 'إيراد') === t ? 'bg-emerald-600 text-white border-emerald-600' : 'border-slate-200 text-slate-600'}`}>{t}</button>
               ))}
             </div>
           </Field>
 
           <div className="flex items-center gap-2 mb-4">
             <button type="button" onClick={() => setForm({ ...form, splitMode: !form.splitMode, splitRows: [{}, {}] })}
-              className={`text-xs px-3 py-1.5 rounded-lg border ${form.splitMode ? 'bg-violet-600 text-white border-violet-600' : 'border-slate-200 text-slate-600'}`}>
+              className={`text-xs px-3 py-1.5 rounded-lg border ${form.splitMode ? 'bg-emerald-600 text-white border-emerald-600' : 'border-slate-200 text-slate-600'}`}>
               تقسيم المبلغ على أكثر من حساب
             </button>
           </div>
@@ -1669,7 +1888,7 @@ export default function App() {
                     <button type="button" onClick={() => removeSplitRow(idx)} className="text-slate-400 hover:text-red-500 shrink-0"><X size={16} /></button>
                   </div>
                 ))}
-                <button type="button" onClick={addSplitRow} className="text-xs text-violet-600 flex items-center gap-1"><Plus size={14} /> إضافة حساب</button>
+                <button type="button" onClick={addSplitRow} className="text-xs text-emerald-600 flex items-center gap-1"><Plus size={14} /> إضافة حساب</button>
                 <div className="text-xs text-slate-400 pt-1">الإجمالي: {fmt(sumAmt(form.splitRows))} ر.س</div>
               </div>
             </Field>
@@ -1688,10 +1907,15 @@ export default function App() {
         </Modal>
       )}
 
-      {modal === 'addUser' && (
-        <Modal title="مستخدم جديد" onClose={closeModal} wide>
+      {(modal === 'addUser' || modal === 'editUser') && (
+        <Modal title={modal === 'editUser' ? 'تعديل المستخدم' : 'مستخدم جديد'} onClose={closeModal} wide>
           <Field label="الاسم"><input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-          <Field label="رمز الدخول"><input className={inputCls} value={form.code || ''} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="مثال: 1234" /></Field>
+          <Field label="اسم المستخدم" hint="اللي يكتبه عند الدخول. حروف إنجليزية وأرقام بدون مسافات.">
+            <input className={inputCls} dir="ltr" value={form.username || ''} onChange={(e) => setForm({ ...form, username: e.target.value, error: '' })} placeholder="saad" />
+          </Field>
+          <Field label={modal === 'editUser' ? 'كلمة مرور جديدة (اتركها فاضية لو ما تبي تغيّرها)' : 'كلمة المرور'}>
+            <input className={inputCls} dir="ltr" value={form.password || ''} onChange={(e) => setForm({ ...form, password: e.target.value, error: '' })} placeholder="••••••" />
+          </Field>
           <Field label="الدور">
             <select className={inputCls} value={form.role || ROLES[0]} onChange={(e) => setForm({ ...form, role: e.target.value })}>
               {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
@@ -1701,7 +1925,7 @@ export default function App() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {PERMS.map((p) => (
                 <button key={p} type="button" onClick={() => togglePerm(p)}
-                  className={`text-xs px-3 py-2 rounded-lg border text-right ${(form.permissions || []).includes(p) ? 'bg-violet-600 text-white border-violet-600' : 'border-slate-200 text-slate-600'}`}>{p}</button>
+                  className={`text-xs px-3 py-2 rounded-lg border text-right ${(form.permissions || []).includes(p) ? 'bg-emerald-600 text-white border-emerald-600' : 'border-slate-200 text-slate-600'}`}>{p}</button>
               ))}
             </div>
           </Field>
@@ -1709,7 +1933,7 @@ export default function App() {
             <div className="flex gap-2 mb-2">
               {[{ v: 'all', l: 'كل الأيام' }, { v: 'limited', l: 'أيام محددة فقط' }].map((o) => (
                 <button key={o.v} type="button" onClick={() => setForm({ ...form, accessScope: o.v })}
-                  className={`flex-1 py-2 rounded-lg text-sm font-medium border ${(form.accessScope || 'all') === o.v ? 'bg-violet-600 text-white border-violet-600' : 'border-slate-200 text-slate-600'}`}>{o.l}</button>
+                  className={`flex-1 py-2 rounded-lg text-sm font-medium border ${(form.accessScope || 'all') === o.v ? 'bg-emerald-600 text-white border-emerald-600' : 'border-slate-200 text-slate-600'}`}>{o.l}</button>
               ))}
             </div>
             {form.accessScope === 'limited' && (
@@ -1729,7 +1953,8 @@ export default function App() {
               </div>
             )}
           </Field>
-          <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={addUser}>إضافة</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
+          {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+          <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={saveUser}>{modal === 'editUser' ? 'حفظ' : 'إضافة'}</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
         </Modal>
       )}
 
@@ -1740,7 +1965,7 @@ export default function App() {
             <div className="flex gap-2">
               {LEVELS.map((lv) => (
                 <button key={lv} type="button" onClick={() => setForm({ ...form, level: lv })}
-                  className={`flex-1 py-2 rounded-lg text-sm font-medium border ${(form.level || LEVELS[0]) === lv ? 'bg-violet-600 text-white border-violet-600' : 'border-slate-200 text-slate-600'}`}>{lv}</button>
+                  className={`flex-1 py-2 rounded-lg text-sm font-medium border ${(form.level || LEVELS[0]) === lv ? 'bg-emerald-600 text-white border-emerald-600' : 'border-slate-200 text-slate-600'}`}>{lv}</button>
               ))}
             </div>
           </Field>
@@ -1769,6 +1994,24 @@ export default function App() {
         <Modal title="إضافة فصل" onClose={closeModal}>
           <Field label="اسم الفصل"><input className={inputCls} value={form.value || ''} onChange={(e) => setForm({ ...form, value: e.target.value })} placeholder="الترم الثالث" /></Field>
           <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={() => addYearOrTerm('term')}>إضافة</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
+        </Modal>
+      )}
+
+      {modal === 'account' && currentUser && (
+        <Modal title="الحساب" onClose={closeModal}>
+          <div className="flex items-center gap-3 mb-5">
+            <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-800 font-bold flex items-center justify-center">{currentUser.name.slice(0, 1)}</div>
+            <div>
+              <div className="font-bold text-slate-800">{currentUser.name}</div>
+              <div className="text-xs text-slate-400">{currentUser.username} · {currentUser.role}</div>
+            </div>
+          </div>
+          <div className="text-xs text-slate-500 mb-2 font-semibold">الأقسام المتاحة لك</div>
+          <div className="flex flex-wrap gap-1.5 mb-5">
+            {isAdmin ? <Badge tone="emerald">كل الصلاحيات</Badge>
+              : (currentUser.permissions || []).map((p) => <Badge key={p} tone="slate">{p}</Badge>)}
+          </div>
+          <button className={btnDanger + ' w-full'} onClick={() => { closeModal(); doLogout(); }}><LogOut size={16} /> تسجيل خروج</button>
         </Modal>
       )}
 
@@ -1817,7 +2060,7 @@ function LedgerFinance({ ledger, accounts, locked, canTransfer, onAdd, onRemove,
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard label="الإيراد" value={fmt(L.revenue(ledger)) + ' ر.س'} icon={TrendingUp} tone="green" />
         <StatCard label="المصروفات" value={fmt(L.expenses(ledger)) + ' ر.س'} icon={TrendingDown} tone="red" />
-        <StatCard label="الصافي" value={fmt(L.net(ledger)) + ' ر.س'} icon={Wallet} tone={L.net(ledger) >= 0 ? 'violet' : 'red'} />
+        <StatCard label="الصافي" value={fmt(L.net(ledger)) + ' ر.س'} icon={Wallet} tone={L.net(ledger) >= 0 ? 'emerald' : 'red'} />
       </div>
 
       <ItemList title="تحصيل إضافي" subtitle="مبالغ غير مرتبطة بمشارك معيّن" items={ledger.collections} accounts={accounts}
@@ -1873,7 +2116,7 @@ function ParticipantsTable({ participants, accounts, showAttendance, statusOf, o
                 const all = mine.length === weeks.length;
                 return (
                   <td className="px-4 py-3">
-                    <Badge tone={all ? 'violet' : 'amber'}>{all ? `كل الأيام (${weeks.length})` : `${mine.length} من ${weeks.length}`}</Badge>
+                    <Badge tone={all ? 'emerald' : 'amber'}>{all ? `كل الأيام (${weeks.length})` : `${mine.length} من ${weeks.length}`}</Badge>
                     {!all && <div className="text-[11px] text-slate-400 mt-1">{mine.map((w) => w.name).join('، ') || 'ما فيه أيام'}</div>}
                   </td>
                 );
@@ -1894,7 +2137,7 @@ function ParticipantsTable({ participants, accounts, showAttendance, statusOf, o
                 </td>
               )}
               <td className="px-4 py-3 text-left whitespace-nowrap">
-                <button onClick={() => onEdit(p)} disabled={locked} className="text-slate-300 hover:text-violet-600 disabled:opacity-30"><Pencil size={14} /></button>
+                <button onClick={() => onEdit(p)} disabled={locked} className="text-slate-300 hover:text-emerald-600 disabled:opacity-30"><Pencil size={14} /></button>
                 <button onClick={() => onRemove(p)} disabled={locked} className="text-slate-300 hover:text-red-500 mr-2 disabled:opacity-30"><Trash2 size={14} /></button>
               </td>
             </tr>
@@ -1921,7 +2164,7 @@ function AttendanceTable({ participants, statusOf, onSet, locked, subscriptionOf
                 <span className="text-[11px] text-slate-400 flex items-center gap-1.5">
                   {subDays === 1 ? 'مشترك يوم واحد' : subDays === totalDays ? `مشترك كل الأيام (${subDays})` : `مشترك ${subDays} من ${totalDays} أيام`}
                   {onEdit && !locked && (
-                    <button onClick={() => onEdit(p)} className="text-slate-300 hover:text-violet-600"><Pencil size={11} /></button>
+                    <button onClick={() => onEdit(p)} className="text-slate-300 hover:text-emerald-600"><Pencil size={11} /></button>
                   )}
                 </span>
               )}
@@ -1955,9 +2198,9 @@ function ProgramTotals({ program }) {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard label="إجمالي الإيراد" value={fmt(t.revenue) + ' ر.س'} icon={TrendingUp} tone="green" />
         <StatCard label="إجمالي المصروفات" value={fmt(t.expenses) + ' ر.س'} icon={TrendingDown} tone="red" />
-        <StatCard label="الصافي" value={fmt(t.net) + ' ر.س'} icon={Wallet} tone="violet" />
+        <StatCard label="الصافي" value={fmt(t.net) + ' ر.س'} icon={Wallet} tone="emerald" />
         <StatCard label="نصيب المدرسة" value={fmt(t.school) + ' ر.س'} icon={Layers} tone="blue" />
-        <StatCard label="نصيب فيض" value={fmt(t.faid) + ' ر.س'} icon={ShieldCheck} tone="violet" />
+        <StatCard label="نصيب فيض" value={fmt(t.faid) + ' ر.س'} icon={ShieldCheck} tone="emerald" />
         <StatCard label="غير موزّع" value={fmt(rest) + ' ر.س'} icon={AlertTriangle} tone={rest === 0 ? 'green' : 'amber'} />
       </div>
       <div className="text-xs text-slate-400 px-1">
@@ -2046,7 +2289,7 @@ function GroupedReport({ program, accounts, canMoney }) {
       {canMoney && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <StatCard label="عدد المشتركين" value={parts.length} icon={UsersIcon} tone="blue" />
-          <StatCard label="الصافي" value={fmt(L.net(program)) + ' ر.س'} icon={Wallet} tone="violet" />
+          <StatCard label="الصافي" value={fmt(L.net(program)) + ' ر.س'} icon={Wallet} tone="emerald" />
           <StatCard label="نصيب فيض" value={fmt(L.faid(program)) + ' ر.س'} icon={ShieldCheck} tone="green" />
         </div>
       )}
@@ -2107,15 +2350,99 @@ function GroupedReport({ program, accounts, canMoney }) {
   );
 }
 
+/** تقرير الترم: كل برامج الترم بسطر واحد + الإجمالي. */
+function TermReport({ programs, year, term, balance, onOpenProgram }) {
+  const row = (p) => {
+    const ledgers = p.type === 'مجمع' ? [p] : p.weeks;
+    return ledgers.reduce((a, l) => ({
+      revenue: a.revenue + L.revenue(l), expenses: a.expenses + L.expenses(l),
+      net: a.net + L.net(l), school: a.school + L.school(l), faid: a.faid + L.faid(l),
+      transferred: a.transferred + (l.faidTransfer ? Number(l.faidTransfer.amount || 0) : 0),
+    }), { revenue: 0, expenses: 0, net: 0, school: 0, faid: 0, transferred: 0 });
+  };
+  const rows = programs.map((p) => ({ p, ...row(p) }));
+  const t = rows.reduce((a, r) => ({
+    revenue: a.revenue + r.revenue, expenses: a.expenses + r.expenses, net: a.net + r.net,
+    school: a.school + r.school, faid: a.faid + r.faid, transferred: a.transferred + r.transferred,
+  }), { revenue: 0, expenses: 0, net: 0, school: 0, faid: 0, transferred: 0 });
+  const pending = t.faid - t.transferred;
+
+  return (
+    <div>
+      <h2 className="text-xl font-extrabold text-slate-800 mb-1">التقارير</h2>
+      <div className="text-sm text-slate-400 mb-4">الترم {term} {year} هـ</div>
+
+      {!programs.length ? (
+        <div className={emptyCls}>ما فيه برامج في هذا الترم بعد.</div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <MiniStat label="إجمالي إيراد البرامج" value={fmt(t.revenue)} icon={TrendingUp} tone="green" />
+            <MiniStat label="إجمالي المصروفات" value={fmt(t.expenses)} icon={TrendingDown} tone="red" />
+            <MiniStat label="نصيب مدارس الرواد" value={fmt(t.school)} icon={Layers} />
+            <MiniStat label="نصيب فيض" value={fmt(t.faid)} icon={ShieldCheck} />
+          </div>
+
+          {pending !== 0 && (
+            <div className="bg-amber-50 border border-amber-100 rounded-2xl px-4 py-3 text-sm text-amber-800 mb-4 flex items-start gap-2">
+              <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+              <span>فيه <b>{fmt(pending)} ر.س</b> نصيب فيض مسجّل بس ما تم ترحيله للرصيد. افتح البرنامج ورحّله من لوحة التوزيع.</span>
+            </div>
+          )}
+
+          <div className="bg-white rounded-2xl border border-slate-100 overflow-x-auto mb-4">
+            <table className="w-full text-sm min-w-[560px]">
+              <thead className="bg-slate-50 text-slate-500 text-xs"><tr>
+                <th className="text-right px-4 py-3 font-medium">البرنامج</th>
+                <th className="text-right px-4 py-3 font-medium">الإيراد</th>
+                <th className="text-right px-4 py-3 font-medium">المصروفات</th>
+                <th className="text-right px-4 py-3 font-medium">الصافي</th>
+                <th className="text-right px-4 py-3 font-medium">المدرسة</th>
+                <th className="text-right px-4 py-3 font-medium">فيض</th>
+              </tr></thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.p.id} className="border-t border-slate-50 cursor-pointer hover:bg-slate-50/50" onClick={() => onOpenProgram(r.p)}>
+                    <td className="px-4 py-3 font-semibold text-slate-800 whitespace-nowrap">{r.p.name}</td>
+                    <td className="px-4 py-3 text-green-600">{fmt(r.revenue)}</td>
+                    <td className="px-4 py-3 text-red-500">{fmt(r.expenses)}</td>
+                    <td className="px-4 py-3 font-semibold text-slate-800">{fmt(r.net)}</td>
+                    <td className="px-4 py-3 text-slate-600">{fmt(r.school)}</td>
+                    <td className="px-4 py-3 text-slate-600">{fmt(r.faid)}</td>
+                  </tr>
+                ))}
+                <tr className="border-t-2 border-slate-100 bg-slate-50/60 font-bold text-slate-800">
+                  <td className="px-4 py-3">الإجمالي</td>
+                  <td className="px-4 py-3 text-green-700">{fmt(t.revenue)}</td>
+                  <td className="px-4 py-3 text-red-600">{fmt(t.expenses)}</td>
+                  <td className="px-4 py-3">{fmt(t.net)}</td>
+                  <td className="px-4 py-3">{fmt(t.school)}</td>
+                  <td className="px-4 py-3">{fmt(t.faid)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      <div className={cardCls}>
+        <div className="text-sm font-semibold text-slate-700 mb-1">رصيد فيض الحالي</div>
+        <div className={`text-2xl font-extrabold ${balance >= 0 ? 'text-slate-800' : 'text-red-600'}`}>{fmt(balance)} ر.س</div>
+        <div className="text-xs text-slate-400 mt-1">شامل العمليات اليدوية والمُرحّل من البرامج.</div>
+      </div>
+    </div>
+  );
+}
+
 function WeekReport({ week, accounts, canMoney }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard label="الحاضرون" value={`${week.participants.filter((p) => p.attendance === 'حاضر').length} / ${week.participants.length}`} icon={Check} tone="green" />
         {canMoney && <>
-          <StatCard label="الإيراد" value={fmt(L.revenue(week)) + ' ر.س'} icon={TrendingUp} tone="violet" />
+          <StatCard label="الإيراد" value={fmt(L.revenue(week)) + ' ر.س'} icon={TrendingUp} tone="emerald" />
           <StatCard label="المصروفات" value={fmt(L.expenses(week)) + ' ر.س'} icon={TrendingDown} tone="red" />
-          <StatCard label="الصافي" value={fmt(L.net(week)) + ' ر.س'} icon={Wallet} tone="violet" />
+          <StatCard label="الصافي" value={fmt(L.net(week)) + ' ر.س'} icon={Wallet} tone="emerald" />
           <StatCard label="نصيب المدرسة" value={fmt(L.school(week)) + ' ر.س'} icon={Layers} tone="blue" />
           <StatCard label="نصيب فيض" value={fmt(L.faid(week)) + ' ر.س'} icon={ShieldCheck} tone="green" />
         </>}
