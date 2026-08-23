@@ -1287,7 +1287,10 @@ export default function App() {
               <div className="flex items-center gap-2">
                 <h2 className="text-lg sm:text-xl font-bold text-slate-800">{week.name}</h2>
                 {can('البرامج') && (
-                  <button onClick={() => askConfirm(`حذف «${week.name}» وكل بياناته؟`, () => removeWeek(week.id))} className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>
+                  <>
+                    <button onClick={() => { setForm({ name: week.name, date: week.date || '' }); setModal('editWeek'); }} className="text-slate-300 hover:text-emerald-600"><Pencil size={15} /></button>
+                    <button onClick={() => askConfirm(`حذف «${week.name}» وكل بياناته؟`, () => removeWeek(week.id))} className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>
+                  </>
                 )}
               </div>
               <button onClick={() => patchWeek({ status: week.status === 'مفتوح' ? 'مغلق' : 'مفتوح' })}
@@ -1780,6 +1783,21 @@ export default function App() {
           <Field label="الاسم"><input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={isGrouped ? 'اليوم الأول' : 'الأسبوع الخامس'} /></Field>
           <Field label="التاريخ (هـ)"><input className={inputCls} value={form.date || ''} onChange={(e) => setForm({ ...form, date: e.target.value })} placeholder="1447/02/01" /></Field>
           <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={addWeek}>إضافة</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
+        </Modal>
+      )}
+
+      {modal === 'editWeek' && week && (
+        <Modal title="تعديل اليوم" onClose={closeModal}>
+          <Field label="الاسم" hint="سمّه زي ما تبي: «جمعة ١٩ محرم»، «اليوم الرياضي»، أو أي اسم يناسبك.">
+            <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          </Field>
+          <Field label="التاريخ (هـ)">
+            <input className={inputCls} value={form.date || ''} onChange={(e) => setForm({ ...form, date: e.target.value })} placeholder="1447/01/19" />
+          </Field>
+          <div className="flex gap-2 mt-5">
+            <button className={btnPrimary + ' flex-1'} onClick={() => { if (form.name?.trim()) { patchWeek({ name: form.name.trim(), date: form.date || '' }); closeModal(); } }}>حفظ</button>
+            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+          </div>
         </Modal>
       )}
 
