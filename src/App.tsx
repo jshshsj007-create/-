@@ -842,21 +842,36 @@ export default function App() {
     if (data.users.some((u) => u.username === username && u.id !== form.id)) { setForm({ ...form, error: 'اسم المستخدم هذا مستخدم من قبل' }); return; }
     if (!form.id && !form.password) { setForm({ ...form, error: 'اكتب كلمة مرور' }); return; }
 
+    // أول حساب في التطبيق لازم يكون مديرًا (حساب صاحب التطبيق)، وإلا انقفل بره
+    const forceAdmin = !form.id && data.users.length === 0;
     const fields = {
-      name: form.name.trim(), username, role: form.role || ROLES[0],
+      name: form.name.trim(), username, role: forceAdmin ? 'مدير' : (form.role || ROLES[0]),
       permissions: form.permissions || [], accessScope: form.accessScope || 'all', allowedWeeks: form.allowedWeeks || [],
     };
     if (form.id) {
       // كلمة المرور تتغيّر فقط لو كتب وحدة جديدة
       save({ ...data, users: data.users.map((u) => (u.id !== form.id ? u : { ...u, ...fields, ...(form.password ? { password: form.password } : {}) })) });
     } else {
-      save({ ...data, users: [...data.users, { id: uid(), ...fields, password: form.password, status: 'نشط' }] });
+      const created = { id: uid(), ...fields, password: form.password, status: 'نشط' };
+      if (modal === 'rescueAdmin') created.role = 'مدير';
+      save({ ...data, users: [...data.users, created] });
+      // أول حساب (أو حساب الإنقاذ) ندخّله على طول، بدل ما نطرد صاحبه لشاشة الدخول
+      if (modal === 'rescueAdmin' || (forceAdmin && !currentUser)) { setCurrentUser(created); setStage('app'); }
     }
     closeModal();
   };
-  const toggleUserStatus = (userId) =>
+  const isLastAdmin = (userId) => {
+    const u = data.users.find((x) => x.id === userId);
+    return u?.role === 'مدير' && u.status === 'نشط' && activeAdmins.length === 1;
+  };
+  const toggleUserStatus = (userId) => {
+    if (isLastAdmin(userId)) { setConfirm({ text: 'هذا آخر حساب مدير نشط. لو عطّلته ما راح يقدر أحد يدخل الإعدادات. أنشئ مديرًا ثانيًا أول.', onYes: null }); return; }
     save({ ...data, users: data.users.map((u) => (u.id !== userId ? u : { ...u, status: u.status === 'نشط' ? 'غير نشط' : 'نشط' })) });
-  const removeUser = (userId) => save({ ...data, users: data.users.filter((u) => u.id !== userId) });
+  };
+  const removeUser = (userId) => {
+    if (isLastAdmin(userId)) { setConfirm({ text: 'هذا آخر حساب مدير نشط، وما ينحذف. أنشئ مديرًا ثانيًا أول.', onYes: null }); return; }
+    save({ ...data, users: data.users.filter((u) => u.id !== userId) });
+  };
 
   const addCompetition = () => {
     if (!form.name) return;
@@ -951,6 +966,10 @@ export default function App() {
     p.weeks.filter((w) => canSeeWeek(p.id, w.id)).map((w) => ({ program: p, week: w })));
   const canTransfer = can('فيض - الإيرادات والمصروفات') && canMoney;
 
+  /** آخر مدير نشط ما ينحذف ولا يتعطّل، وإلا انقفل التطبيق على الجميع. */
+  const activeAdmins = data.users.filter((u) => u.role === 'مدير' && u.status === 'نشط');
+  const noAdminExists = data.users.length > 0 && activeAdmins.length === 0;
+
   const doLogin = () => {
     const entered = (loginForm.username || '').trim().toLowerCase();
     const u = data.users.find((x) => (x.username || '').toLowerCase() === entered);
@@ -1003,7 +1022,35 @@ export default function App() {
             </Field>
             {loginError && <div className="text-red-500 text-xs mb-3">{loginError}</div>}
             <button className={btnPrimary + ' w-full'} onClick={doLogin}><KeyRound size={16} /> دخول</button>
+
+            {/* مخرج لمن انقفل برّا: ما فيه ولا حساب مدير نشط يقدر يدير التطبيق */}
+            {noAdminExists && (
+              <div className="mt-5 pt-5 border-t border-slate-100">
+                <div className="text-xs text-slate-500 mb-3 flex items-start gap-2">
+                  <AlertTriangle size={15} className="shrink-0 mt-0.5 text-amber-600" />
+                  <span>ما فيه حساب مدير نشط، فما أحد يقدر يوصل للإعدادات. أنشئ حساب مدير عشان ترجع تتحكم.</span>
+                </div>
+                <button className="w-full bg-amber-50 text-amber-900 text-sm font-semibold px-4 py-2.5 rounded-lg"
+                  onClick={() => { setForm({ permissions: [], role: 'مدير' }); setModal('rescueAdmin'); }}>
+                  إنشاء حساب مدير
+                </button>
+              </div>
+            )}
           </div>
+
+          {modal === 'rescueAdmin' && (
+            <Modal title="إنشاء حساب مدير" onClose={closeModal}>
+              <div className="text-sm text-slate-500 mb-4">حساب بصلاحيات كاملة يرجّعك تتحكم بالتطبيق وبقية المستخدمين.</div>
+              <Field label="الاسم"><input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} /></Field>
+              <Field label="اسم المستخدم"><input className={inputCls} dir="ltr" value={form.username || ''} onChange={(e) => setForm({ ...form, username: e.target.value, error: '' })} placeholder="admin" /></Field>
+              <Field label="كلمة المرور"><input className={inputCls} dir="ltr" value={form.password || ''} onChange={(e) => setForm({ ...form, password: e.target.value, error: '' })} /></Field>
+              {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+              <div className="flex gap-2 mt-5">
+                <button className={btnPrimary + ' flex-1'} onClick={saveUser}>إنشاء</button>
+                <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+              </div>
+            </Modal>
+          )}
         </div>
       </Shell>
     );
@@ -2202,7 +2249,13 @@ export default function App() {
       )}
 
       {(modal === 'addUser' || modal === 'editUser') && (
-        <Modal title={modal === 'editUser' ? 'تعديل المستخدم' : 'مستخدم جديد'} onClose={closeModal} wide>
+        <Modal title={modal === 'editUser' ? 'تعديل المستخدم' : (data.users.length === 0 ? 'أنشئ حسابك أنت أولًا' : 'مستخدم جديد')} onClose={closeModal} wide>
+          {modal === 'addUser' && data.users.length === 0 && (
+            <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-sm text-amber-900 mb-4 flex items-start gap-2">
+              <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+              <span>أول ما تضيف مستخدم، يصير الدخول إجباريًا. فأنشئ <b>حسابك أنت</b> أول (بدور مدير)، وبعدها ضيف بقية الفريق — وإلا انقفلت برّا التطبيق.</span>
+            </div>
+          )}
           <Field label="الاسم"><input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
           <Field label="اسم المستخدم" hint="اللي يكتبه عند الدخول. حروف إنجليزية وأرقام بدون مسافات.">
             <input className={inputCls} dir="ltr" value={form.username || ''} onChange={(e) => setForm({ ...form, username: e.target.value, error: '' })} placeholder="saad" />
@@ -2210,8 +2263,12 @@ export default function App() {
           <Field label={modal === 'editUser' ? 'كلمة مرور جديدة (اتركها فاضية لو ما تبي تغيّرها)' : 'كلمة المرور'}>
             <input className={inputCls} dir="ltr" value={form.password || ''} onChange={(e) => setForm({ ...form, password: e.target.value, error: '' })} placeholder="••••••" />
           </Field>
-          <Field label="الدور">
-            <select className={inputCls} value={form.role || ROLES[0]} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+          <Field label="الدور" hint={modal === 'addUser' && data.users.length === 0
+            ? 'أول حساب لازم يكون مديرًا — هذا حسابك أنت.'
+            : 'دور «مدير» يملك كل الصلاحيات ويقدر يدير المستخدمين.'}>
+            <select className={inputCls} disabled={modal === 'addUser' && data.users.length === 0}
+              value={modal === 'addUser' && data.users.length === 0 ? 'مدير' : (form.role || ROLES[0])}
+              onChange={(e) => setForm({ ...form, role: e.target.value })}>
               {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
           </Field>
@@ -2333,12 +2390,16 @@ export default function App() {
       )}
 
       {confirm && (
-        <Modal title="تأكيد" onClose={() => setConfirm(null)}>
+        <Modal title={confirm.onYes ? 'تأكيد' : 'ما ينفع'} onClose={() => setConfirm(null)}>
           <div className="text-sm text-slate-600 mb-5">{confirm.text}</div>
-          <div className="flex gap-2">
-            <button className={btnDanger + ' flex-1'} onClick={() => { confirm.onYes(); setConfirm(null); }}>نعم، احذف</button>
-            <button className={btnGhost} onClick={() => setConfirm(null)}>إلغاء</button>
-          </div>
+          {confirm.onYes ? (
+            <div className="flex gap-2">
+              <button className={btnDanger + ' flex-1'} onClick={() => { confirm.onYes(); setConfirm(null); }}>نعم، احذف</button>
+              <button className={btnGhost} onClick={() => setConfirm(null)}>إلغاء</button>
+            </div>
+          ) : (
+            <button className={btnPrimary + ' w-full'} onClick={() => setConfirm(null)}>تمام</button>
+          )}
         </Modal>
       )}
     </div>

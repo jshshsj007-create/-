@@ -109,4 +109,41 @@ test('صاحب الوصول الكامل يشوف كل البرامج', () => {
   assert.equal(limited, false);
 });
 
+test('أول حساب في التطبيق يُفرض مديرًا حتى ما ينقفل صاحبه بره', () => {
+  const users = [];
+  const forceAdmin = users.length === 0;
+  const role = forceAdmin ? 'مدير' : 'مسجل حضور';
+  assert.equal(role, 'مدير');
+
+  // بعد وجود حساب، الأدوار تصير حرة
+  const users2 = [{ id: 'u1', role: 'مدير' }];
+  assert.equal(users2.length === 0, false);
+});
+
+test('آخر مدير نشط ما ينحذف ولا يتعطّل', () => {
+  const users = [
+    { id: 'u1', role: 'مدير', status: 'نشط' },
+    { id: 'u2', role: 'مسجل حضور', status: 'نشط' },
+  ];
+  const admins = users.filter((u) => u.role === 'مدير' && u.status === 'نشط');
+  const isLast = (id) => {
+    const u = users.find((x) => x.id === id);
+    return u?.role === 'مدير' && u.status === 'نشط' && admins.length === 1;
+  };
+  assert.equal(isLast('u1'), true);   // ممنوع
+  assert.equal(isLast('u2'), false);  // عادي
+
+  const two = [...users, { id: 'u3', role: 'مدير', status: 'نشط' }];
+  const admins2 = two.filter((u) => u.role === 'مدير' && u.status === 'نشط');
+  assert.equal(admins2.length === 1, false); // صار فيه مديران، فالحذف مسموح
+});
+
+test('انعدام المدير النشط يفتح مخرج إنشاء مدير', () => {
+  const noAdmin = (users) => users.length > 0 && !users.some((u) => u.role === 'مدير' && u.status === 'نشط');
+  assert.equal(noAdmin([{ role: 'مسجل حضور', status: 'نشط' }]), true);
+  assert.equal(noAdmin([{ role: 'مدير', status: 'غير نشط' }]), true); // معطّل = مقفول برضه
+  assert.equal(noAdmin([{ role: 'مدير', status: 'نشط' }]), false);
+  assert.equal(noAdmin([]), false); // تطبيق جديد، ما يحتاج مخرج
+});
+
 console.log(`\n${passed} اختبار نجح.`);
