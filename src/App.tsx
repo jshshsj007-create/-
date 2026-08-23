@@ -848,6 +848,52 @@ export default function App() {
   const patchTrip = (patch) => save({ ...data, trips: data.trips.map((t) => (t.id !== selectedTripId ? t : { ...t, ...patch })) });
   const removeTrip = (tid) => { save({ ...data, trips: data.trips.filter((t) => t.id !== tid) }); goto('club'); };
 
+  /* --------------------------- النسخ الاحتياطي --------------------------- */
+  const backupText = () => JSON.stringify({ app: 'faid', version: 1, savedAt: new Date().toISOString(), data }, null, 2);
+  const backupName = () => `faid-backup-${new Date().toISOString().slice(0, 10)}.json`;
+
+  const downloadBackup = () => {
+    try {
+      const blob = new Blob([backupText()], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = backupName();
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setForm({ ...form, msg: 'لو نزّل الملف، احفظه في مكان آمن. وإذا ما نزّل شي، استخدم «نسخ البيانات».' });
+    } catch {
+      setForm({ ...form, msg: 'التنزيل ما اشتغل هنا. استخدم «نسخ البيانات» بدلًا منه.' });
+    }
+  };
+  const copyBackup = async () => {
+    try {
+      await navigator.clipboard.writeText(backupText());
+      setForm({ ...form, msg: 'اننسخت البيانات. الصقها في ملاحظة أو أرسلها لنفسك واحفظها.' });
+    } catch {
+      setForm({ ...form, msg: 'ما قدر ينسخ. جرّب زر التنزيل.' });
+    }
+  };
+  /** يتحقق من النسخة قبل ما يستبدل أي شي، ويعرض محتواها للتأكيد. */
+  const previewRestore = (text) => {
+    try {
+      const parsed = JSON.parse(text);
+      const d = parsed?.data && parsed?.app === 'faid' ? parsed.data : parsed;
+      if (!d || !Array.isArray(d.programs) || !Array.isArray(d.faidAccounts)) {
+        setForm({ ...form, restoreText: text, restore: null, msg: 'هذا الملف ما يشبه نسخة فيض.' });
+        return;
+      }
+      const weeks = d.programs.reduce((n, p) => n + (p.weeks || []).length, 0);
+      setForm({ ...form, restoreText: text, msg: '', restore: { d, programs: d.programs.length, weeks, users: (d.users || []).length, txns: (d.faidAdjustments || []).length } });
+    } catch {
+      setForm({ ...form, restoreText: text, restore: null, msg: 'الملف مو صالح. تأكد أنك نسخت النسخة كاملة.' });
+    }
+  };
+  const applyRestore = () => {
+    if (!form.restore?.d) return;
+    save(migrate(form.restore.d));
+    setForm({}); setModal(null); setStage('year');
+  };
+
   const addYearOrTerm = (which) => {
     if (!form.value) return;
     const key = which === 'year' ? 'years' : 'terms';
@@ -1635,9 +1681,10 @@ export default function App() {
         {view === 'settings' && (
           <div>
             <h2 className="text-lg sm:text-xl font-bold text-slate-800 mb-5">الإعدادات</h2>
-            <Tabs value={settingsTab} onChange={setSettingsTab} tabs={[
+            <Tabs value={settingsTab} onChange={(t) => { setSettingsTab(t); setForm({}); }} tabs={[
               { id: 'users', label: 'المستخدمون والصلاحيات' },
               { id: 'terms', label: 'السنوات والفصول' },
+              { id: 'backup', label: 'النسخ الاحتياطي' },
             ]} />
 
             {settingsTab === 'users' && (
@@ -1699,6 +1746,61 @@ export default function App() {
                   </div>
                   <div className="flex flex-wrap gap-2">{data.terms.map((t) => <Badge key={t} tone="emerald">الترم {t}</Badge>)}</div>
                 </div>
+              </div>
+            )}
+
+            {settingsTab === 'backup' && (
+              <div className="space-y-4">
+                <div className="bg-amber-50 border border-amber-100 rounded-2xl px-4 py-3 text-sm text-amber-900 flex items-start gap-2">
+                  <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                  <span>بياناتك محفوظة داخل هذا المتصفح فقط. لو مسحت بيانات المتصفح أو غيّرت الجهاز، تروح.
+                    خذ نسخة احتياطية كل فترة — خصوصًا بعد ما تسجّل برنامج كامل.</span>
+                </div>
+
+                <div className={cardCls}>
+                  <div className="font-semibold text-slate-700 mb-1">أخذ نسخة احتياطية</div>
+                  <div className="text-xs text-slate-400 mb-4">
+                    فيها كل شي: البرامج والأيام والمشاركين والحضور وحسابات فيض والمستخدمين.
+                  </div>
+                  <button className={btnPrimary + ' w-full'} onClick={copyBackup}><Layers size={16} /> نسخ البيانات</button>
+                  <div className="text-xs text-slate-400 mt-2 mb-4">
+                    الصقها في ملاحظات جوالك أو أرسلها لنفسك في واتساب واحتفظ فيها.
+                  </div>
+                  <button className="w-full bg-emerald-50 text-emerald-800 text-sm font-semibold px-4 py-2.5 rounded-lg flex items-center gap-1.5 justify-center" onClick={downloadBackup}>
+                    <FileText size={16} /> تنزيل كملف
+                  </button>
+                  <div className="text-xs text-slate-400 mt-2">
+                    التنزيل ما يشتغل في كل البيئات. لو ما نزّل شي، استخدم النسخ فوق.
+                  </div>
+                </div>
+
+                <div className={cardCls}>
+                  <div className="font-semibold text-slate-700 mb-1">استرجاع نسخة</div>
+                  <div className="text-xs text-red-500 mb-4">تنبيه: الاسترجاع يستبدل كل البيانات الحالية.</div>
+                  <input type="file" accept="application/json,.json" className="block w-full text-sm text-slate-500 mb-3 file:mr-0 file:ml-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-emerald-50 file:text-emerald-800"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      const r = new FileReader();
+                      r.onload = () => previewRestore(String(r.target.result || ''));
+                      r.readAsText(f);
+                    }} />
+                  <textarea className={inputCls + ' h-24 font-mono text-xs'} dir="ltr" placeholder='أو الصق محتوى النسخة هنا'
+                    value={form.restoreText || ''} onChange={(e) => previewRestore(e.target.value)} />
+
+                  {form.restore && (
+                    <div className="bg-emerald-50 rounded-xl px-4 py-3 text-sm text-emerald-900 mt-3">
+                      <div className="font-semibold mb-1">النسخة سليمة، وفيها:</div>
+                      <div className="text-xs">{form.restore.programs} برنامج · {form.restore.weeks} يوم · {form.restore.users} مستخدم · {form.restore.txns} عملية فيض</div>
+                      <button className={btnDanger + ' w-full mt-3'}
+                        onClick={() => askConfirm('استبدال كل البيانات الحالية بهذه النسخة؟ ما فيه تراجع.', applyRestore)}>
+                        <RotateCcw size={15} /> استرجاع هذه النسخة
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {form.msg && <div className="text-sm text-emerald-700 text-center">{form.msg}</div>}
               </div>
             )}
           </div>
