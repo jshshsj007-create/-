@@ -37,6 +37,18 @@ export const L = {
   remaining: (l) => L.net(l) - L.school(l) - L.faid(l),
 };
 
+/**
+ * التسجيل في البرنامج المجمّع: المشترك يختار الأيام اللي سجّل فيها.
+ * يقدر يسجّل كل الأيام، أو يوم واحد، أو يجي متأخر ويسجّل من اليوم الثالث.
+ * `days` غير موجودة = مسجّل في كل الأيام (بيانات قديمة أُدخلت قبل التسجيل الجزئي).
+ */
+export const isEnrolled = (participant, weekId) =>
+  !participant?.days || participant.days.includes(weekId);
+export const enrolledDays = (participant, weeks) =>
+  (weeks || []).filter((w) => isEnrolled(participant, w.id));
+export const enrolledIn = (participants, weekId) =>
+  (participants || []).filter((p) => isEnrolled(p, weekId));
+
 const emptyLedger = () => ({
   participants: [], collections: [], expenseItems: [], schoolPayouts: [], faidPayouts: [], faidTransfer: null,
 });
@@ -484,11 +496,14 @@ export default function App() {
   const addParticipant = () => {
     if (!form.name) return;
     const accountId = form.accountId || data.faidAccounts[0]?.id;
+    // في المجمّع لازم يكون مسجّل بيوم واحد على الأقل؛ في المنفصل ما فيه أيام أصلًا.
+    if (isGrouped && !(form.days || []).length) { setForm({ ...form, error: 'اختر يوم واحد على الأقل' }); return; }
     patchLedger(activeRef, (l) => ({
       participants: [...(l.participants || []), {
         id: uid(), name: form.name.trim(),
         amount: accountId === 'unpaid' ? 0 : Number(form.amount || 0),
         accountId, attendance: 'معلق',
+        ...(isGrouped ? { days: form.days } : {}),
       }],
     }));
     closeModal();
@@ -496,12 +511,29 @@ export default function App() {
   const saveParticipantEdit = () => {
     if (!form.name || !form.id) return;
     const accountId = form.accountId;
+    if (isGrouped && !(form.days || []).length) { setForm({ ...form, error: 'اختر يوم واحد على الأقل' }); return; }
     patchLedger(activeRef, (l) => ({
       participants: (l.participants || []).map((p) => (p.id !== form.id ? p : {
         ...p, name: form.name.trim(), accountId, amount: accountId === 'unpaid' ? 0 : Number(form.amount || 0),
+        ...(isGrouped ? { days: form.days } : {}),
       })),
     }));
     closeModal();
+  };
+  /** أيام البرنامج المجمّع في مودال المشترك، مع اقتراح المبلغ من سعر اليوم إن وُجد. */
+  const toggleParticipantDay = (weekId) => {
+    const cur = form.days || [];
+    const days = cur.includes(weekId) ? cur.filter((d) => d !== weekId) : [...cur, weekId];
+    const price = Number(program?.dayPrice || 0);
+    // نقترح المبلغ تلقائيًا ما دام المستخدم ما كتبه بنفسه
+    const amount = price > 0 && !form.amountTouched ? days.length * price : form.amount;
+    setForm({ ...form, days, amount, error: '' });
+  };
+  const toggleAllParticipantDays = (selectAll) => {
+    const days = selectAll ? (program?.weeks || []).map((w) => w.id) : [];
+    const price = Number(program?.dayPrice || 0);
+    const amount = price > 0 && !form.amountTouched ? days.length * price : form.amount;
+    setForm({ ...form, days, amount, error: '' });
   };
   const removeParticipant = (pid) =>
     patchLedger(activeRef, (l) => ({ participants: (l.participants || []).filter((p) => p.id !== pid) }));
@@ -615,7 +647,7 @@ export default function App() {
   /* ------------------------- البرامج والأسابيع ------------------------- */
   const addProgram = () => {
     if (!form.name) return;
-    save({ ...data, programs: [...data.programs, { id: uid(), name: form.name.trim(), type: form.type || 'منفصل', termKey, status: 'مفتوح', weeks: [], attendance: {}, ...emptyLedger() }] });
+    save({ ...data, programs: [...data.programs, { id: uid(), name: form.name.trim(), type: form.type || 'منفصل', termKey, status: 'مفتوح', dayPrice: Number(form.dayPrice || 0), weeks: [], attendance: {}, ...emptyLedger() }] });
     closeModal();
   };
   const patchProgram = (patch) => save({ ...data, programs: data.programs.map((p) => (p.id !== selectedProgramId ? p : { ...p, ...patch })) });
@@ -635,7 +667,12 @@ export default function App() {
     patchLedger({ kind: 'program', programId: selectedProgramId }, (p) => {
       const attendance = { ...(p.attendance || {}) };
       delete attendance[weekId];
-      return { weeks: p.weeks.filter((w) => w.id !== weekId), attendance };
+      return {
+        weeks: p.weeks.filter((w) => w.id !== weekId),
+        attendance,
+        // نشيل اليوم المحذوف من تسجيلات المشتركين عشان ما يبقى مرجع ميّت
+        participants: (p.participants || []).map((x) => (x.days ? { ...x, days: x.days.filter((d) => d !== weekId) } : x)),
+      };
     });
     if (selectedWeekId === weekId) goto('programDetail');
   };
@@ -740,6 +777,10 @@ export default function App() {
   /** مشاركو الدفتر بعد البحث. */
   const visibleParticipants = (activeLedger?.participants || [])
     .filter((p) => !search || p.name.includes(search));
+
+  /** حضور يوم معيّن في المجمّع يخص المسجّلين في ذاك اليوم فقط. */
+  const dayRoster = isGrouped && week ? enrolledIn(program.participants, week.id) : [];
+  const visibleDayRoster = dayRoster.filter((p) => !search || p.name.includes(search));
 
   // التبويبات تتغيّر حسب نوع البرنامج وصلاحية المستخدم، فنرجع للتبويب الأول لو المختار غير متاح.
   const programTabs = !program ? [] : [
@@ -874,7 +915,7 @@ export default function App() {
                 <Badge tone={isGrouped ? 'blue' : 'violet'}>{program.type}</Badge>
                 {can('البرامج') && (
                   <>
-                    <button onClick={() => { setForm({ name: program.name }); setModal('editProgram'); }} className="text-slate-300 hover:text-violet-600"><Pencil size={15} /></button>
+                    <button onClick={() => { setForm({ name: program.name, dayPrice: program.dayPrice || '' }); setModal('editProgram'); }} className="text-slate-300 hover:text-violet-600"><Pencil size={15} /></button>
                     <button onClick={() => askConfirm(`حذف برنامج «${program.name}» وكل أيامه وبياناته؟`, () => removeProgram(program.id))} className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>
                   </>
                 )}
@@ -890,7 +931,10 @@ export default function App() {
             {isGrouped && (
               <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-sm text-blue-800 mb-5 flex items-start gap-2">
                 <CalendarDays size={16} className="shrink-0 mt-0.5" />
-                <span>برنامج مجمّع: المشترك يُسجّل مرة وحدة بمبلغ الاشتراك الكامل ويظهر في كل الأيام لتسجيل الحضور. الحساب المالي كله على مستوى البرنامج، مو على كل يوم.</span>
+                <span>
+                  برنامج مجمّع: المشترك يُسجّل مرة وحدة ويختار الأيام اللي سجّل فيها — كلها، أو يوم واحد، أو يجي متأخر ويسجّل من اليوم الثالث.
+                  الحضور لكل يوم على حدة، والحساب المالي كله على مستوى البرنامج مو على كل يوم.
+                </span>
               </div>
             )}
 
@@ -917,10 +961,11 @@ export default function App() {
                       </tr></thead>
                       <tbody>
                         {program.weeks.filter((w) => canSeeWeek(program.id, w.id)).map((w) => {
+                          const roster = isGrouped ? enrolledIn(program.participants, w.id) : w.participants;
                           const present = isGrouped
-                            ? (program.participants || []).filter((p) => program.attendance?.[w.id]?.[p.id] === 'حاضر').length
-                            : w.participants.filter((p) => p.attendance === 'حاضر').length;
-                          const totalP = isGrouped ? (program.participants || []).length : w.participants.length;
+                            ? roster.filter((p) => program.attendance?.[w.id]?.[p.id] === 'حاضر').length
+                            : roster.filter((p) => p.attendance === 'حاضر').length;
+                          const totalP = roster.length;
                           return (
                             <tr key={w.id} className="border-t border-slate-50 hover:bg-slate-50/50 cursor-pointer"
                               onClick={() => { setSelectedWeekId(w.id); setWeekTab(isGrouped ? 'attendance' : 'finance'); goto('weekDetail'); }}>
@@ -948,23 +993,42 @@ export default function App() {
                     <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" />
                     <input className={inputCls + ' pr-9'} placeholder="ابحث باسم المشترك" value={search} onChange={(e) => setSearch(e.target.value)} />
                   </div>
-                  <button className={btnPrimary + ' shrink-0'} disabled={ledgerLocked} onClick={() => { setForm({ accountId: data.faidAccounts[0]?.id }); setModal('addParticipant'); }}>
+                  <button className={btnPrimary + ' shrink-0'} disabled={ledgerLocked}
+                    onClick={() => { setForm({ accountId: data.faidAccounts[0]?.id, days: program.weeks.map((w) => w.id), amount: Number(program.dayPrice || 0) * program.weeks.length || '' }); setModal('addParticipant'); }}>
                     <Plus size={16} /> مشترك
                   </button>
                 </div>
                 {ledgerLocked && <div className="text-xs text-amber-600 mb-3">البرنامج مغلق — افتحه من الأعلى عشان تعدّل المشتركين.</div>}
-                <ParticipantsTable
-                  participants={visibleParticipants}
-                  accounts={data.faidAccounts}
-                  showAttendance={false}
-                  locked={ledgerLocked}
-                  onEdit={(p) => { setForm({ ...p }); setModal('editParticipant'); }}
-                  onRemove={(p) => askConfirm(`حذف المشترك «${p.name}»؟`, () => removeParticipant(p.id))}
-                />
-                <div className="mt-3 text-sm text-slate-500 flex items-center justify-between px-1">
+                {program.weeks.length === 0 ? (
+                  <div className={emptyCls}>أضف أيام البرنامج أول من تبويب «الأيام والحضور»، عشان تقدر تحدّد أي أيام سجّل فيها كل مشترك.</div>
+                ) : (
+                  <ParticipantsTable
+                    participants={visibleParticipants}
+                    accounts={data.faidAccounts}
+                    showAttendance={false}
+                    weeks={program.weeks}
+                    locked={ledgerLocked}
+                    onEdit={(p) => { setForm({ ...p, days: enrolledDays(p, program.weeks).map((w) => w.id), amountTouched: true }); setModal('editParticipant'); }}
+                    onRemove={(p) => askConfirm(`حذف المشترك «${p.name}»؟`, () => removeParticipant(p.id))}
+                  />
+                )}
+                <div className="mt-3 text-sm text-slate-500 flex flex-wrap items-center justify-between gap-2 px-1">
                   <span>عدد المشتركين: <b className="text-slate-800">{(program.participants || []).length}</b></span>
                   {canMoney && <span>إجمالي التحصيل: <b className="text-slate-800">{fmt(paidAmount(program.participants))} ر.س</b></span>}
                 </div>
+                {program.weeks.length > 0 && (
+                  <div className={cardCls + ' mt-4'}>
+                    <div className="text-sm font-semibold text-slate-700 mb-3">المسجّلون في كل يوم</div>
+                    <div className="space-y-2">
+                      {program.weeks.map((w) => (
+                        <div key={w.id} className="flex items-center justify-between text-sm border-b border-slate-50 pb-2">
+                          <span className="text-slate-600">{w.name}{w.date ? ` - ${w.date}` : ''}</span>
+                          <span className="font-semibold text-slate-800">{enrolledIn(program.participants, w.id).length} مسجّل</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1033,20 +1097,27 @@ export default function App() {
                     <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" />
                     <input className={inputCls + ' pr-9'} placeholder="ابحث باسم المشترك" value={search} onChange={(e) => setSearch(e.target.value)} />
                   </div>
-                  <button onClick={() => markAll('حاضر', visibleParticipants)} disabled={week.status === 'مغلق'} className="text-xs font-semibold text-green-700 bg-green-50 px-3 py-2.5 rounded-lg shrink-0 disabled:opacity-40">تعليم الكل حاضر</button>
+                  <button onClick={() => markAll('حاضر', visibleDayRoster)} disabled={week.status === 'مغلق'} className="text-xs font-semibold text-green-700 bg-green-50 px-3 py-2.5 rounded-lg shrink-0 disabled:opacity-40">تعليم الكل حاضر</button>
                 </div>
-                {(program.participants || []).length === 0 ? (
-                  <div className={emptyCls}>ما فيه مشتركون بعد. سجّلهم من تبويب «المشتركون» في صفحة البرنامج.</div>
+                {dayRoster.length === 0 ? (
+                  <div className={emptyCls}>
+                    {(program.participants || []).length === 0
+                      ? 'ما فيه مشتركون بعد. سجّلهم من تبويب «المشتركون» في صفحة البرنامج.'
+                      : 'ما فيه أحد مسجّل في هذا اليوم. تقدر تسجّل مشترك جديد أو تعدّل أيام مشترك موجود من تبويب «المشتركون».'}
+                  </div>
                 ) : (
                   <AttendanceTable
-                    participants={visibleParticipants}
+                    participants={visibleDayRoster}
                     statusOf={(p) => attendanceOf(p, week.id)}
                     locked={week.status === 'مغلق'}
                     onSet={(p, s) => setAttendance(p.id, s, week.id)}
                   />
                 )}
-                <div className="mt-3 text-sm text-slate-500 px-1">
-                  الحاضرون اليوم: <b className="text-slate-800">{(program.participants || []).filter((p) => attendanceOf(p, week.id) === 'حاضر').length}</b> من {(program.participants || []).length}
+                <div className="mt-3 text-sm text-slate-500 px-1 flex flex-wrap gap-x-4 gap-y-1">
+                  <span>الحاضرون اليوم: <b className="text-slate-800">{dayRoster.filter((p) => attendanceOf(p, week.id) === 'حاضر').length}</b> من {dayRoster.length} مسجّل</span>
+                  {dayRoster.length !== (program.participants || []).length && (
+                    <span className="text-slate-400">(إجمالي مشتركي البرنامج: {(program.participants || []).length})</span>
+                  )}
                 </div>
               </div>
             ) : (
@@ -1385,6 +1456,11 @@ export default function App() {
               ))}
             </div>
           </Field>
+          {(form.type || 'منفصل') === 'مجمع' && (
+            <Field label="سعر اليوم (اختياري)" hint="لو حطيته، يُقترح مبلغ كل مشترك تلقائيًا حسب عدد أيامه، وتقدر تعدّله دايم.">
+              <input type="number" className={inputCls} value={form.dayPrice || ''} onChange={(e) => setForm({ ...form, dayPrice: e.target.value })} placeholder="مثال: 50" />
+            </Field>
+          )}
           <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={addProgram}>إضافة</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
         </Modal>
       )}
@@ -1392,8 +1468,14 @@ export default function App() {
       {modal === 'editProgram' && (
         <Modal title="تعديل البرنامج" onClose={closeModal}>
           <Field label="اسم البرنامج"><input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+          {isGrouped && (
+            <Field label="سعر اليوم (اختياري)" hint="يُستخدم لاقتراح مبلغ المشترك حسب عدد أيامه فقط، وما يغيّر المبالغ المسجّلة سابقًا.">
+              <input type="number" className={inputCls} value={form.dayPrice ?? ''} onChange={(e) => setForm({ ...form, dayPrice: e.target.value })} placeholder="مثال: 50" />
+            </Field>
+          )}
           <div className="flex gap-2 mt-5">
-            <button className={btnPrimary + ' flex-1'} onClick={() => { if (form.name) { patchProgram({ name: form.name.trim() }); closeModal(); } }}>حفظ</button>
+            <button className={btnPrimary + ' flex-1'}
+              onClick={() => { if (form.name) { patchProgram({ name: form.name.trim(), ...(isGrouped ? { dayPrice: Number(form.dayPrice || 0) } : {}) }); closeModal(); } }}>حفظ</button>
             <button className={btnGhost} onClick={closeModal}>إلغاء</button>
           </div>
         </Modal>
@@ -1417,12 +1499,40 @@ export default function App() {
               <option value="unpaid">ما دفع</option>
             </select>
           </Field>
-          {form.accountId !== 'unpaid' && (
-            <Field label={isGrouped ? 'مبلغ الاشتراك الكامل (ر.س)' : 'المبلغ (ر.س)'}
-              hint={isGrouped ? 'هذا مبلغ الاشتراك لكل أيام البرنامج، يُحتسب مرة وحدة.' : undefined}>
-              <input type="number" className={inputCls} value={form.amount ?? ''} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
+          {isGrouped && (
+            <Field label="الأيام المسجّل فيها" hint="يقدر يسجّل كل الأيام، أو يوم واحد، أو يجي متأخر ويسجّل من اليوم الثالث.">
+              <div className="flex items-center gap-2 mb-2">
+                <button type="button" onClick={() => toggleAllParticipantDays(true)} className="text-xs text-violet-600 hover:underline">تحديد الكل</button>
+                <span className="text-slate-200">|</span>
+                <button type="button" onClick={() => toggleAllParticipantDays(false)} className="text-xs text-slate-500 hover:underline">إلغاء الكل</button>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {(program?.weeks || []).map((w) => {
+                  const on = (form.days || []).includes(w.id);
+                  return (
+                    <button key={w.id} type="button" onClick={() => toggleParticipantDay(w.id)}
+                      className={`text-xs px-3 py-2 rounded-lg border text-right ${on ? 'bg-violet-600 text-white border-violet-600' : 'border-slate-200 text-slate-600'}`}>
+                      {w.name}{w.date ? <span className={`block text-[10px] ${on ? 'text-violet-200' : 'text-slate-400'}`}>{w.date}</span> : null}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="text-xs text-slate-500 mt-2">مسجّل في <b>{(form.days || []).length}</b> من {(program?.weeks || []).length} يوم</div>
             </Field>
           )}
+          {form.accountId !== 'unpaid' && (
+            <Field
+              label={isGrouped ? 'مبلغ الاشتراك (ر.س)' : 'المبلغ (ر.س)'}
+              hint={isGrouped
+                ? (Number(program?.dayPrice || 0) > 0
+                  ? `مقترح من سعر اليوم (${fmt(program.dayPrice)} ر.س × ${(form.days || []).length} يوم). تقدر تعدّله.`
+                  : 'المبلغ المدفوع فعليًا عن الأيام المسجّل فيها، يُحتسب مرة وحدة.')
+                : undefined}>
+              <input type="number" className={inputCls} value={form.amount ?? ''}
+                onChange={(e) => setForm({ ...form, amount: e.target.value, amountTouched: true })} />
+            </Field>
+          )}
+          {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
           <div className="flex gap-2 mt-5">
             <button className={btnPrimary + ' flex-1'} onClick={modal === 'addParticipant' ? addParticipant : saveParticipantEdit}>
               {modal === 'addParticipant' ? 'إضافة' : 'حفظ'}
@@ -1730,7 +1840,7 @@ function LedgerFinance({ ledger, accounts, locked, canTransfer, onAdd, onRemove,
   );
 }
 
-function ParticipantsTable({ participants, accounts, showAttendance, statusOf, onSetAttendance, onEdit, onRemove, locked }) {
+function ParticipantsTable({ participants, accounts, showAttendance, statusOf, onSetAttendance, onEdit, onRemove, locked, weeks }) {
   if (!participants.length) {
     return <div className={emptyCls}>ما فيه نتائج.</div>;
   }
@@ -1739,6 +1849,7 @@ function ParticipantsTable({ participants, accounts, showAttendance, statusOf, o
       <table className="w-full text-sm min-w-[560px]">
         <thead className="bg-slate-50 text-slate-500 text-xs"><tr>
           <th className="text-right px-4 py-3 font-medium">الاسم</th>
+          {weeks && <th className="text-right px-4 py-3 font-medium">الأيام المسجّلة</th>}
           <th className="text-right px-4 py-3 font-medium">المبلغ</th>
           <th className="text-right px-4 py-3 font-medium">التصنيف</th>
           {showAttendance && <th className="text-right px-4 py-3 font-medium">الحضور</th>}
@@ -1748,6 +1859,16 @@ function ParticipantsTable({ participants, accounts, showAttendance, statusOf, o
           {participants.map((p) => (
             <tr key={p.id} className="border-t border-slate-50">
               <td className="px-4 py-3 font-semibold text-slate-800">{p.name}</td>
+              {weeks && (() => {
+                const mine = enrolledDays(p, weeks);
+                const all = mine.length === weeks.length;
+                return (
+                  <td className="px-4 py-3">
+                    <Badge tone={all ? 'violet' : 'amber'}>{all ? `كل الأيام (${weeks.length})` : `${mine.length} من ${weeks.length}`}</Badge>
+                    {!all && <div className="text-[11px] text-slate-400 mt-1">{mine.map((w) => w.name).join('، ') || 'ما فيه أيام'}</div>}
+                  </td>
+                );
+              })()}
               <td className="px-4 py-3 text-slate-600">{p.accountId === 'unpaid' ? '-' : fmt(p.amount) + ' ر.س'}</td>
               <td className="px-4 py-3">
                 {p.accountId === 'unpaid'
@@ -1919,11 +2040,16 @@ function GroupedReport({ program, accounts, canMoney }) {
           </tr></thead>
           <tbody>
             {parts.map((p) => {
-              const present = days.filter((d) => st(p.id, d.id) === 'حاضر').length;
+              const mine = enrolledDays(p, days);
+              const present = mine.filter((d) => st(p.id, d.id) === 'حاضر').length;
               return (
                 <tr key={p.id} className="border-t border-slate-50">
                   <td className="px-4 py-2.5 font-semibold text-slate-800 sticky right-0 bg-white whitespace-nowrap">{p.name}</td>
                   {days.map((d) => {
+                    // اليوم اللي ما سجّل فيه يظهر فاضي، مو «معلق» — فرق مهم في التقرير
+                    if (!isEnrolled(p, d.id)) {
+                      return <td key={d.id} className="px-3 py-2.5 text-center text-slate-200 text-xs">·</td>;
+                    }
                     const s = st(p.id, d.id);
                     return (
                       <td key={d.id} className="px-3 py-2.5 text-center">
@@ -1933,12 +2059,22 @@ function GroupedReport({ program, accounts, canMoney }) {
                       </td>
                     );
                   })}
-                  <td className="px-3 py-2.5 text-center font-bold text-slate-700">{present}/{days.length}</td>
+                  <td className="px-3 py-2.5 text-center font-bold text-slate-700">{present}/{mine.length}</td>
                 </tr>
               );
             })}
+            <tr className="border-t-2 border-slate-100 bg-slate-50/60 font-bold text-slate-800">
+              <td className="px-4 py-3 sticky right-0 bg-slate-50">المسجّلون</td>
+              {days.map((d) => (
+                <td key={d.id} className="px-3 py-3 text-center">{enrolledIn(parts, d.id).length}</td>
+              ))}
+              <td className="px-3 py-3"></td>
+            </tr>
           </tbody>
         </table>
+      </div>
+      <div className="text-xs text-slate-400 px-1">
+        ✓ حاضر · ✕ غائب · – ما سُجّل حضوره · نقطة رمادية = مو مسجّل في هذا اليوم
       </div>
 
       {canMoney && (
