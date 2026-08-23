@@ -1018,7 +1018,7 @@ export default function App() {
       <Shell dark>
         <div className="flex-1 flex flex-col items-center justify-center px-8 text-center">
           <FaidLogo size={116} variant="full" />
-          <div className="text-brand-200 text-sm leading-relaxed mt-8">إدارة البرامج والإيرادات<br />لفريق فيض</div>
+          <div className="text-brand-200 text-base font-semibold mt-8">فريق فيض</div>
           <button onClick={() => setStage(data.users.length > 0 && !currentUser ? 'login' : 'year')}
             className="mt-12 bg-white text-brand-900 font-bold text-sm px-10 py-3.5 rounded-2xl">
             ابدأ
