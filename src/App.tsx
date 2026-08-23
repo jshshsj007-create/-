@@ -418,6 +418,25 @@ function Stepper({ value, onChange, min = 1, max = 60 }) {
   );
 }
 
+/** شرائح فلترة أفقية مع عدّاد لكل خيار. */
+function FilterChips({ options, value, onChange }) {
+  return (
+    <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+      {options.map((o) => {
+        const on = value === o.id;
+        return (
+          <button key={o.id} type="button" onClick={() => onChange(o.id)}
+            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+              on ? 'bg-emerald-700 text-white border-emerald-700' : 'bg-white border-slate-200 text-slate-600'}`}>
+            {o.label}
+            {o.count != null && <span className={`mr-1.5 ${on ? 'text-emerald-200' : 'text-slate-400'}`}>{o.count}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function InfoRow({ icon: Icon, label, value }) {
   return (
     <div className="bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3">
@@ -494,6 +513,8 @@ export default function App() {
   const [settingsTab, setSettingsTab] = useState('users');
   const [setupLevel, setSetupLevel] = useState('الكل');
   const [clubTab, setClubTab] = useState('competitions');
+  const [payFilter, setPayFilter] = useState('all');   // فلترة الطلاب حسب طريقة الدفع
+  const [faidFilter, setFaidFilter] = useState('الكل'); // فلترة عمليات فيض حسب النوع
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
   const [confirm, setConfirm] = useState(null);
@@ -581,7 +602,9 @@ export default function App() {
     return grouped.sort((x, y) => (y.date || '').localeCompare(x.date || ''));
   })();
 
-  const goto = (v) => { setView(v); setModal(null); setSearch(''); };
+  const shownFaid = faidFilter === 'الكل' ? faidTransactions : faidTransactions.filter((t) => t.type === faidFilter);
+
+  const goto = (v) => { setView(v); setModal(null); setSearch(''); setPayFilter('all'); };
   const closeModal = () => { setModal(null); setForm({}); };
   const askConfirm = (text, onYes) => setConfirm({ text, onYes });
 
@@ -1061,13 +1084,27 @@ export default function App() {
     (id === 'reports' && view === 'club') ||
     (id === 'home' && (view === 'club' || view === 'tripDetail'));
 
-  /** مشاركو الدفتر بعد البحث. */
-  const visibleParticipants = (activeLedger?.participants || [])
-    .filter((p) => !search || p.name.includes(search));
+  /** فلترة حسب طريقة الدفع: حساب معيّن، أو «ما دفع»، أو الكل. */
+  const byPay = (p) => payFilter === 'all' || p.accountId === payFilter;
+  const matches = (p) => (!search || p.name.includes(search)) && byPay(p);
+
+  /** خيارات الفلترة مع عدّاد كل خيار، مبنية من القائمة المعروضة. */
+  const payOptions = (list) => [
+    { id: 'all', label: 'الكل', count: list.length },
+    ...data.faidAccounts
+      .map((a) => ({ id: a.id, label: a.name, count: list.filter((p) => p.accountId === a.id).length }))
+      .filter((o) => o.count > 0),
+    ...(list.some((p) => p.accountId === 'unpaid')
+      ? [{ id: 'unpaid', label: 'ما دفع', count: list.filter((p) => p.accountId === 'unpaid').length }] : []),
+  ];
+
+  /** مشاركو الدفتر بعد البحث والفلترة. */
+  const allParticipants = activeLedger?.participants || [];
+  const visibleParticipants = allParticipants.filter(matches);
 
   /** حضور يوم معيّن في المجمّع يخص المسجّلين في ذاك اليوم فقط. */
   const dayRoster = isGrouped && week ? enrolledIn(program.participants, week.id) : [];
-  const visibleDayRoster = dayRoster.filter((p) => !search || p.name.includes(search));
+  const visibleDayRoster = dayRoster.filter(matches);
 
   // التبويبات تتغيّر حسب نوع البرنامج وصلاحية المستخدم، فنرجع للتبويب الأول لو المختار غير متاح.
   const programTabs = !program ? [] : [
@@ -1294,6 +1331,9 @@ export default function App() {
                     <Plus size={16} /> مشترك
                   </button>
                 </div>
+                {allParticipants.length > 0 && (
+                  <div className="mb-3"><FilterChips options={payOptions(allParticipants)} value={payFilter} onChange={setPayFilter} /></div>
+                )}
                 {ledgerLocked && <div className="text-xs text-amber-600 mb-3">البرنامج مغلق — افتحه من الأعلى عشان تعدّل المشتركين.</div>}
                 {program.weeks.length === 0 ? (
                   <div className={emptyCls}>أضف أيام البرنامج أول من تبويب «الأيام والحضور»، عشان تقدر تحدّد أي أيام سجّل فيها كل مشترك.</div>
@@ -1403,6 +1443,9 @@ export default function App() {
                     <Plus size={16} /> تسجيل
                   </button>
                 </div>
+                {dayRoster.length > 0 && (
+                  <div className="mb-3"><FilterChips options={payOptions(dayRoster)} value={payFilter} onChange={setPayFilter} /></div>
+                )}
                 {dayRoster.length === 0 ? (
                   <div className={emptyCls}>
                     {(program.participants || []).length === 0
@@ -1498,11 +1541,15 @@ export default function App() {
                         <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" />
                         <input className={inputCls + ' pr-9'} placeholder="ابحث باسم الطالب" value={search} onChange={(e) => setSearch(e.target.value)} />
                       </div>
-                      <button onClick={() => markAll('حاضر', visibleParticipants)} disabled={ledgerLocked} className="text-xs font-semibold text-green-700 bg-green-50 px-3 py-2.5 rounded-lg shrink-0 disabled:opacity-40">الكل حاضر</button>
+                      <button onClick={() => markAll('حاضر', visibleParticipants)} disabled={ledgerLocked}
+                        title="يعلّم المعروضين حاليًا فقط" className="text-xs font-semibold text-green-700 bg-green-50 px-3 py-2.5 rounded-lg shrink-0 disabled:opacity-40">الكل حاضر</button>
                       <button className={btnPrimary + ' shrink-0'} disabled={ledgerLocked} onClick={() => { setForm({ accountId: data.faidAccounts[0]?.id }); setModal('addParticipant'); }}>
                         <Plus size={16} /> مشارك
                       </button>
                     </div>
+                    {allParticipants.length > 0 && (
+                      <div className="mb-3"><FilterChips options={payOptions(allParticipants)} value={payFilter} onChange={setPayFilter} /></div>
+                    )}
                     {ledgerLocked && <div className="text-xs text-amber-600 mb-3">اليوم مغلق — افتحه من الأعلى عشان تعدّل.</div>}
                     {!week.participants.length ? (
                       <div className={emptyCls}>لا يوجد مشاركون بعد.</div>
@@ -1560,8 +1607,28 @@ export default function App() {
               <h3 className="font-bold text-slate-700">آخر العمليات</h3>
               <button className={btnPrimary} onClick={() => { setForm({}); setModal('addFaid'); }}><Plus size={16} /> عملية يدوية</button>
             </div>
-            {faidTransactions.length === 0 ? (
-              <div className={emptyCls}>لا توجد عمليات بعد.</div>
+            {faidTransactions.length > 0 && (
+              <div className="mb-3">
+                <FilterChips
+                  options={[
+                    { id: 'الكل', label: 'الكل', count: faidTransactions.length },
+                    { id: 'إيراد', label: 'الإيرادات', count: faidTransactions.filter((t) => t.type === 'إيراد').length },
+                    { id: 'مصروف', label: 'المصروفات', count: faidTransactions.filter((t) => t.type === 'مصروف').length },
+                  ]}
+                  value={faidFilter} onChange={setFaidFilter} />
+                {faidFilter !== 'الكل' && (
+                  <div className="mt-2 text-sm text-slate-500 px-1">
+                    إجمالي {faidFilter === 'إيراد' ? 'الإيرادات' : 'المصروفات'} المعروضة:{' '}
+                    <b className={faidFilter === 'إيراد' ? 'text-green-700' : 'text-red-600'}>{fmt(sumAmt(shownFaid))} ر.س</b>
+                  </div>
+                )}
+              </div>
+            )}
+            {shownFaid.length === 0 ? (
+              <div className={emptyCls}>
+                {faidTransactions.length === 0 ? 'لا توجد عمليات بعد.'
+                  : `ما فيه ${faidFilter === 'إيراد' ? 'إيرادات' : 'مصروفات'} مسجّلة.`}
+              </div>
             ) : (
               <div className="bg-white rounded-2xl border border-slate-100 overflow-x-auto">
                 <table className="w-full text-sm min-w-[620px]">
@@ -1574,7 +1641,7 @@ export default function App() {
                     <th className="text-right px-4 py-3 font-medium"></th>
                   </tr></thead>
                   <tbody>
-                    {faidTransactions.map((t) => (
+                    {shownFaid.map((t) => (
                       <tr key={t.id} className="border-t border-slate-50">
                         <td className="px-4 py-3 text-slate-700">
                           {t.note || '-'}
