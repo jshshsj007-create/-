@@ -51,10 +51,20 @@ test('يوم فيه مصروف بس يُعتبر بدأ', () => {
   assert.equal(weekState(w), 'جاري');
 });
 
-test('الترقية: أيام البرنامج المنفصل القديمة بلا أسماء تصير تسجيل سريع', () => {
+test('التسجيل بالأسماء هو الأصل في كل البرامج', () => {
   const d = migrate({ programs: [{ id: 'p', name: 'جمعة', type: 'منفصل', termKey: 'k',
     weeks: [{ id: 'w1', name: 'الأول', participants: [] }] }] });
-  assert.equal(d.programs[0].weeks[0].mode, 'quick');
+  assert.equal(d.programs[0].weeks[0].mode, 'named');
+});
+
+test('اليوم السريع الفاضي يرجع للأسماء، واللي فيه أرقام يبقى كما هو', () => {
+  const empty = migrate({ programs: [{ id: 'p', name: 'ج', type: 'منفصل', termKey: 'k',
+    weeks: [{ id: 'w1', name: 'الأول', mode: 'quick', quickCount: 0, quickRevenue: 0 }] }] });
+  assert.equal(empty.programs[0].weeks[0].mode, 'named');
+
+  const used = migrate({ programs: [{ id: 'p', name: 'ج', type: 'منفصل', termKey: 'k',
+    weeks: [{ id: 'w1', name: 'الأول', mode: 'quick', quickCount: 25, quickRevenue: 1500 }] }] });
+  assert.equal(used.programs[0].weeks[0].mode, 'quick'); // ما نضيّع أرقامه
 });
 
 test('الترقية: اليوم اللي فيه أسماء مسجّلة يبقى بالأسماء', () => {

@@ -118,9 +118,11 @@ export function migrate(loaded) {
     const prog = { ...emptyLedger('named'), attendance: {}, status: 'مفتوح', ...p };
     prog.mode = 'named';
     prog.weeks = (p.weeks || []).map((w) => {
-      const defaultMode = prog.type === 'مجمع' || (w.participants || []).length ? 'named' : 'quick';
-      const week = { ...emptyLedger(defaultMode), ...w };
-      if (!week.mode) week.mode = defaultMode;
+      const week = { ...emptyLedger('named'), ...w };
+      // التسجيل بالأسماء هو الأصل. الوضع السريع يبقى فقط لو فعلًا فيه أرقام مسجّلة فيه.
+      if (!week.mode) week.mode = 'named';
+      if (week.mode === 'quick' && !Number(week.quickCount || 0) && !Number(week.quickRevenue || 0)) week.mode = 'named';
+      if (prog.type === 'مجمع') week.mode = 'named';
       // مصروفات النسخة القديمة كانت رقمًا مفردًا على الأسبوع
       if (w.expenses && !(w.expenseItems || []).length) {
         week.expenseItems = [{ id: uid(), accountId: d.faidAccounts[0]?.id, amount: Number(w.expenses), note: 'مصروف سابق' }];
@@ -532,7 +534,7 @@ export default function App() {
   }
 
   const termKey = `${data.currentYear}-${data.currentTerm}`;
-  const termPrograms = data.programs.filter((p) => p.termKey === termKey);
+  const allTermPrograms = data.programs.filter((p) => p.termKey === termKey);
   const program = data.programs.find((p) => p.id === selectedProgramId);
   const week = program?.weeks.find((w) => w.id === selectedWeekId);
   const trip = data.trips.find((t) => t.id === selectedTripId);
@@ -614,7 +616,7 @@ export default function App() {
 
   /* ------------------------------ المشاركون ------------------------------ */
   const addParticipant = () => {
-    if (!form.name) return;
+    if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب اسم الطالب' }); return; }
     const accountId = form.accountId || data.faidAccounts[0]?.id;
     // في المجمّع لازم يكون مسجّل بيوم واحد على الأقل؛ في المنفصل ما فيه أيام أصلًا.
     if (isGrouped && !(form.days || []).length) { setForm({ ...form, error: 'اختر يوم واحد على الأقل' }); return; }
@@ -630,7 +632,7 @@ export default function App() {
     closeModal();
   };
   const saveParticipantEdit = () => {
-    if (!form.name || !form.id) return;
+    if (!form.name?.trim() || !form.id) { setForm({ ...form, error: 'اكتب اسم الطالب' }); return; }
     const accountId = form.accountId;
     if (isGrouped && !(form.days || []).length) { setForm({ ...form, error: 'اختر يوم واحد على الأقل' }); return; }
     patchLedger(activeRef, (l) => ({
@@ -767,14 +769,14 @@ export default function App() {
 
   /* ------------------------- البرامج والأسابيع ------------------------- */
   const addProgram = () => {
-    if (!form.name) return;
+    if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب اسم البرنامج' }); return; }
     const type = form.type || 'منفصل';
     const count = Math.max(0, Math.min(60, Number(form.weekCount || 0)));
     const unit = type === 'مجمع' ? 'اليوم' : 'الأسبوع';
     // ننشئ الأيام/الأسابيع دفعة وحدة بدل ما يضيفها وحدة وحدة
     const weeks = Array.from({ length: count }, (_, i) => ({
       id: uid(), name: `${unit} ${ORDINALS[i] || i + 1}`, date: '', status: 'مفتوح',
-      ...emptyLedger(type === 'مجمع' ? 'named' : 'quick'),
+      ...emptyLedger('named'),
     }));
     const id = uid();
     save({ ...data, programs: [...data.programs, { id, name: form.name.trim(), type, termKey, status: 'مفتوح', dayPrice: Number(form.dayPrice || 0), weeks, attendance: {}, ...emptyLedger('named') }] });
@@ -787,10 +789,10 @@ export default function App() {
     goto('programs');
   };
   const addWeek = () => {
-    if (!form.name) return;
+    if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب اسم اليوم' }); return; }
     patchLedger({ kind: 'program', programId: selectedProgramId }, (p) => ({
       weeks: [...p.weeks, { id: uid(), name: form.name.trim(), date: form.date || '', status: 'مفتوح',
-        ...emptyLedger(p.type === 'مجمع' ? 'named' : 'quick') }],
+        ...emptyLedger('named') }],
     }));
     closeModal();
   };
@@ -917,6 +919,13 @@ export default function App() {
   const can = (perm) => isAdmin || (effectiveUser?.permissions || []).includes(perm);
   const canSeeWeek = (programId, weekId) => isAdmin || effectiveUser?.accessScope === 'all' || (effectiveUser?.allowedWeeks || []).some((a) => a.programId === programId && a.weekId === weekId);
   const canMoney = can('المصروفات والتقارير');
+  const limitedScope = !isAdmin && effectiveUser?.accessScope === 'limited';
+  /** البرنامج يظهر فقط لو فيه يوم واحد على الأقل يقدر يشوفه المستخدم. */
+  const termPrograms = !limitedScope ? allTermPrograms
+    : allTermPrograms.filter((p) => p.weeks.some((w) => canSeeWeek(p.id, w.id)));
+  /** أيام المستخدم المحدود عبر كل البرامج — عشان يوصل لها من الرئيسية مباشرة. */
+  const myWeeks = !limitedScope ? [] : termPrograms.flatMap((p) =>
+    p.weeks.filter((w) => canSeeWeek(p.id, w.id)).map((w) => ({ program: p, week: w })));
   const canTransfer = can('فيض - الإيرادات والمصروفات') && canMoney;
 
   const doLogin = () => {
@@ -1112,6 +1121,25 @@ export default function App() {
                 ? <MiniStat label="رصيد فيض" value={fmt(balance)} icon={Wallet} tone={balance >= 0 ? 'green' : 'red'} />
                 : <MiniStat label="أيام مفتوحة" value={termPrograms.flatMap((p) => p.weeks).filter((w) => w.status === 'مفتوح').length} icon={Calendar} />}
             </div>
+            {limitedScope && myWeeks.length > 0 && (
+              <div className="mb-5">
+                <div className="text-sm font-bold text-slate-700 mb-2">أيامك</div>
+                <div className="space-y-2.5">
+                  {myWeeks.map(({ program: pr, week: w }) => (
+                    <button key={w.id}
+                      onClick={() => { setSelectedProgramId(pr.id); setSelectedWeekId(w.id); setWeekTab(pr.type === 'مجمع' ? 'attendance' : 'overview'); goto('weekDetail'); }}
+                      className="w-full bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3 text-right hover:shadow-md transition-shadow">
+                      <span className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0"><Calendar size={20} /></span>
+                      <span className="flex-1 min-w-0">
+                        <span className="block font-bold text-slate-800">{w.name}</span>
+                        <span className="block text-xs text-slate-400 mt-0.5">{pr.name}{w.date ? ` · ${w.date}` : ''}</span>
+                      </span>
+                      <ChevronLeft size={18} className="text-slate-300 shrink-0" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="space-y-3">
               {sections.map((c) => (
                 <PickCard key={c.id} icon={c.icon} title={c.label} note={c.desc} chevron onClick={() => goto(c.id)} />
@@ -1130,9 +1158,18 @@ export default function App() {
             {termPrograms.length === 0 ? (
               <div className="bg-white rounded-2xl border border-dashed border-slate-200 p-10 text-center">
                 <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center mx-auto mb-4"><BookOpen size={26} /></div>
-                <div className="font-bold text-slate-700 mb-1">لا توجد برامج حاليًا</div>
-                <div className="text-sm text-slate-400 mb-5">يمكنك إضافة برنامج جديد للبدء</div>
-                {can('البرامج') && <button className={btnPrimary + ' w-full'} onClick={() => { setForm({}); setModal('pickProgramType'); }}><Plus size={16} /> إضافة برنامج</button>}
+                {limitedScope ? (
+                  <>
+                    <div className="font-bold text-slate-700 mb-1">ما فيه أيام مسندة لك</div>
+                    <div className="text-sm text-slate-400">صلاحيتك محدودة بأيام معيّنة، وما فيه أيام مسندة لك في الترم {data.currentTerm} {data.currentYear}هـ. راجع المدير.</div>
+                  </>
+                ) : (
+                  <>
+                    <div className="font-bold text-slate-700 mb-1">لا توجد برامج حاليًا</div>
+                    <div className="text-sm text-slate-400 mb-5">يمكنك إضافة برنامج جديد للبدء</div>
+                    {can('البرامج') && <button className={btnPrimary + ' w-full'} onClick={() => { setForm({}); setModal('pickProgramType'); }}><Plus size={16} /> إضافة برنامج</button>}
+                  </>
+                )}
               </div>
             ) : (
               <div className="bg-white rounded-2xl border border-slate-100 overflow-x-auto">
@@ -1206,8 +1243,12 @@ export default function App() {
                 <div className="flex justify-end mb-3">
                   {can('البرامج') && <button className={btnPrimary} onClick={() => { setForm({}); setModal('addWeek'); }}><Plus size={16} /> {isGrouped ? 'يوم جديد' : 'أسبوع/يوم جديد'}</button>}
                 </div>
-                {program.weeks.length === 0 ? (
-                  <div className={emptyCls}>لا توجد أيام بعد. أضف أول يوم.</div>
+                {program.weeks.filter((w) => canSeeWeek(program.id, w.id)).length === 0 ? (
+                  <div className={emptyCls}>
+                    {program.weeks.length === 0
+                      ? 'لا توجد أيام بعد. أضف أول يوم.'
+                      : 'ما فيه أيام مسندة لك في هذا البرنامج. راجع المدير لو تحتاج وصول.'}
+                  </div>
                 ) : (
                   <div className="space-y-2.5">
                     {program.weeks.filter((w) => canSeeWeek(program.id, w.id)).map((w) => {
@@ -1845,7 +1886,7 @@ export default function App() {
 
       {modal === 'addProgram' && (
         <Modal title={`إضافة برنامج ${form.type || 'منفصل'}`} onClose={closeModal}>
-          <Field label="اسم البرنامج"><input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="مثال: جمعة الرواد" /></Field>
+          <Field label="اسم البرنامج"><input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} placeholder="مثال: جمعة الرواد" /></Field>
           <Field label={form.type === 'مجمع' ? 'عدد الأيام' : 'عدد الأسابيع'}
             hint={Number(form.weekCount || 0) > 0
               ? `سيتم إنشاء ${form.weekCount} ${form.type === 'مجمع' ? 'يوم داخل البرنامج' : 'أسبوع مستقل'}. تقدر تزيد أو تحذف بعدين.`
@@ -1858,6 +1899,7 @@ export default function App() {
               <input type="number" className={inputCls} value={form.dayPrice || ''} onChange={(e) => setForm({ ...form, dayPrice: e.target.value })} placeholder="مثال: 50" />
             </Field>
           )}
+          {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
           <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={addProgram}>إضافة</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
         </Modal>
       )}
@@ -1880,8 +1922,9 @@ export default function App() {
 
       {modal === 'addWeek' && (
         <Modal title={isGrouped ? 'يوم جديد' : 'أسبوع/يوم جديد'} onClose={closeModal}>
-          <Field label="الاسم"><input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={isGrouped ? 'اليوم الأول' : 'الأسبوع الخامس'} /></Field>
+          <Field label="الاسم"><input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} placeholder={isGrouped ? 'اليوم الأول' : 'الأسبوع الخامس'} /></Field>
           <Field label="التاريخ (هـ)"><input className={inputCls} value={form.date || ''} onChange={(e) => setForm({ ...form, date: e.target.value })} placeholder="1447/02/01" /></Field>
+          {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
           <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={addWeek}>إضافة</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
         </Modal>
       )}
@@ -1903,7 +1946,7 @@ export default function App() {
 
       {(modal === 'addParticipant' || modal === 'editParticipant') && (
         <Modal title={modal === 'addParticipant' ? (isGrouped ? 'إضافة مشترك' : 'إضافة مشارك') : 'تعديل المشارك'} onClose={closeModal}>
-          <Field label="الاسم"><input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+          <Field label="الاسم"><input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} /></Field>
           <Field label="طريقة الدفع / التصنيف">
             <select className={inputCls} value={form.accountId || data.faidAccounts[0]?.id || ''}
               onChange={(e) => setForm({ ...form, accountId: e.target.value, ...(e.target.value === 'unpaid' ? { amount: 0 } : {}) })}>

@@ -88,4 +88,25 @@ test('أيام البرنامج المنشأة دفعة وحدة تبدأ فاض
   assert.equal(isEnrolled({ days: ['x'] }, 'x'), true);
 });
 
+test('المستخدم المحدود يشوف فقط البرامج اللي فيها أيام مسندة له', () => {
+  const user = { role: 'مسجل حضور', accessScope: 'limited', allowedWeeks: [{ programId: 'p1', weekId: 'p1w2' }] };
+  const canSeeWeek = (pid, wid) => user.role === 'مدير' || user.accessScope === 'all'
+    || user.allowedWeeks.some((a) => a.programId === pid && a.weekId === wid);
+  const programs = [
+    { id: 'p1', weeks: [{ id: 'p1w1' }, { id: 'p1w2' }, { id: 'p1w3' }] },
+    { id: 'p2', weeks: [{ id: 'p2w1' }] },
+  ];
+  const visible = programs.filter((p) => p.weeks.some((w) => canSeeWeek(p.id, w.id)));
+  assert.deepEqual(visible.map((p) => p.id), ['p1']); // p2 ما يظهر أصلًا
+
+  const myWeeks = visible.flatMap((p) => p.weeks.filter((w) => canSeeWeek(p.id, w.id)));
+  assert.deepEqual(myWeeks.map((w) => w.id), ['p1w2']); // يوصل ليومه مباشرة
+});
+
+test('صاحب الوصول الكامل يشوف كل البرامج', () => {
+  const user = { role: 'مشرف برنامج', accessScope: 'all', allowedWeeks: [] };
+  const limited = user.role !== 'مدير' && user.accessScope === 'limited';
+  assert.equal(limited, false);
+});
+
 console.log(`\n${passed} اختبار نجح.`);
