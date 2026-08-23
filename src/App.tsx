@@ -774,14 +774,20 @@ export default function App() {
     const accountId = form.accountId || data.faidAccounts[0]?.id;
     // في المجمّع لازم يكون مسجّل بيوم واحد على الأقل؛ في المنفصل ما فيه أيام أصلًا.
     if (isGrouped && !(form.days || []).length) { setForm({ ...form, error: 'اختر يوم واحد على الأقل' }); return; }
-    patchLedger(activeRef, (l) => ({
-      participants: [...(l.participants || []), {
-        id: uid(), name: form.name.trim(),
-        amount: accountId === 'unpaid' ? 0 : Number(form.amount || 0),
-        accountId, attendance: 'معلق',
-        ...(isGrouped ? { days: form.days } : {}),
-      }],
-    }));
+    patchLedger(activeRef, (l) => {
+      const patch = {
+        participants: [...(l.participants || []), {
+          id: uid(), name: form.name.trim(),
+          amount: accountId === 'unpaid' ? 0 : Number(form.amount || 0),
+          accountId, attendance: 'معلق',
+          ...(isGrouped ? { days: form.days } : {}),
+        }],
+      };
+      // أول اسم يُسجَّل في يوم «سريع» يحوّله للأسماء، والمبلغ المسجّل سابقًا
+      // ينتقل لبند تحصيل إضافي حتى ما يضيع من الحساب
+      if (isQuick(l)) Object.assign(patch, quickToNamed(l));
+      return patch;
+    });
     setSearch(''); // عشان الجديد يبان فورًا لو كان فيه بحث شغّال
     closeModal();
   };
@@ -797,6 +803,17 @@ export default function App() {
     }));
     closeModal();
   };
+  /** تحويل يوم من التسجيل السريع للأسماء بدون ما يضيع المبلغ المسجّل. */
+  const quickToNamed = (l) => {
+    const rev = Number(l.quickRevenue || 0);
+    return {
+      mode: 'named', quickCount: 0, quickRevenue: 0,
+      ...(rev > 0
+        ? { collections: [...(l.collections || []), { id: uid(), accountId: data.faidAccounts[0]?.id, amount: rev, note: 'تحصيل من التسجيل السريع' }] }
+        : {}),
+    };
+  };
+
   /** أيام البرنامج المجمّع في مودال المشترك، مع اقتراح المبلغ من سعر اليوم إن وُجد. */
   const toggleParticipantDay = (weekId) => {
     const cur = form.days || [];
@@ -1391,7 +1408,9 @@ export default function App() {
   const weekTabs = !program || isGrouped ? [] : [
     ...(canMoney ? [{ id: 'overview', label: 'نظرة عامة' }] : []),
     ...(canMoney ? [{ id: 'finance', label: 'المالية والتوزيع' }] : []),
-    ...(week && !isQuick(week) ? [{ id: 'participants', label: 'الطلاب والحضور' }] : []),
+    // يظهر دائمًا: التسجيل بالاسم في يوم «سريع» يحوّله للأسماء تلقائيًا،
+    // وبدونه يبقى المحضّر بلا أي تبويب فتطلع له شاشة فاضية
+    { id: 'participants', label: 'الطلاب والحضور' },
     ...(canMoney ? [{ id: 'report', label: 'تقرير اليوم' }] : []),
   ];
   const activeWeekTab = weekTabs.some((t) => t.id === weekTab) ? weekTab : weekTabs[0]?.id;
@@ -1769,7 +1788,7 @@ export default function App() {
                           onClick={() => { setForm({ quickCount: week.quickCount || 0, quickRevenue: week.quickRevenue || '', date: week.date || '' }); setModal('quickRegister'); }}>
                           <Pencil size={16} /> {weekState(week) === 'لم يبدأ' ? 'تسجيل الطلاب والإيراد' : 'تعديل التسجيل'}
                         </button>
-                        <button onClick={() => askConfirm('تحويل هذا اليوم لتسجيل بالأسماء؟ راح تقدر تسجّل كل طالب باسمه وتحضّره، والعدد والمبلغ الحاليين ما راح ينحسبون.', () => patchWeek({ mode: 'named' }))}
+                        <button onClick={() => askConfirm('تحويل هذا اليوم لتسجيل بالأسماء؟ المبلغ المسجّل حاليًا ينتقل لبند «تحصيل إضافي» فما يضيع من الحساب.', () => patchWeek(quickToNamed(week)))}
                           className="w-full text-xs text-slate-500 py-2 hover:text-brand-700">أو سجّل الطلاب بأسمائهم وحضورهم</button>
                       </>
                     ) : (
@@ -1831,8 +1850,24 @@ export default function App() {
                       <div className="mb-3"><FilterChips options={payOptions(allParticipants)} value={payFilter} onChange={setPayFilter} /></div>
                     )}
                     {ledgerLocked && <div className="text-xs text-amber-600 mb-3">اليوم مغلق — افتحه من الأعلى عشان تعدّل.</div>}
+                    {isQuick(week) && canMoney && (
+                      <div className="bg-brand-50 border border-brand-100 rounded-xl px-4 py-3 text-sm text-brand-900 mb-3">
+                        هذا اليوم مسجّل بالعدد والمبلغ ({week.quickCount} طالب · {fmt(week.quickRevenue)} ر.س).
+                        أول ما تسجّل طالبًا باسمه يتحوّل للأسماء، والمبلغ ينتقل لبند «تحصيل إضافي».
+                      </div>
+                    )}
                     {!week.participants.length ? (
-                      <div className={emptyCls}>لا يوجد مشاركون بعد.</div>
+                      <div className={emptyCls}>
+                        {canEnroll ? 'ما فيه طلاب بعد. اضغط «+ مشارك» وسجّل أول واحد.' : 'ما فيه طلاب بعد.'}
+                      </div>
+                    ) : !canMoney ? (
+                      // بلا صلاحية مالية: واجهة تحضير صرفة، نفس تجربة البرنامج المجمّع
+                      <AttendanceTable
+                        participants={visibleParticipants}
+                        statusOf={(p) => p.attendance || 'معلق'}
+                        locked={ledgerLocked}
+                        onSet={(p, st) => setAttendance(p.id, st)}
+                      />
                     ) : (
                       <ParticipantsTable
                         participants={visibleParticipants}
@@ -2935,10 +2970,16 @@ function ParticipantsTable({ participants, accounts, showAttendance, statusOf, o
               )}
               {showAttendance && (
                 <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <Badge tone={statusOf(p) === 'حاضر' ? 'green' : statusOf(p) === 'غائب' ? 'red' : 'slate'}>{statusOf(p)}</Badge>
-                    <button onClick={() => onSetAttendance(p, 'حاضر')} disabled={locked} className="text-green-500 hover:bg-green-50 rounded p-1 disabled:opacity-30"><Check size={14} /></button>
-                    <button onClick={() => onSetAttendance(p, 'غائب')} disabled={locked} className="text-red-500 hover:bg-red-50 rounded p-1 disabled:opacity-30"><X size={14} /></button>
+                  <div className="flex items-center gap-1.5">
+                    {['حاضر', 'غائب'].map((st) => {
+                      const on = statusOf(p) === st;
+                      return (
+                        <button key={st} onClick={() => onSetAttendance(p, on ? 'معلق' : st)} disabled={locked}
+                          className={`text-xs font-semibold px-3 py-1.5 rounded-lg border whitespace-nowrap disabled:opacity-40 ${
+                            on ? (st === 'حاضر' ? 'bg-green-600 text-white border-green-600' : 'bg-red-500 text-white border-red-500')
+                               : 'border-slate-200 text-slate-500'}`}>{st}</button>
+                      );
+                    })}
                   </div>
                 </td>
               )}

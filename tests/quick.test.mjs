@@ -1,6 +1,6 @@
 /** اختبارات التسجيل السريع (عدد ومبلغ) وحالة اليوم. */
 import assert from 'node:assert/strict';
-import { L, isQuick, headcount, weekState, migrate } from './build/app.mjs';
+import { L, isQuick, headcount, weekState, migrate, sumAmt } from './build/app.mjs';
 
 let passed = 0;
 const test = (name, fn) => { fn(); passed++; console.log('  ✓ ' + name); };
@@ -78,6 +78,27 @@ test('الترقية: البرنامج المجمّع دائمًا بالأسم�
   const d = migrate({ programs: [{ id: 'p', name: 'الأربعة', type: 'مجمع', termKey: 'k', weeks: [{ id: 'd1', name: 'اليوم الأول' }] }] });
   assert.equal(d.programs[0].mode, 'named');
   assert.equal(d.programs[0].weeks[0].mode, 'named');
+});
+
+test('التسجيل بالاسم في يوم سريع يحوّله للأسماء وينقل مبلغه لتحصيل إضافي', () => {
+  const day = { mode: 'quick', quickCount: 20, quickRevenue: 1000, collections: [], participants: [] };
+  const converted = (l) => {
+    const rev = Number(l.quickRevenue || 0);
+    return { mode: 'named', quickCount: 0, quickRevenue: 0,
+      ...(rev > 0 ? { collections: [...(l.collections || []), { id: 'c', amount: rev, note: 'تحصيل من التسجيل السريع' }] } : {}) };
+  };
+  const after = { ...day, participants: [{ id: 'p', name: 'عبدالله', amount: 50, accountId: 'a1' }], ...converted(day) };
+  assert.equal(after.mode, 'named');
+  assert.equal(after.quickRevenue, 0);
+  assert.equal(sumAmt(after.collections), 1000);       // المبلغ ما ضاع
+  assert.equal(L.revenue(after), 1050);                // 1000 محوّل + 50 من الطالب الجديد
+});
+
+test('يوم سريع فاضي يتحوّل بلا بند تحصيل زائد', () => {
+  const day = { mode: 'quick', quickCount: 0, quickRevenue: 0, collections: [] };
+  const rev = Number(day.quickRevenue || 0);
+  const patch = { mode: 'named', quickCount: 0, quickRevenue: 0, ...(rev > 0 ? { collections: [{ id: 'c', amount: rev }] } : {}) };
+  assert.equal(patch.collections, undefined);
 });
 
 console.log(`\n${passed} اختبار نجح.`);
