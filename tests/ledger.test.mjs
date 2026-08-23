@@ -125,6 +125,23 @@ test('البيانات القديمة بدون days تعني «كل الأيام
   assert.equal(enrolledDays(old, days).length, 4);
 });
 
+test('المشترك بكل المدة يظهر في تحضير كل يوم، غاب ولا حضر', () => {
+  // عبدالعزيز مشترك الأربعة أيام، غاب اليوم الأول والثاني
+  const az = { id: 'az', name: 'عبدالعزيز', amount: 200, accountId: 'cash', days: ['d1', 'd2', 'd3', 'd4'] };
+  const people = [az];
+  const attendance = { d1: { az: 'غائب' }, d2: { az: 'غائب' } };
+
+  // الغياب ما يشيله من قائمة أي يوم جاي
+  for (const d of days) {
+    assert.equal(enrolledIn(people, d.id).length, 1, `لازم يظهر في ${d.id}`);
+  }
+  // وكل يوم يبدأ بحالة مستقلة، فاليوم الثالث والرابع «معلق» مو موروث من غيابه
+  const st = (d) => attendance[d]?.az || 'معلق';
+  assert.equal(st('d1'), 'غائب');
+  assert.equal(st('d3'), 'معلق');
+  assert.equal(st('d4'), 'معلق');
+});
+
 test('التسجيل من داخل اليوم يخلي المشترك في ذاك اليوم فقط', () => {
   // واحد جا اليوم الثالث وسجّل وأنت تحضّر
   const walkIn = { id: 'w1', name: 'متأخر', amount: 50, accountId: 'cash', days: ['d3'] };
