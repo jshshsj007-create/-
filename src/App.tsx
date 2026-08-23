@@ -36,6 +36,10 @@ export const paidAmount = (parts) => (parts || []).filter((p) => p.accountId !==
  *  quick — عدد طلاب ومبلغ إيراد فقط (البرنامج المنفصل: يوم واحد، ما يحتاج أسماء).
  *  named — أسماء المشاركين، وهو اللازم للتحضير (البرنامج المجمّع دائمًا كذا).
  */
+export const tripIncome = (t) => sumAmt(t?.incomeItems);
+export const tripExpenses = (t) => sumAmt(t?.expenseItems);
+export const tripNet = (t) => tripIncome(t) - tripExpenses(t);
+
 export const isQuick = (l) => (l?.mode || 'named') === 'quick';
 export const headcount = (l) => (isQuick(l) ? Number(l?.quickCount || 0) : (l?.participants || []).length);
 
@@ -139,7 +143,15 @@ export function migrate(loaded) {
     if (d.currentYear === '1447') d.currentYear = d.years[0];
   }
   d.faidAdjustments = (d.faidAdjustments || []).map((a) => ({ ...a }));
-  d.trips = (d.trips || []).map((t) => ({ ...t }));
+  d.competitions = (d.competitions || []).map((c) => ({ idea: '', tools: [], photos: [], ...c }));
+  d.trips = (d.trips || []).map((t) => {
+    const trip = { incomeItems: [], expenseItems: [], ...t };
+    // الأرقام المجملة القديمة تتحول لبند واحد باسم واضح
+    if (Number(t.revenue) > 0 && !trip.incomeItems.length) trip.incomeItems = [{ id: uid(), name: 'إيراد سابق', amount: Number(t.revenue) }];
+    if (Number(t.expenses) > 0 && !trip.expenseItems.length) trip.expenseItems = [{ id: uid(), name: 'مصروف سابق', amount: Number(t.expenses) }];
+    delete trip.revenue; delete trip.expenses;
+    return trip;
+  });
   // الدخول صار باسم مستخدم وكلمة مرور بدل «اختر اسمك + رمز»؛ نحوّل المستخدمين القدامى
   d.users = (d.users || []).map((u, i) => {
     const user = { accessScope: 'all', allowedWeeks: [], permissions: [], ...u };
@@ -449,6 +461,45 @@ function FilterChips({ options, value, onChange }) {
   );
 }
 
+/** بنود سفرة بأسماء حرة (أكل، سكن…) مع مجموعها. */
+function TripItems({ title, subtitle, items, tone, onAdd, onRemove }) {
+  const list = items || [];
+  const total = sumAmt(list);
+  const color = tone === 'red' ? 'text-red-600' : 'text-green-600';
+  return (
+    <div className={cardCls}>
+      <div className="flex items-start justify-between mb-3 gap-3">
+        <div>
+          <div className="text-sm font-semibold text-slate-700">{title}</div>
+          <div className="text-xs text-slate-400 mt-0.5">{subtitle}</div>
+        </div>
+        <button onClick={onAdd} className="text-xs text-brand-700 font-semibold flex items-center gap-1 shrink-0 bg-brand-50 px-3 py-1.5 rounded-lg">
+          <Plus size={14} /> إضافة
+        </button>
+      </div>
+      {!list.length ? (
+        <div className="text-sm text-slate-400">ما فيه بنود بعد.</div>
+      ) : (
+        <div className="space-y-2">
+          {list.map((it) => (
+            <div key={it.id} className="flex items-center justify-between text-sm border-b border-slate-50 pb-2 gap-2">
+              <span className="text-slate-700 font-medium min-w-0 truncate">{it.name}</span>
+              <span className="flex items-center gap-2 shrink-0">
+                <span className={`font-semibold ${color}`}>{fmt(it.amount)} ر.س</span>
+                <button onClick={() => onRemove(it.id)} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>
+              </span>
+            </div>
+          ))}
+          <div className="flex items-center justify-between text-sm pt-1">
+            <span className="text-slate-500 font-medium">الإجمالي</span>
+            <span className="font-bold text-slate-800">{fmt(total)} ر.س</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InfoRow({ icon: Icon, label, value }) {
   return (
     <div className="bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3">
@@ -520,6 +571,7 @@ export default function App() {
   const [selectedProgramId, setSelectedProgramId] = useState(null);
   const [selectedWeekId, setSelectedWeekId] = useState(null);
   const [selectedTripId, setSelectedTripId] = useState(null);
+  const [selectedCompId, setSelectedCompId] = useState(null);
   const [weekTab, setWeekTab] = useState('finance');
   const [programTab, setProgramTab] = useState('days');
   const [settingsTab, setSettingsTab] = useState('users');
@@ -571,6 +623,7 @@ export default function App() {
   const program = data.programs.find((p) => p.id === selectedProgramId);
   const week = program?.weeks.find((w) => w.id === selectedWeekId);
   const trip = data.trips.find((t) => t.id === selectedTripId);
+  const competition = data.competitions.find((c) => c.id === selectedCompId);
   const isGrouped = program?.type === 'مجمع';
 
   /** الدفتر المالي الفعّال + مرجعه: البرنامج المجمّع يحسب على مستوى البرنامج، والمنفصل على مستوى الأسبوع. */
@@ -885,19 +938,74 @@ export default function App() {
     save({ ...data, users: data.users.filter((u) => u.id !== userId) });
   };
 
-  const addCompetition = () => {
-    if (!form.name) return;
-    save({ ...data, competitions: [...data.competitions, { id: uid(), name: form.name.trim(), level: form.level || LEVELS[0], date: form.date || '', participants: Number(form.participants || 0) }] });
+  const saveCompetition = () => {
+    if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب اسم المسابقة' }); return; }
+    const fields = {
+      name: form.name.trim(), level: form.level || LEVELS[0], date: form.date || '',
+      participants: Number(form.participants || 0), idea: form.idea || '',
+      tools: form.tools || [], photos: form.photos || [],
+    };
+    save({
+      ...data,
+      competitions: form.id
+        ? data.competitions.map((c) => (c.id !== form.id ? c : { ...c, ...fields }))
+        : [...data.competitions, { id: uid(), ...fields }],
+    });
     closeModal();
   };
   const removeCompetition = (cid) => save({ ...data, competitions: data.competitions.filter((c) => c.id !== cid) });
 
+  /** أدوات المسابقة: اسم الأداة وكميتها (أقماع ٦، كورة ٢…). */
+  const addTool = () => {
+    const name = (form.toolName || '').trim();
+    if (!name) return;
+    setForm({ ...form, tools: [...(form.tools || []), { id: uid(), name, qty: Number(form.toolQty || 1) }], toolName: '', toolQty: '' });
+  };
+  const removeTool = (id) => setForm({ ...form, tools: (form.tools || []).filter((t) => t.id !== id) });
+
+  /** الصور تُصغَّر قبل الحفظ لأن التخزين محلي ومحدود. */
+  const addPhotos = async (files) => {
+    const shrink = (file) => new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const max = 1000;
+          const scale = Math.min(1, max / Math.max(img.width, img.height));
+          const c = document.createElement('canvas');
+          c.width = Math.round(img.width * scale);
+          c.height = Math.round(img.height * scale);
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          resolve(c.toDataURL('image/jpeg', 0.72));
+        };
+        img.onerror = () => resolve(null);
+        img.src = reader.result;
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(file);
+    });
+    const added = [];
+    for (const f of Array.from(files).slice(0, 6)) {
+      const src = await shrink(f);
+      if (src) added.push({ id: uid(), src });
+    }
+    setForm((prev) => ({ ...prev, photos: [...(prev.photos || []), ...added] }));
+  };
+  const removePhoto = (id) => setForm({ ...form, photos: (form.photos || []).filter((p) => p.id !== id) });
+
   const addTrip = () => {
     if (!form.name) return;
-    save({ ...data, trips: [...data.trips, { id: uid(), name: form.name.trim(), date: form.date || '', revenue: 0, expenses: 0 }] });
+    save({ ...data, trips: [...data.trips, { id: uid(), name: form.name.trim(), date: form.date || '', incomeItems: [], expenseItems: [] }] });
     closeModal();
   };
   const patchTrip = (patch) => save({ ...data, trips: data.trips.map((t) => (t.id !== selectedTripId ? t : { ...t, ...patch })) });
+  /** بنود السفرة: كل بند باسمه ومبلغه، عشان تعرف كل سفرة وين راحت فلوسها. */
+  const addTripItem = (key) => {
+    if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب اسم البند' }); return; }
+    patchTrip({ [key]: [...(trip[key] || []), { id: uid(), name: form.name.trim(), amount: Number(form.amount || 0) }] });
+    closeModal();
+  };
+  const removeTripItem = (key, itemId) => patchTrip({ [key]: (trip[key] || []).filter((x) => x.id !== itemId) });
   const removeTrip = (tid) => { save({ ...data, trips: data.trips.filter((t) => t.id !== tid) }); goto('club'); };
 
   /* --------------------------- النسخ الاحتياطي --------------------------- */
@@ -986,8 +1094,12 @@ export default function App() {
   const can = (perm) => isAdmin || (effectiveUser?.permissions || []).includes(perm);
   const canSeeWeek = (programId, weekId) => isAdmin || effectiveUser?.accessScope === 'all' || (effectiveUser?.allowedWeeks || []).some((a) => a.programId === programId && a.weekId === weekId);
   const canMoney = can('المصروفات والتقارير');
-  /** التسجيل يمس المبالغ وطرق الدفع، فمن صلاحيته الحضور فقط يحضّر ولا يسجّل. */
-  const canEnroll = canMoney || can('البرامج');
+  /**
+   * التسجيل مسموح لمسجّل الحضور كمان: يقدر يضيف طالب بمبلغه وطريقة دفعه.
+   * لكن يبقى ما يشوف مبالغ اللي سجّلهم غيره — الإدخال مسموح والقراءة لا.
+   * التعديل والحذف يظلان للماليين، لأن نافذة التعديل تعرض المبلغ المسجّل أصلًا.
+   */
+  const canEnroll = canMoney || can('البرامج') || can('الأسابيع والحضور');
   const limitedScope = !isAdmin && effectiveUser?.accessScope === 'limited';
   /** البرنامج يظهر فقط لو فيه يوم واحد على الأقل يقدر يشوفه المستخدم. */
   const termPrograms = !limitedScope ? allTermPrograms
@@ -1158,7 +1270,7 @@ export default function App() {
     view === id ||
     (id === 'programs' && (view === 'programDetail' || view === 'weekDetail')) ||
     (id === 'reports' && view === 'club') ||
-    (id === 'home' && (view === 'club' || view === 'tripDetail'));
+    (id === 'home' && (view === 'club' || view === 'tripDetail' || view === 'competitionDetail'));
 
   /** فلترة حسب طريقة الدفع: حساب معيّن، أو «ما دفع»، أو الكل. */
   const byPay = (p) => payFilter === 'all' || p.accountId === payFilter;
@@ -1425,7 +1537,7 @@ export default function App() {
                     weeks={program.weeks}
                     locked={ledgerLocked}
                     onEdit={canMoney ? (p) => { setForm({ ...p, days: enrolledDays(p, program.weeks).map((w) => w.id), amountTouched: true }); setModal('editParticipant'); } : null}
-                    onRemove={canEnroll ? (p) => askConfirm(`حذف المشترك «${p.name}»؟`, () => removeParticipant(p.id)) : null}
+                    onRemove={canMoney ? (p) => askConfirm(`حذف المشترك «${p.name}»؟`, () => removeParticipant(p.id)) : null}
                   />
                 )}
                 <div className="mt-3 text-sm text-slate-500 flex flex-wrap items-center justify-between gap-2 px-1">
@@ -1647,7 +1759,7 @@ export default function App() {
                         onSetAttendance={(p, s) => setAttendance(p.id, s)}
                         locked={ledgerLocked}
                         onEdit={canMoney ? (p) => { setForm({ ...p }); setModal('editParticipant'); } : null}
-                        onRemove={canEnroll ? (p) => askConfirm(`حذف «${p.name}»؟`, () => removeParticipant(p.id)) : null}
+                        onRemove={canMoney ? (p) => askConfirm(`حذف «${p.name}»؟`, () => removeParticipant(p.id)) : null}
                       />
                     )}
                   </div>
@@ -1763,46 +1875,105 @@ export default function App() {
 
         {view === 'club' && clubTab === 'competitions' && can('الإعداد (المسابقات)') && (
           <div>
-            <div className="flex items-center justify-between mb-5 gap-3">
-              <h3 className="font-bold text-slate-700">المسابقات</h3>
-              <button className={btnPrimary} onClick={() => { setForm({}); setModal('addCompetition'); }}><Plus size={16} /> مسابقة جديدة</button>
+            <div className="flex items-center justify-between mb-3 gap-3">
+              <h3 className="font-bold text-slate-700">بنك المسابقات</h3>
+              <button className={btnPrimary} onClick={() => { setForm({ tools: [], photos: [] }); setModal('editCompetition'); }}><Plus size={16} /> مسابقة</button>
             </div>
-            <Tabs value={setupLevel} onChange={setSetupLevel} tabs={['الكل', ...LEVELS].map((lv) => ({ id: lv, label: lv }))} />
+            <div className="text-xs text-slate-400 mb-4">كل مسابقة بفكرتها وأدواتها وصورها — مرجع تعيد استخدامه السنوات الجاية.</div>
+            <FilterChips
+              options={['الكل', ...LEVELS].map((lv) => ({
+                id: lv, label: lv,
+                count: lv === 'الكل' ? data.competitions.length : data.competitions.filter((c) => c.level === lv).length,
+              }))}
+              value={setupLevel} onChange={setSetupLevel} />
+            <div className="h-3" />
             {(() => {
               const list = data.competitions.filter((c) => setupLevel === 'الكل' || c.level === setupLevel);
-              return list.length === 0 ? (
-                <div className={emptyCls}>لا توجد مسابقات بعد.</div>
+              return !list.length ? (
+                <div className={emptyCls}>ما فيه مسابقات بعد. أضف أول مسابقة وتصير مرجعًا للسنوات الجاية.</div>
               ) : (
-                <div className="bg-white rounded-2xl border border-slate-100 overflow-x-auto">
-                  <table className="w-full text-sm min-w-[520px]">
-                    <thead className="bg-slate-50 text-slate-500 text-xs"><tr>
-                      <th className="text-right px-4 py-3 font-medium">اسم المسابقة</th>
-                      <th className="text-right px-4 py-3 font-medium">المرحلة</th>
-                      <th className="text-right px-4 py-3 font-medium">تاريخ التنفيذ</th>
-                      <th className="text-right px-4 py-3 font-medium">عدد المشاركين</th>
-                      <th className="text-right px-4 py-3 font-medium"></th>
-                    </tr></thead>
-                    <tbody>
-                      {list.map((c) => (
-                        <tr key={c.id} className="border-t border-slate-50">
-                          <td className="px-4 py-3 font-semibold text-slate-800">{c.name}</td>
-                          <td className="px-4 py-3"><Badge tone="brand">{c.level}</Badge></td>
-                          <td className="px-4 py-3 text-slate-500">{c.date || '-'}</td>
-                          <td className="px-4 py-3 text-slate-600">{c.participants}</td>
-                          <td className="px-4 py-3 text-left">
-                            <button onClick={() => askConfirm(`حذف مسابقة «${c.name}»؟`, () => removeCompetition(c.id))} className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="space-y-2.5">
+                  {list.map((c) => (
+                    <button key={c.id} onClick={() => { setSelectedCompId(c.id); goto('competitionDetail'); }}
+                      className="w-full bg-white rounded-2xl border border-slate-100 p-4 text-right hover:shadow-md transition-shadow">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-bold text-slate-800">{c.name}</div>
+                          <div className="text-xs text-slate-400 mt-0.5 line-clamp-2">{c.idea || 'ما فيه وصف للفكرة'}</div>
+                        </div>
+                        <Badge tone="brand">{c.level}</Badge>
+                      </div>
+                      <div className="flex items-center gap-3 mt-3 text-[11px] text-slate-400">
+                        {(c.tools || []).length > 0 && <span>🧰 {c.tools.length} أداة</span>}
+                        {(c.photos || []).length > 0 && <span>📷 {c.photos.length} صورة</span>}
+                        {c.date && <span>{c.date}</span>}
+                      </div>
+                    </button>
+                  ))}
                 </div>
               );
             })()}
           </div>
         )}
 
-        {/* ------------------------------- السفرات ------------------------------- */}
+        {/* بطاقة المسابقة: الفكرة والأدوات والصور */}
+        {view === 'competitionDetail' && competition && (
+          <div>
+            <Breadcrumb items={[{ label: 'النادي', onClick: () => { setClubTab('competitions'); goto('club'); } }, { label: competition.name }]} />
+            <div className="flex items-center justify-between gap-2 mb-4 mt-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <h2 className="text-lg font-bold text-slate-800 truncate">{competition.name}</h2>
+                <Badge tone="brand">{competition.level}</Badge>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <button onClick={() => { setForm({ ...competition, tools: competition.tools || [], photos: competition.photos || [] }); setModal('editCompetition'); }}
+                  className="text-slate-400 hover:text-brand-700"><Pencil size={16} /></button>
+                <button onClick={() => askConfirm(`حذف مسابقة «${competition.name}»؟`, () => { removeCompetition(competition.id); setClubTab('competitions'); goto('club'); })}
+                  className="text-slate-300 hover:text-red-500"><Trash2 size={16} /></button>
+              </div>
+            </div>
+
+            <div className={cardCls + ' mb-3'}>
+              <div className="text-sm font-semibold text-slate-700 mb-2">فكرة المسابقة</div>
+              <div className="text-sm text-slate-600 whitespace-pre-wrap leading-relaxed">
+                {competition.idea || <span className="text-slate-400">ما تكتبت الفكرة بعد. اضغط ✏️ فوق واكتبها.</span>}
+              </div>
+            </div>
+
+            <div className={cardCls + ' mb-3'}>
+              <div className="text-sm font-semibold text-slate-700 mb-3">الأدوات المطلوبة</div>
+              {!(competition.tools || []).length ? (
+                <div className="text-sm text-slate-400">ما فيه أدوات مسجّلة.</div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {competition.tools.map((t) => (
+                    <span key={t.id} className="bg-brand-50 text-brand-800 rounded-xl px-3 py-2 text-sm font-medium">
+                      {t.name}{t.qty > 1 && <span className="text-brand-500 mr-1.5">×{t.qty}</span>}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className={cardCls}>
+              <div className="text-sm font-semibold text-slate-700 mb-3">صور مرجعية</div>
+              {!(competition.photos || []).length ? (
+                <div className="text-sm text-slate-400">ما فيه صور. أضفها من التعديل عشان تكون مرجعًا بصريًا.</div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  {competition.photos.map((ph) => (
+                    <img key={ph.id} src={ph.src} alt="" className="w-full h-32 object-cover rounded-xl border border-slate-100" />
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {competition.participants > 0 && (
+              <div className="mt-3"><InfoRow icon={UsersIcon} label="عدد المشاركين آخر مرة" value={`${competition.participants}`} /></div>
+            )}
+          </div>
+        )}
+
         {view === 'club' && clubTab === 'trips' && can('السفرات') && (
           <div>
             <div className="flex items-center justify-between mb-1 gap-3">
@@ -1824,19 +1995,16 @@ export default function App() {
                     <th className="text-right px-4 py-3 font-medium"></th>
                   </tr></thead>
                   <tbody>
-                    {data.trips.map((t) => {
-                      const net = Number(t.revenue || 0) - Number(t.expenses || 0);
-                      return (
-                        <tr key={t.id} className="border-t border-slate-50 hover:bg-slate-50/50 cursor-pointer" onClick={() => { setSelectedTripId(t.id); goto('tripDetail'); }}>
-                          <td className="px-4 py-3 font-semibold text-slate-800">{t.name}</td>
-                          <td className="px-4 py-3 text-slate-500">{t.date || '-'}</td>
-                          <td className="px-4 py-3 text-green-600">{fmt(t.revenue)} ر.س</td>
-                          <td className="px-4 py-3 text-red-500">{fmt(t.expenses)} ر.س</td>
-                          <td className={`px-4 py-3 font-semibold ${net >= 0 ? 'text-slate-800' : 'text-red-600'}`}>{fmt(net)} ر.س</td>
-                          <td className="px-4 py-3 text-left"><ChevronLeft size={16} className="text-slate-300" /></td>
-                        </tr>
-                      );
-                    })}
+                    {data.trips.map((t) => (
+                      <tr key={t.id} className="border-t border-slate-50 hover:bg-slate-50/50 cursor-pointer" onClick={() => { setSelectedTripId(t.id); goto('tripDetail'); }}>
+                        <td className="px-4 py-3 font-semibold text-slate-800">{t.name}</td>
+                        <td className="px-4 py-3 text-slate-500">{t.date || '-'}</td>
+                        <td className="px-4 py-3 text-green-600">{fmt(tripIncome(t))} ر.س</td>
+                        <td className="px-4 py-3 text-red-500">{fmt(tripExpenses(t))} ر.س</td>
+                        <td className={`px-4 py-3 font-semibold ${tripNet(t) >= 0 ? 'text-slate-800' : 'text-red-600'}`}>{fmt(tripNet(t))} ر.س</td>
+                        <td className="px-4 py-3 text-left"><ChevronLeft size={16} className="text-slate-300" /></td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -1851,22 +2019,30 @@ export default function App() {
               <h2 className="text-lg sm:text-xl font-bold text-slate-800">{trip.name}</h2>
               <button onClick={() => askConfirm(`حذف سفرة «${trip.name}»؟`, () => removeTrip(trip.id))} className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-              <div className={cardCls}>
-                <div className="text-sm text-slate-500 mb-2">التاريخ (هـ)</div>
-                <input className={inputCls} value={trip.date} onChange={(e) => patchTrip({ date: e.target.value })} placeholder="1447/03/01" />
-              </div>
-              <StatCard label="الصافي" value={fmt(Number(trip.revenue || 0) - Number(trip.expenses || 0)) + ' ر.س'} icon={Wallet}
-                tone={(Number(trip.revenue || 0) - Number(trip.expenses || 0)) >= 0 ? 'green' : 'red'} />
-              <div className={cardCls}>
-                <div className="text-sm text-slate-500 mb-2">إجمالي الإيرادات (ر.س)</div>
-                <input type="number" className={inputCls} value={trip.revenue} onChange={(e) => patchTrip({ revenue: e.target.value })} />
-              </div>
-              <div className={cardCls}>
-                <div className="text-sm text-slate-500 mb-2">إجمالي المصروفات (ر.س)</div>
-                <input type="number" className={inputCls} value={trip.expenses} onChange={(e) => patchTrip({ expenses: e.target.value })} />
-              </div>
+            <div className={cardCls + ' mb-3'}>
+              <div className="text-sm text-slate-500 mb-2">التاريخ (هـ)</div>
+              <input className={inputCls} value={trip.date} onChange={(e) => patchTrip({ date: e.target.value })} placeholder="1447/03/01" />
             </div>
+
+            <div className="grid grid-cols-3 gap-2 mb-4">
+              <MiniStat label="الإيراد" value={fmt(tripIncome(trip))} icon={TrendingUp} tone="green" />
+              <MiniStat label="المصروفات" value={fmt(tripExpenses(trip))} icon={TrendingDown} tone="red" />
+              <MiniStat label="الصافي" value={fmt(tripNet(trip))} icon={Wallet} tone={tripNet(trip) >= 0 ? 'brand' : 'red'} />
+            </div>
+
+            <TripItems
+              title="المصروفات" subtitle="كل بند باسمه: أكل، سكن، مواصلات…"
+              items={trip.expenseItems} tone="red"
+              onAdd={() => { setForm({ itemKey: 'expenseItems' }); setModal('addTripItem'); }}
+              onRemove={(id) => removeTripItem('expenseItems', id)} />
+
+            <div className="h-3" />
+
+            <TripItems
+              title="الإيرادات" subtitle="اشتراكات المشاركين، دعم، أي دخل للسفرة"
+              items={trip.incomeItems} tone="green"
+              onAdd={() => { setForm({ itemKey: 'incomeItems' }); setModal('addTripItem'); }}
+              onRemove={(id) => removeTripItem('incomeItems', id)} />
           </div>
         )}
 
@@ -2361,20 +2537,87 @@ export default function App() {
         </Modal>
       )}
 
-      {modal === 'addCompetition' && (
-        <Modal title="مسابقة جديدة" onClose={closeModal}>
-          <Field label="اسم المسابقة"><input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="مثال: مسابقة حفظ القرآن" /></Field>
+      {modal === 'editCompetition' && (
+        <Modal title={form.id ? 'تعديل المسابقة' : 'مسابقة جديدة'} onClose={closeModal} wide>
+          <Field label="اسم المسابقة">
+            <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} placeholder="مثال: سباق الأقماع" />
+          </Field>
+          <Field label="فكرة المسابقة" hint="اشرحها بحيث أي أحد يقراها بعد سنة يقدر ينفذها.">
+            <textarea className={inputCls + ' h-28'} value={form.idea || ''} onChange={(e) => setForm({ ...form, idea: e.target.value })}
+              placeholder="تُقسّم المجموعة فريقين، وكل فريق يمرّر الكورة بين الأقماع بدون ما تطيح…" />
+          </Field>
           <Field label="المرحلة">
             <div className="flex gap-2">
               {LEVELS.map((lv) => (
                 <button key={lv} type="button" onClick={() => setForm({ ...form, level: lv })}
-                  className={`flex-1 py-2 rounded-lg text-sm font-medium border ${(form.level || LEVELS[0]) === lv ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`}>{lv}</button>
+                  className={`flex-1 py-2 rounded-lg text-sm font-medium border ${(form.level || LEVELS[0]) === lv ? 'bg-brand-700 text-white border-brand-700' : 'border-slate-200 text-slate-600'}`}>{lv}</button>
               ))}
             </div>
           </Field>
-          <Field label="تاريخ التنفيذ (هـ)"><input className={inputCls} value={form.date || ''} onChange={(e) => setForm({ ...form, date: e.target.value })} placeholder="1447/02/10" /></Field>
-          <Field label="عدد المشاركين"><input type="number" className={inputCls} value={form.participants || ''} onChange={(e) => setForm({ ...form, participants: e.target.value })} /></Field>
-          <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={addCompetition}>إضافة</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
+
+          <Field label="الأدوات المطلوبة" hint="اسم الأداة وكميتها. مثال: أقماع ٦، كورة ٢.">
+            <div className="flex gap-2 mb-2">
+              <input className={inputCls} value={form.toolName || ''} onChange={(e) => setForm({ ...form, toolName: e.target.value })}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTool(); } }} placeholder="أقماع" />
+              <input type="number" className={inputCls + ' w-24'} value={form.toolQty || ''} onChange={(e) => setForm({ ...form, toolQty: e.target.value })} placeholder="العدد" />
+              <button type="button" onClick={addTool} className="bg-brand-50 text-brand-800 px-4 rounded-lg text-sm font-semibold shrink-0">إضافة</button>
+            </div>
+            {(form.tools || []).length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {form.tools.map((t) => (
+                  <span key={t.id} className="inline-flex items-center gap-1.5 bg-slate-100 text-slate-700 rounded-lg pr-3 pl-1.5 py-1.5 text-sm">
+                    {t.name}{t.qty > 1 && <span className="text-slate-400">×{t.qty}</span>}
+                    <button type="button" onClick={() => removeTool(t.id)} className="text-slate-400 hover:text-red-500"><X size={13} /></button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </Field>
+
+          <Field label="صور مرجعية" hint="تُصغَّر تلقائيًا قبل الحفظ. خلّها في حدود ٦ صور للمسابقة عشان التخزين المحلي.">
+            <input type="file" accept="image/*" multiple onChange={(e) => { addPhotos(e.target.files); e.target.value = ''; }}
+              className="block w-full text-sm text-slate-500 file:mr-0 file:ml-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-brand-50 file:text-brand-800" />
+            {(form.photos || []).length > 0 && (
+              <div className="grid grid-cols-3 gap-2 mt-3">
+                {form.photos.map((ph) => (
+                  <div key={ph.id} className="relative">
+                    <img src={ph.src} alt="" className="w-full h-20 object-cover rounded-lg border border-slate-100" />
+                    <button type="button" onClick={() => removePhoto(ph.id)}
+                      className="absolute top-1 left-1 bg-white/90 rounded-full p-1 text-slate-500 hover:text-red-500"><X size={12} /></button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Field>
+
+          <Field label="تاريخ التنفيذ (هـ) — اختياري">
+            <input className={inputCls} value={form.date || ''} onChange={(e) => setForm({ ...form, date: e.target.value })} placeholder="1448/02/10" />
+          </Field>
+          <Field label="عدد المشاركين — اختياري">
+            <input type="number" className={inputCls} value={form.participants || ''} onChange={(e) => setForm({ ...form, participants: e.target.value })} />
+          </Field>
+          {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+          <div className="flex gap-2 mt-5">
+            <button className={btnPrimary + ' flex-1'} onClick={saveCompetition}>{form.id ? 'حفظ' : 'إضافة'}</button>
+            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+          </div>
+        </Modal>
+      )}
+
+      {modal === 'addTripItem' && (
+        <Modal title={form.itemKey === 'expenseItems' ? 'مصروف جديد' : 'إيراد جديد'} onClose={closeModal}>
+          <Field label="البند" hint={form.itemKey === 'expenseItems' ? 'مثال: أكل، سكن، مواصلات، تذاكر' : 'مثال: اشتراكات المشاركين، دعم'}>
+            <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })}
+              placeholder={form.itemKey === 'expenseItems' ? 'أكل' : 'اشتراكات'} />
+          </Field>
+          <Field label="المبلغ (ر.س)">
+            <input type="number" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
+          </Field>
+          {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+          <div className="flex gap-2 mt-5">
+            <button className={btnPrimary + ' flex-1'} onClick={() => addTripItem(form.itemKey)}>إضافة</button>
+            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+          </div>
         </Modal>
       )}
 
