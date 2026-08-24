@@ -15,7 +15,7 @@ import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.j
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
-const APP_VERSION = 'v4.7 · الاسم الثلاثي';
+const APP_VERSION = 'v4.8 · يومي أو باقة';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -211,6 +211,12 @@ export function migrate(loaded) {
     if (LOCKED_FIELDS.includes(f.id) && !d.signupFields.some((x) => x.id === f.id)) d.signupFields.push(f);
   }
   d.faidAccounts = d.faidAccounts.map((a) => ({ transferInfo: '', publicName: '', needsReceipt: false, ...a }));
+  // التسعير كان خيارًا واحدًا لا غير؛ صار اليومي والباقات يتعايشان
+  d.programs = d.programs.map((p) => {
+    if (!p.signup || p.signup.allowPerDay !== undefined) return p;
+    const { mode, ...rest } = p.signup;
+    return { ...p, signup: { ...rest, allowPerDay: mode !== 'packages' } };
+  });
   return d;
 }
 
@@ -218,7 +224,7 @@ export function migrate(loaded) {
 export const emptySignup = () => ({
   enabled: false, token: '', price: '', openWeeks: [], accounts: [], extraFields: [],
   // البرنامج المجمّع يُباع إما بسعر اليوم أو بباقات يحددها صاحب التطبيق
-  mode: 'perDay', packages: [],
+  allowPerDay: true, packages: [],
 });
 
 /* ------------------------------ عناصر واجهة عامة ------------------------------ */
@@ -1390,6 +1396,7 @@ export default function App() {
       enabled: true,
       token: s.token || makeSignupToken(),
       price: s.price || (program.type === 'مجمع' ? program.dayPrice || '' : ''),
+      allowPerDay: s.allowPerDay !== false,
       openWeeks: s.openWeeks?.length ? s.openWeeks : (program.weeks || []).map((w) => w.id),
       accounts: s.accounts?.length ? s.accounts : data.faidAccounts.map((a) => a.id),
     });
@@ -2306,7 +2313,9 @@ export default function App() {
                   {s.enabled && (() => {
                     // نفس الفحص اللي يوقف الرابط، معروضًا لك قبل ما ترسله لأحد
                     const noDays = !(s.openWeeks || []).length;
-                    const noPkgs = isGrouped && s.mode === 'packages' && !(s.packages || []).length;
+                    const noPkgs = isGrouped
+                      && !(s.allowPerDay !== false && Number(s.price || 0) > 0)
+                      && !(s.packages || []).length;
                     if (!noDays && !noPkgs) return null;
                     return (
                       <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-start gap-2">
@@ -2317,7 +2326,7 @@ export default function App() {
                             ? ((program.weeks || []).length
                               ? 'ما اخترت ولا يوم متاح للتسجيل تحت. اختر الأيام اللي تبي الأهالي يسجّلون فيها.'
                               : 'البرنامج ما فيه أيام بعد. أضف يومًا واحدًا على الأقل من تبويب الأيام، وبعدها اختره هنا.')
-                            : 'ما أضفت ولا باقة. أضف باقة وحدة على الأقل، أو حوّل التسعير لـ«سعر لكل يوم».'}
+                            : 'ما فيه طريقة تسجيل. فعّل «التسجيل اليومي» بسعره، أو أضف باقة وحدة على الأقل.'}
                         </span>
                       </div>
                     );
@@ -2345,24 +2354,22 @@ export default function App() {
                       </div>
 
                       <div className={cardCls}>
-                        {isGrouped && (
-                          <Field label="طريقة التسعير">
-                            <div className="grid grid-cols-2 gap-2">
-                              {[{ id: 'perDay', label: 'سعر لكل يوم' }, { id: 'packages', label: 'باقات' }].map((o) => {
-                                const on = (s.mode || 'perDay') === o.id;
-                                return (
-                                  <button key={o.id} type="button" onClick={() => patchSignup({ mode: o.id })}
-                                    className={`px-3 py-2.5 rounded-lg border text-sm ${on ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`}>
-                                    {o.label}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </Field>
-                        )}
+                        {isGrouped ? (
+                          <>
+                            <Field label="التسجيل اليومي"
+                              hint="ولي الأمر يختار أي أيام يبيها، والمبلغ = السعر × عدد أيامه.">
+                              <label className="flex items-center gap-2 mb-3 text-sm text-slate-700">
+                                <input type="checkbox" checked={s.allowPerDay !== false}
+                                  onChange={(e) => patchSignup({ allowPerDay: e.target.checked })} />
+                                اعرضه لولي الأمر
+                              </label>
+                              {s.allowPerDay !== false && (
+                                <input type="number" className={inputCls} value={s.price ?? ''}
+                                  onChange={(e) => patchSignup({ price: e.target.value })} placeholder="سعر اليوم — 40" />
+                              )}
+                            </Field>
 
-                        {isGrouped && s.mode === 'packages' ? (
-                          <Field label="الباقات" hint="ولي الأمر يختار باقة وحدة، وبعدها يختار أيامه ضمن عددها.">
+                            <Field label="الباقات" hint="سعر مقطوع لعدد أيام. تنعرض جنب اليومي، وولي الأمر يختار وحدة.">
                             {(s.packages || []).length > 0 && (
                               <div className="space-y-2 mb-3">
                                 {s.packages.map((pk) => (
@@ -2385,12 +2392,11 @@ export default function App() {
                               onClick={() => { setForm({ dayCount: '' }); setModal('addPackage'); }}>
                               <Plus size={15} /> باقة جديدة
                             </button>
-                          </Field>
+                            </Field>
+                          </>
                         ) : (
                           <Field label="سعر الاشتراك (ر.س)"
-                            hint={isGrouped
-                              ? 'لكل يوم. يُقترح من سعر اليوم، وتقدر تعدّله — وما يغيّر تسجيلك اليدوي.'
-                              : 'لكل أسبوع. يُستخدم في الرابط فقط، وتبقى تكتب المبلغ اللي تبي في تسجيلك اليدوي.'}>
+                            hint="لكل أسبوع. يُستخدم في الرابط فقط، وتبقى تكتب المبلغ اللي تبي في تسجيلك اليدوي.">
                             <input type="number" className={inputCls} value={s.price ?? ''}
                               onChange={(e) => patchSignup({ price: e.target.value })} placeholder="50" />
                           </Field>

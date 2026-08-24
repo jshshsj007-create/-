@@ -6,7 +6,7 @@ import React, { useState, useEffect } from 'react';
 import { Check, AlertTriangle, Plus, X, Copy, Upload } from 'lucide-react';
 import { api } from './cloud.js';
 import { isValidPhone } from './people.js';
-import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, daysAllowed, RECEIPT_TYPES, RECEIPT_MAX } from './signup.js';
+import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, daysAllowed, daysAreFixed, RECEIPT_TYPES, RECEIPT_MAX } from './signup.js';
 
 const input = 'w-full border border-slate-200 rounded-xl px-3.5 py-3 text-[15px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent';
 const inputBad = input.replace('border-slate-200', 'border-red-300');
@@ -310,7 +310,7 @@ export default function SignupPage({ token }) {
 
           {view.usePackages && (
             <div data-bad={errors[`kid${i}.package`] ? '1' : undefined}>
-              <Row label="الباقة" required error={errors[`kid${i}.package`]}>
+              <Row label="طريقة التسجيل" required error={errors[`kid${i}.package`]}>
                 <div className="space-y-2">
                   {view.packages.map((pk) => {
                     const on = kid.packageId === pk.id;
@@ -321,10 +321,15 @@ export default function SignupPage({ token }) {
                         <span className="min-w-0">
                           <span className="block font-semibold text-slate-800">{pk.name}</span>
                           <span className="block text-[11px] text-slate-400">
-                            {pk.dayCount ? `${pk.dayCount} أيام` : `كل الأيام (${view.days.length})`}
+                            {pk.perDay ? 'تختار أي أيام تبيها'
+                              : pk.dayCount ? `${pk.dayCount} أيام`
+                              : `كل الأيام (${view.days.length})`}
                           </span>
                         </span>
-                        <span className="shrink-0 font-bold text-brand-700">{fmt(pk.price)} ر.س</span>
+                        <span className="shrink-0 font-bold text-brand-700 text-left">
+                          {fmt(pk.price)} ر.س
+                          {pk.perDay && <span className="block text-[11px] font-normal text-slate-400">لكل يوم</span>}
+                        </span>
                       </button>
                     );
                   })}
@@ -337,13 +342,16 @@ export default function SignupPage({ token }) {
             const pkg = packageOf(view, kid);
             const allowed = view.usePackages ? daysAllowed(view, pkg) : view.days.length;
             const picked = (kid.days || []).length;
-            const full = view.usePackages && picked >= allowed;
+            // الباقة بعدد ثابت تُقفل لما تمتلئ؛ واليومي مفتوح
+            const full = daysAreFixed(pkg) && picked >= allowed;
             return (
               <div data-bad={errors[`kid${i}.days`] ? '1' : undefined}>
                 <Row label="الأيام" required error={errors[`kid${i}.days`]}>
                   {view.usePackages && (
                     <div className="text-xs text-slate-500 mb-2">
-                      اختر <b>{allowed}</b> {allowed === 1 ? 'يوم' : 'أيام'} — اخترت {picked}
+                      {daysAreFixed(pkg)
+                        ? <>اختر <b>{allowed}</b> {allowed === 1 ? 'يوم' : 'أيام'} — اخترت {picked}</>
+                        : <>اختر الأيام اللي تبيها — اخترت {picked} من {view.days.length}</>}
                     </div>
                   )}
                   <div className="grid grid-cols-2 gap-2">
@@ -362,8 +370,8 @@ export default function SignupPage({ token }) {
                     })}
                   </div>
                   {dueFor(view, kid) > 0 && (
-                    <div className="text-xs text-slate-500 mt-2">
-                      {view.usePackages ? pkg?.name : `${picked} يوم`} · {fmt(dueFor(view, kid))} ر.س
+                    <div className="text-sm text-brand-800 bg-brand-50 rounded-xl px-3 py-2 mt-3 font-semibold">
+                      {view.usePackages && !pkg?.perDay ? pkg.name : `${picked} يوم`} · {fmt(dueFor(view, kid))} ر.س
                     </div>
                   )}
                 </Row>

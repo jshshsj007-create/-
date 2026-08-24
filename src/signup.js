@@ -38,15 +38,27 @@ export const publicView = (data, program) => {
     .filter((w) => openIds.includes(w.id))
     .map((w) => ({ id: w.id, name: w.name, date: w.date || '' }));
 
-  // البرنامج المجمّع يُباع غالبًا باقات: «الموسم كامل»، «أسبوع»، «يوم واحد».
-  const usePackages = (program.type === 'مجمع') && (s.mode === 'packages');
-  const packages = !usePackages ? [] : (s.packages || []).map((p) => ({
-    id: p.id,
-    name: p.name,
-    price: Number(p.price || 0),
-    // صفر = كل الأيام المتاحة؛ وغيره = يختار هذا العدد من الأيام
-    dayCount: Math.min(Number(p.dayCount || 0), days.length),
-  }));
+  /**
+   * المجمّع يُباع بطريقتين معًا: تسجيل يومي بسعر اليوم، وباقات بأسعارها.
+   * ولي الأمر يختار وحدة منها، وبعدها يطلع سعره — فما نجبره على طريقة.
+   */
+  const grouped = program.type === 'مجمع';
+  const perDayPrice = Number(s.price || 0);
+  const perDayOn = grouped && s.allowPerDay !== false && perDayPrice > 0;
+  const packages = !grouped ? [] : [
+    ...(perDayOn ? [{
+      id: '__perday', name: 'يومي', price: perDayPrice, dayCount: 0, perDay: true,
+    }] : []),
+    ...(s.packages || []).map((p) => ({
+      id: p.id,
+      name: p.name,
+      price: Number(p.price || 0),
+      // صفر = كل الأيام المتاحة؛ وغيره = يختار هذا العدد من الأيام
+      dayCount: Math.min(Number(p.dayCount || 0), days.length),
+      perDay: false,
+    })),
+  ];
+  const usePackages = packages.length > 0;
 
   /**
    * البرنامج اللي له أيام ولا يوم منها مفتوح ما ينفع يستقبل تسجيلًا: المشترك
@@ -56,7 +68,7 @@ export const publicView = (data, program) => {
   // ما فيه يوم مفتوح = ما فيه مكان يستقر فيه التسجيل، سواء البرنامج بلا أيام
   // أصلًا أو أيامه كلها مقفلة. الحالتان تنتهيان بمشترك بلا أيام.
   const blocked = days.length === 0 ? 'no_days'
-    : usePackages && packages.length === 0 ? 'no_packages'
+    : grouped && !packages.length ? 'no_packages'
     : '';
 
   return {
@@ -87,8 +99,15 @@ export const publicView = (data, program) => {
 export const packageOf = (view, kid) =>
   (view.packages || []).find((p) => p.id === kid?.packageId) || null;
 
-/** كم يومًا يحق لهذي الباقة؟ صفر في التعريف يعني كل الأيام المتاحة. */
-export const daysAllowed = (view, pkg) => (pkg?.dayCount ? pkg.dayCount : view.days.length);
+/**
+ * كم يومًا يحق لهذا الخيار؟ اليومي مفتوح على كل الأيام المتاحة،
+ * والباقة بعددها — وصفر في تعريفها يعني كل الأيام كذلك.
+ */
+export const daysAllowed = (view, pkg) =>
+  (pkg?.perDay || !pkg?.dayCount) ? view.days.length : pkg.dayCount;
+
+/** اليومي يختار أي عدد؛ الباقة لازم بعددها بالضبط. */
+export const daysAreFixed = (pkg) => Boolean(pkg) && !pkg.perDay && Number(pkg.dayCount) > 0;
 
 /**
  * يتحقق من مُدخلات ولي الأمر. يرجّع { ok, errors } — errors مفتاحه معرّف الخانة
@@ -124,12 +143,12 @@ export const validateSubmission = (view, body) => {
     }
     if (view.usePackages) {
       const pkg = packageOf(view, kid);
-      if (!pkg) errors[`kid${i}.package`] = 'اختر الباقة';
+      if (!pkg) errors[`kid${i}.package`] = 'اختر طريقة التسجيل';
       else {
         const n = (kid?.days || []).length;
         const allowed = daysAllowed(view, pkg);
         if (!n) errors[`kid${i}.days`] = 'اختر أيامك';
-        else if (n !== allowed) errors[`kid${i}.days`] = `هذي الباقة ${allowed} أيام — اخترت ${n}`;
+        else if (daysAreFixed(pkg) && n !== allowed) errors[`kid${i}.days`] = `هذي الباقة ${allowed} أيام — اخترت ${n}`;
       }
     } else if (view.days.length && !(kid?.days || []).length) {
       errors[`kid${i}.days`] = 'اختر يومًا واحدًا على الأقل';
@@ -163,7 +182,12 @@ export const isReceipt = (r) => {
 
 /** المبلغ المستحق: سعر الاشتراك × عدد الأيام المختارة (أو مرة وحدة لو ما فيه أيام). */
 export const dueFor = (view, kid) => {
-  if (view.usePackages) return Number(packageOf(view, kid)?.price || 0);
+  if (view.usePackages) {
+    const pkg = packageOf(view, kid);
+    if (!pkg) return 0;
+    // اليومي يُضرب بعدد الأيام، والباقة سعرها مقطوع
+    return pkg.perDay ? Number(pkg.price || 0) * ((kid?.days || []).length || 0) : Number(pkg.price || 0);
+  }
   const price = Number(view.price || 0);
   if (!price) return 0;
   if (!view.days.length) return price;
