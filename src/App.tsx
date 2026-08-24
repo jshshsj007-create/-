@@ -3,7 +3,7 @@ import {
   Home, BookOpen, Wallet, Settings, Plus, X, Check, ChevronLeft, Trash2, Pencil,
   Users as UsersIcon, Calendar, TrendingUp, TrendingDown, Layers, ShieldCheck,
   Lock, Unlock, Trophy, LogOut, KeyRound, Plane, Search, AlertTriangle, Send,
-  RotateCcw, Wand2, CalendarDays, FileText, Copy,
+  RotateCcw, Wand2, CalendarDays, FileText, Copy, Clock,
 } from 'lucide-react';
 import { api, clone, merge3, readSession, writeSession, clearSession, readPending, writePending, clearPending } from './cloud.js';
 import {
@@ -17,7 +17,7 @@ import { FaidLogo } from './logo.jsx';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
-const APP_VERSION = 'v5.0 · ولي أمر واحد';
+const APP_VERSION = 'v5.1 · قائمة الانتظار';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -1426,6 +1426,15 @@ export default function App() {
 
   const confirmPending = (partId) => clearPendingFlag((part) => part.id === partId);
   const confirmAllPending = () => { clearPendingFlag((part) => !!part.pending); closeModal(); };
+  /** تأكيد قائمة انتظار يوم أو أسبوع دفعة وحدة، بلا ما تمس بقية البرنامج. */
+  const confirmMany = (list) => {
+    const ids = new Set(list.map((p) => p.id));
+    askConfirm(
+      `تأكيد وصول مبالغ ${list.length} تسجيل؟ بينتقلون لقائمة الحضور، ومبالغهم تدخل الإيراد.`,
+      () => clearPendingFlag((part) => ids.has(part.id)),
+      'نعم، وصلت',
+    );
+  };
 
   const savePackage = () => {
     const name = (form.name || '').trim();
@@ -1929,10 +1938,19 @@ export default function App() {
 
   /** مشاركو الدفتر بعد البحث والفلترة. */
   const allParticipants = activeLedger?.participants || [];
-  const visibleParticipants = allParticipants.filter(matches);
+  const visibleAll = allParticipants.filter(matches);
+  /**
+   * اللي سجّل من الرابط يقف في «الانتظار» — ما يدخل قائمة الحضور ولا عدّادها
+   * إلا بعد ما تأكّد وصول مبلغه. كذا شاشة التحضير تبقى للحاضرين فعلًا.
+   */
+  const roster = allParticipants.filter((p) => !p.pending);
+  const waiting = allParticipants.filter((p) => p.pending);
+  const visibleParticipants = roster.filter(matches);
 
   /** حضور يوم معيّن في المجمّع يخص المسجّلين في ذاك اليوم فقط. */
-  const dayRoster = isGrouped && week ? enrolledIn(program.participants, week.id) : [];
+  const dayEnrolled = isGrouped && week ? enrolledIn(program.participants, week.id) : [];
+  const dayRoster = dayEnrolled.filter((p) => !p.pending);
+  const dayWaiting = dayEnrolled.filter((p) => p.pending);
   const visibleDayRoster = dayRoster.filter(matches);
 
   // التبويبات تتغيّر حسب نوع البرنامج وصلاحية المستخدم، فنرجع للتبويب الأول لو المختار غير متاح.
@@ -2174,11 +2192,15 @@ export default function App() {
                   <div className="space-y-2.5">
                     {program.weeks.filter((w) => canSeeWeek(program.id, w.id)).map((w) => {
                       const st = weekState(w);
-                      const roster = isGrouped ? enrolledIn(program.participants, w.id) : null;
+                      const inDay = isGrouped ? enrolledIn(program.participants, w.id) : (w.participants || []);
+                      const roster = isGrouped ? inDay.filter((p) => !p.pending) : null;
                       const present = isGrouped ? roster.filter((p) => program.attendance?.[w.id]?.[p.id] === 'حاضر').length : 0;
-                      const note = isGrouped
+                      // تشوف من برّا أي يوم فيه ناس بانتظار تأكيدك، قبل ما تفتحه
+                      const waitingHere = inDay.filter((p) => p.pending).length;
+                      const note = (isGrouped
                         ? (roster.length ? `${present} حاضر من ${roster.length} مسجّل` : 'ما فيه مسجّلين في هذا اليوم')
-                        : (st === 'لم يبدأ' ? 'لم يبدأ بعد' : `${headcount(w)} طالب · ${fmt(L.revenue(w))} ر.س`);
+                        : (st === 'لم يبدأ' ? 'لم يبدأ بعد' : `${headcount(w)} طالب · ${fmt(L.revenue(w))} ر.س`))
+                        + (waitingHere ? ` · ${waitingHere} بالانتظار` : '');
                       return (
                         <button key={w.id} onClick={() => { setSelectedWeekId(w.id); setWeekTab(isGrouped ? 'attendance' : 'overview'); goto('weekDetail'); }}
                           className="w-full bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3 text-right hover:shadow-md transition-shadow">
@@ -2225,7 +2247,7 @@ export default function App() {
                   <div className={emptyCls}>أضف أيام البرنامج أول من تبويب «الأيام والحضور»، عشان تقدر تحدّد أي أيام سجّل فيها كل مشترك.</div>
                 ) : (
                   <ParticipantsTable
-                    participants={visibleParticipants}
+                    participants={visibleAll}
                     accounts={data.faidAccounts}
                     showAttendance={false}
                     showMoney={canMoney}
@@ -2473,6 +2495,7 @@ export default function App() {
                       <div className="font-bold text-slate-800 mb-1">ينتظر تأكيدك ({pending.length})</div>
                       <div className="text-xs text-slate-400 mb-4">
                         هذولا سجّلوا من الرابط. مبالغهم ما تُحسب إيرادًا لين تأكّد إن الفلوس وصلت.
+                        وتلقاهم كمان تحت «الانتظار» في نفس اليوم اللي سجّلوا فيه، جوّا شاشة الحضور.
                       </div>
                       <div className="space-y-2">
                         {pending.map(({ part, where, weekId }) => (
@@ -2553,6 +2576,7 @@ export default function App() {
                     <input className={inputCls + ' pr-9'} placeholder="ابحث باسم المشترك" value={search} onChange={(e) => setSearch(e.target.value)} />
                   </div>
                   <button onClick={() => markAll('حاضر', visibleDayRoster)} disabled={week.status === 'مغلق'} className="text-xs font-semibold text-green-700 bg-green-50 px-3 py-2.5 rounded-lg shrink-0 disabled:opacity-40">الكل حاضر</button>
+                  <WaitingChip count={dayWaiting.length} />
                   {/* التسجيل من داخل اليوم نفسه: اللي يجي متأخر ويبي يسجّل وأنت تحضّر */}
                   {canEnroll && (
                     <button className={btnPrimary + ' shrink-0'} disabled={week.status === 'مغلق' || ledgerLocked}
@@ -2566,9 +2590,11 @@ export default function App() {
                 )}
                 {dayRoster.length === 0 ? (
                   <div className={emptyCls}>
-                    {(program.participants || []).length === 0
-                      ? 'ما فيه مشتركون بعد. سجّلهم من تبويب «المشتركون» في صفحة البرنامج.'
-                      : 'ما فيه أحد مسجّل في هذا اليوم. تقدر تسجّل مشترك جديد أو تعدّل أيام مشترك موجود من تبويب «المشتركون».'}
+                    {dayWaiting.length > 0
+                      ? 'ما فيه أحد في الحضور بعد. تحت في «الانتظار» اللي سجّلوا من الرابط — أكّدهم وينتقلون هنا.'
+                      : (program.participants || []).length === 0
+                        ? 'ما فيه مشتركون بعد. سجّلهم من تبويب «المشتركون» في صفحة البرنامج.'
+                        : 'ما فيه أحد مسجّل في هذا اليوم. تقدر تسجّل مشترك جديد أو تعدّل أيام مشترك موجود من تبويب «المشتركون».'}
                   </div>
                 ) : (
                   <AttendanceTable
@@ -2587,6 +2613,16 @@ export default function App() {
                     <span className="text-slate-400">(إجمالي مشتركي البرنامج: {(program.participants || []).length})</span>
                   )}
                 </div>
+                {/* الانتظار: تحت قائمة الحضور مباشرة، في نفس اليوم اللي سجّلوا فيه */}
+                <WaitingList
+                  items={dayWaiting}
+                  accounts={data.faidAccounts}
+                  canMoney={canMoney}
+                  locked={week.status === 'مغلق'}
+                  onConfirm={(p) => confirmPending(p.id)}
+                  onConfirmAll={() => confirmMany(dayWaiting)}
+                  onReceipt={(p) => { setForm({ receipt: p.receipt, who: p.name }); setModal('viewReceipt'); }}
+                />
               </div>
             ) : (
               /* برنامج منفصل: مالية + مشاركون + تقرير لهذا اليوم */
@@ -2661,14 +2697,15 @@ export default function App() {
                       </div>
                       <button onClick={() => markAll('حاضر', visibleParticipants)} disabled={ledgerLocked}
                         title="يعلّم المعروضين حاليًا فقط" className="text-xs font-semibold text-green-700 bg-green-50 px-3 py-2.5 rounded-lg shrink-0 disabled:opacity-40">الكل حاضر</button>
+                      <WaitingChip count={waiting.length} />
                       {canEnroll && (
                         <button className={btnPrimary + ' shrink-0'} disabled={ledgerLocked} onClick={() => { setForm({ accountId: data.faidAccounts[0]?.id }); setModal('addParticipant'); }}>
                           <Plus size={16} /> مشارك
                         </button>
                       )}
                     </div>
-                    {allParticipants.length > 0 && canMoney && (
-                      <div className="mb-3"><FilterChips options={payOptions(allParticipants)} value={payFilter} onChange={setPayFilter} /></div>
+                    {roster.length > 0 && canMoney && (
+                      <div className="mb-3"><FilterChips options={payOptions(roster)} value={payFilter} onChange={setPayFilter} /></div>
                     )}
                     {ledgerLocked && <div className="text-xs text-amber-600 mb-3">اليوم مغلق — افتحه من الأعلى عشان تعدّل.</div>}
                     {isQuick(week) && canMoney && (
@@ -2677,9 +2714,11 @@ export default function App() {
                         أول ما تسجّل طالبًا باسمه يتحوّل للأسماء، والمبلغ ينتقل لبند «تحصيل إضافي».
                       </div>
                     )}
-                    {!week.participants.length ? (
+                    {!roster.length ? (
                       <div className={emptyCls}>
-                        {canEnroll ? 'ما فيه طلاب بعد. اضغط «+ مشارك» وسجّل أول واحد.' : 'ما فيه طلاب بعد.'}
+                        {waiting.length > 0
+                          ? 'ما فيه أحد في الحضور بعد. تحت في «الانتظار» اللي سجّلوا من الرابط — أكّدهم وينتقلون هنا.'
+                          : canEnroll ? 'ما فيه طلاب بعد. اضغط «+ مشارك» وسجّل أول واحد.' : 'ما فيه طلاب بعد.'}
                       </div>
                     ) : !canMoney ? (
                       // بلا صلاحية مالية: واجهة تحضير صرفة، نفس تجربة البرنامج المجمّع
@@ -2702,6 +2741,16 @@ export default function App() {
                         onRemove={canMoney ? (p) => askConfirm(`حذف «${p.name}»؟`, () => removeParticipant(p.id)) : null}
                       />
                     )}
+                    {/* الانتظار: تحت قائمة الحضور مباشرة، في نفس الأسبوع اللي سجّلوا فيه */}
+                    <WaitingList
+                      items={waiting}
+                      accounts={data.faidAccounts}
+                      canMoney={canMoney}
+                      locked={ledgerLocked}
+                      onConfirm={(p) => confirmPending(p.id)}
+                      onConfirmAll={() => confirmMany(waiting)}
+                      onReceipt={(p) => { setForm({ receipt: p.receipt, who: p.name }); setModal('viewReceipt'); }}
+                    />
                   </div>
                 )}
 
@@ -4532,6 +4581,77 @@ function AttendanceTable({ participants, statusOf, onSet, locked, subscriptionOf
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/** زر صغير جنب «الكل حاضر» ينزّلك لقائمة الانتظار بدل ما تدوّر عليها. */
+function WaitingChip({ count }) {
+  if (!count) return null;
+  return (
+    <button
+      onClick={() => document.getElementById('waiting-list')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+      className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-2.5 rounded-lg shrink-0 flex items-center gap-1">
+      <Clock size={14} /> الانتظار {count}
+    </button>
+  );
+}
+
+/**
+ * قائمة الانتظار داخل شاشة الحضور نفسها: اللي سجّل من الرابط يقف هنا تحت
+ * قائمة الحضور، وتأكيد وصول مبلغه ينقله فوق فورًا — بلا ما تطلع من الشاشة
+ * ولا تنشغل عن التحضير.
+ */
+function WaitingList({ items, accounts, canMoney, locked, onConfirm, onConfirmAll, onReceipt }) {
+  if (!items.length) return null;
+  const accountName = (id) => accounts.find((a) => a.id === id)?.name || 'بلا حساب';
+  return (
+    <div id="waiting-list" className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <div className="font-bold text-slate-800 flex items-center gap-1.5">
+          <Clock size={16} className="text-amber-600" /> الانتظار
+          <span className="text-xs font-semibold text-amber-800 bg-amber-100 rounded-full px-2 py-0.5">{items.length}</span>
+        </div>
+        {canMoney && items.length > 1 && (
+          <button onClick={onConfirmAll} disabled={locked}
+            className="bg-white border border-amber-300 text-amber-800 text-xs font-semibold px-3 py-2 rounded-lg shrink-0 disabled:opacity-40">
+            تأكيد الكل
+          </button>
+        )}
+      </div>
+      <div className="text-xs text-slate-500 mb-3">
+        {canMoney
+          ? 'سجّلوا من الرابط. أكّد وصول المبلغ وينتقل اسمه لقائمة الحضور فوق.'
+          : 'سجّلوا من الرابط، وينتظرون تأكيد المسؤول عشان يدخلون قائمة الحضور.'}
+      </div>
+      <div className="space-y-2">
+        {items.map((p) => (
+          <div key={p.id} className="bg-white border border-amber-100 rounded-xl px-3 py-2.5 flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="font-semibold text-sm text-slate-800 truncate">{p.name}</div>
+              {canMoney && (
+                <div className="text-[11px] text-slate-500">
+                  {p.accountId === 'unpaid' ? 'ما دفع' : `${fmt(p.amount)} ر.س · ${accountName(p.accountId)}`}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {p.receipt && onReceipt && (
+                <button onClick={() => onReceipt(p)}
+                  className="bg-white border border-slate-200 text-slate-600 text-xs font-semibold px-2.5 py-2 rounded-lg flex items-center gap-1">
+                  <FileText size={14} /> الإيصال
+                </button>
+              )}
+              {canMoney && (
+                <button onClick={() => onConfirm(p)} disabled={locked}
+                  className="bg-green-600 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1 disabled:opacity-40">
+                  <Check size={14} /> تأكيد
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
