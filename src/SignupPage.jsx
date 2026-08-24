@@ -265,7 +265,8 @@ export default function SignupPage({ token }) {
       </div>
 
       <div className="bg-white rounded-2xl p-5 mb-4">
-        <div className="font-bold text-slate-800 mb-4">بيانات ولي الأمر</div>
+        <div className="font-bold text-slate-800 mb-1">بيانات ولي الأمر</div>
+        <div className="text-xs text-slate-400 mb-4">جوالك هو اللي نعرفك فيه لو سجّلت مرة ثانية.</div>
         {guardianFields.map((f) => (
           <div key={f.id} data-bad={errors[f.id] ? '1' : undefined}>
             <Row label={f.label} required={f.required} error={errors[f.id]}>
@@ -291,8 +292,9 @@ export default function SignupPage({ token }) {
           </div>
 
           <div data-bad={errors[`kid${i}.name`] ? '1' : undefined}>
-            <Row label="اسم الطالب" required error={errors[`kid${i}.name`]}>
+            <Row label="اسم الطالب الثلاثي" required error={errors[`kid${i}.name`]}>
               <input className={errors[`kid${i}.name`] ? inputBad : input} value={kid.name || ''}
+                placeholder="محمد سعد القاسم"
                 onChange={(e) => { setKid(i, { name: e.target.value }); setErrors({ ...errors, [`kid${i}.name`]: null }); }} />
             </Row>
           </div>

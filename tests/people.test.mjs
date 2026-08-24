@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import {
   normalizePhone, isValidPhone, formatPhone, normalizeName, sameName, firstName,
-  findGuardianByPhone, studentsOf, findStudent, upsertRegistration, findDuplicates, mergeGuardians, mergeStudents,
+  findGuardianByPhone, studentsOf, findStudent, upsertRegistration, findDuplicates, mergeGuardians, mergeStudents, guardianNameFrom,
 } from '../src/people.js';
 
 let passed = 0;
@@ -69,6 +69,44 @@ test('الاسم الناقص يطابق الكامل مهما كان موضعه
 
 test('الاسم الأول', () => {
   assert.equal(firstName('عبدالله بن محمد العتيبي'), 'عبدالله');
+});
+
+test('اسم الأب يُقرأ من اسم الابن الثلاثي', () => {
+  assert.equal(guardianNameFrom('محمد سعد القاسم'), 'سعد القاسم');
+  assert.equal(guardianNameFrom('عبدالعزيز فهد'), 'فهد');
+  assert.equal(guardianNameFrom('محمد'), '', 'الاسم المفرد ما يكفي');
+  assert.equal(guardianNameFrom('  '), '');
+});
+
+test('التسجيل بلا اسم ولي أمر يسمّيه من اسم ابنه', () => {
+  const r = upsertRegistration(db0, {
+    guardian: { phone: '0557821586' },   // بلا اسم
+    kids: [{ name: 'محمد سعد القاسم', age: 10 }],
+  });
+  assert.equal(r.guardians[0].name, 'سعد القاسم');
+});
+
+test('لو كتب اسمه صراحة فهو أولى', () => {
+  const r = upsertRegistration(db0, {
+    guardian: { name: 'أبو محمد', phone: '0557821587' },
+    kids: [{ name: 'محمد سعد القاسم' }],
+  });
+  assert.equal(r.guardians[0].name, 'أبو محمد');
+});
+
+test('الاسم المفرد ما يخترع اسمًا لولي الأمر', () => {
+  const r = upsertRegistration(db0, { guardian: { phone: '0557821588' }, kids: [{ name: 'محمد' }] });
+  assert.equal(r.guardians[0].name, '', 'يبقى فاضيًا بدل ما نخمّن');
+});
+
+test('الاسم يُكمَّل لولي أمر موجود بلا اسم', () => {
+  const a = upsertRegistration(db0, { guardian: { phone: '0557821589' }, kids: [{ name: 'محمد' }] });
+  assert.equal(a.guardians[0].name, '');
+  const b = upsertRegistration({ ...a, newId: db0.newId }, {
+    guardian: { phone: '0557821589' }, kids: [{ name: 'عبدالله سعد القاسم' }],
+  });
+  assert.equal(b.guardians.length, 1);
+  assert.equal(b.guardians[0].name, 'سعد القاسم', 'الابن الثاني عرّفنا بأبيه');
 });
 
 /* --------------------- السيناريو اللي سأل عنه المستخدم --------------------- */

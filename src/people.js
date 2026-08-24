@@ -56,6 +56,16 @@ const nameTokens = (raw) => normalizeName(raw)
 export const firstName = (raw) => nameTokens(raw)[0] || '';
 
 /**
+ * اسم الأب من اسم الابن الثلاثي: «محمد سعد القاسم» ← «سعد القاسم».
+ * فما نحتاج نسأل ولي الأمر عن اسمه، اسم ابنه يقوله أصلًا.
+ * الاسم المفرد ما يكفي، فنرجّع فراغًا بدل ما نخترع اسمًا.
+ */
+export const guardianNameFrom = (studentName) => {
+  const parts = String(studentName || '').trim().split(/\s+/).filter(Boolean);
+  return parts.length >= 2 ? parts.slice(1).join(' ') : '';
+};
+
+/**
  * هل الاسمان لنفس الشخص على الأرجح؟
  *
  * الاسم العربي يُكتب ناقصًا بأي موضع: «سعد» و«محمد سعد» لنفس الولد، وكذلك
@@ -103,18 +113,22 @@ export const upsertRegistration = (db, { guardian, kids }, now = Date.now()) => 
   const students = [...(db.students || [])];
   const newId = db.newId;
 
+  // ما نسأل ولي الأمر عن اسمه: اسم ابنه الثلاثي يعطيه، ولو كتبه صراحة فهو أولى
+  const firstKid = (kids || []).find((k) => String(k?.name || '').trim());
+  const naming = String(guardian.name || '').trim() || guardianNameFrom(firstKid?.name);
+
   let g = findGuardianByPhone(guardians, guardian.phone);
   let guardianIsNew = false;
   if (g) {
-    // الاسم اللي كتبه هالمرة يحدّث القديم لو كان فاضيًا، وما نطمس اسمًا مكتوبًا
+    // الاسم اللي جانا هالمرة يحدّث القديم لو كان فاضيًا، وما نطمس اسمًا مكتوبًا
     const idx = guardians.indexOf(g);
-    g = { ...g, name: g.name || guardian.name || '', lastSeenAt: now };
+    g = { ...g, name: g.name || naming, lastSeenAt: now };
     guardians[idx] = g;
   } else {
     guardianIsNew = true;
     g = {
       id: newId(),
-      name: guardian.name || '',
+      name: naming,
       phone: normalizePhone(guardian.phone),
       notes: '',
       createdAt: now,

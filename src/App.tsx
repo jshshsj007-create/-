@@ -8,14 +8,14 @@ import {
 import { api, clone, merge3, readSession, writeSession, clearSession, readPending, writePending, clearPending } from './cloud.js';
 import {
   normalizePhone, isValidPhone, formatPhone, normalizeName, sameName,
-  studentsOf, upsertRegistration, findDuplicates, mergeGuardians, mergeStudents,
+  studentsOf, upsertRegistration, findDuplicates, mergeGuardians, mergeStudents, guardianNameFrom,
 } from './people.js';
 import { makeToken as makeSignupToken } from './signup.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
-const APP_VERSION = 'v4.6 · توحيد المشتركين';
+const APP_VERSION = 'v4.7 · الاسم الثلاثي';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -138,9 +138,9 @@ const defaultData = () => ({
 export const LOCKED_FIELDS = ['gPhone', 'name'];
 
 export const defaultSignupFields = () => ([
-  { id: 'gName', label: 'اسم ولي الأمر', type: 'text', required: true },
+  // ما نسأل عن اسم ولي الأمر: اسم الطالب الثلاثي يعطيه
   { id: 'gPhone', label: 'جوال ولي الأمر', type: 'phone', required: true },
-  { id: 'name', label: 'اسم الطالب', type: 'text', required: true },
+  { id: 'name', label: 'اسم الطالب الثلاثي', type: 'text', required: true },
   { id: 'age', label: 'العمر', type: 'number', required: true },
   { id: 'grade', label: 'الصف', type: 'text', required: false },
   { id: 'school', label: 'المدرسة', type: 'text', required: false },
@@ -200,6 +200,13 @@ export function migrate(loaded) {
   d.students = (d.students || []).map((s) => ({ age: '', grade: '', school: '', health: '', ...s }));
   // النموذج لازم يبقى فيه الخانتان المقفولتان مهما عبث فيه أحد
   d.signupFields = (d.signupFields?.length ? d.signupFields : defaultSignupFields());
+  // خانة اسم ولي الأمر انشالت: اسم الطالب الثلاثي يعطيه. مرة وحدة عشان
+  // ما نصادر قرار من يبيها لاحقًا.
+  if (!d.signupFieldsV2) {
+    d.signupFields = d.signupFields.filter((f) => f.id !== 'gName');
+    d.signupFields = d.signupFields.map((f) => (f.id === 'name' ? { ...f, label: 'اسم الطالب الثلاثي' } : f));
+    d.signupFieldsV2 = true;
+  }
   for (const f of defaultSignupFields()) {
     if (LOCKED_FIELDS.includes(f.id) && !d.signupFields.some((x) => x.id === f.id)) d.signupFields.push(f);
   }
@@ -4171,8 +4178,8 @@ export default function App() {
           ? data.guardians.find((g) => normalizePhone(g.phone) === normalizePhone(form.gPhone)) : null;
         return (
           <Modal title="مشترك جديد" onClose={closeModal}>
-            <Field label="اسم الطالب">
-              <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} placeholder="مثال: سعد" />
+            <Field label="اسم الطالب الثلاثي" hint="منه نعرف اسم ولي الأمر، فما نحتاج نسأل عنه.">
+              <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} placeholder="محمد سعد القاسم" />
             </Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="العمر"><input type="number" className={inputCls} value={form.age || ''} onChange={(e) => setForm({ ...form, age: e.target.value })} placeholder="10" /></Field>
@@ -4193,8 +4200,10 @@ export default function App() {
                   مسجّل عندك: <b>{known.name || 'بلا اسم'}</b> — بينضاف تحته بدل ما نكرّره.
                 </div>
               ) : (
-                <Field label="اسم ولي الأمر">
-                  <input className={inputCls} value={form.gName || ''} onChange={(e) => setForm({ ...form, gName: e.target.value })} placeholder="مثال: محمد العتيبي" />
+                <Field label="اسم ولي الأمر (اختياري)"
+                  hint={guardianNameFrom(form.name) ? `لو تركته، بنسمّيه «${guardianNameFrom(form.name)}» من اسم الطالب.` : undefined}>
+                  <input className={inputCls} value={form.gName || ''} onChange={(e) => setForm({ ...form, gName: e.target.value })}
+                    placeholder={guardianNameFrom(form.name) || 'سعد القاسم'} />
                 </Field>
               )}
             </div>
