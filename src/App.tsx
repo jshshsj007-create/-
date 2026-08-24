@@ -8,7 +8,7 @@ import {
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
-const APP_VERSION = 'v2.0 · ٢٤ أغسطس';
+const APP_VERSION = 'v2.1 · ٢٤ أغسطس';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -601,12 +601,13 @@ function Breadcrumb({ items }) {
 
 function Tabs({ tabs, value, onChange }) {
   return (
-    <div className="flex gap-1 bg-white rounded-xl p-1 border border-slate-100 mb-5 w-full sm:w-fit overflow-x-auto">
+    // تلتف لسطر ثانٍ بدل ما يختفي تبويب برّا الشاشة على الجوال
+    <div className="flex flex-wrap gap-1 bg-white rounded-xl p-1 border border-slate-100 mb-5 w-full sm:w-fit">
       {tabs.map((t) => (
         <button
           key={t.id}
           onClick={() => onChange(t.id)}
-          className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap ${value === t.id ? 'bg-brand-600 text-white' : 'text-slate-500 hover:text-slate-700'}`}
+          className={`px-3 sm:px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap ${value === t.id ? 'bg-brand-600 text-white' : 'text-slate-500 hover:text-slate-700'}`}
         >
           {t.label}
         </button>
