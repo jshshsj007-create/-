@@ -6,7 +6,7 @@ import React, { useState, useEffect } from 'react';
 import { Check, AlertTriangle, Plus, X, Copy } from 'lucide-react';
 import { api } from './cloud.js';
 import { isValidPhone } from './people.js';
-import { validateSubmission, dueFor, totalDue, isGuardianField } from './signup.js';
+import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, daysAllowed } from './signup.js';
 
 const input = 'w-full border border-slate-200 rounded-xl px-3.5 py-3 text-[15px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent';
 const inputBad = input.replace('border-slate-200', 'border-red-300');
@@ -86,7 +86,7 @@ export default function SignupPage({ token }) {
         setView(r.body.view);
         // اليوم الوحيد يُختار تلقائيًا — ما فيه داعي نخليه يضغط
         const d = r.body.view.days;
-        if (d.length === 1) setKids([{ name: '', days: [d[0].id] }]);
+        if (d.length === 1 && !r.body.view.usePackages) setKids([{ name: '', days: [d[0].id] }]);
         if (r.body.view.accounts.length === 1) setAccountId(r.body.view.accounts[0].id);
         setState('form');
       } else if (r.status === 404) setState('closed');
@@ -160,7 +160,7 @@ export default function SignupPage({ token }) {
   // شبكة أمان: أي خطأ ما لقى خانة يعرضها ما ينفع يختفي بصمت
   const shownKeys = new Set([
     ...guardianFields.map((f) => f.id), 'accountId', 'kids', '_',
-    ...kids.flatMap((_, i) => [`kid${i}.name`, `kid${i}.days`, ...kidFields.map((f) => `kid${i}.${f.id}`)]),
+    ...kids.flatMap((_, i) => [`kid${i}.name`, `kid${i}.days`, `kid${i}.package`, ...kidFields.map((f) => `kid${i}.${f.id}`)]),
   ]);
   const orphanErrors = Object.entries(errors).filter(([k, v]) => v && !shownKeys.has(k));
   const many = kids.length > 1;
@@ -247,32 +247,73 @@ export default function SignupPage({ token }) {
             </div>
           ))}
 
-          {view.days.length > 0 && (
-            <div data-bad={errors[`kid${i}.days`] ? '1' : undefined}>
-              <Row label="الأيام" required error={errors[`kid${i}.days`]}>
-                <div className="grid grid-cols-2 gap-2">
-                  {view.days.map((d) => {
-                    const on = (kid.days || []).includes(d.id);
+          {view.usePackages && (
+            <div data-bad={errors[`kid${i}.package`] ? '1' : undefined}>
+              <Row label="الباقة" required error={errors[`kid${i}.package`]}>
+                <div className="space-y-2">
+                  {view.packages.map((pk) => {
+                    const on = kid.packageId === pk.id;
                     return (
-                      <button key={d.id} type="button" onClick={() => { toggleDay(i, d.id); setErrors({ ...errors, [`kid${i}.days`]: null }); }}
-                        className={`px-3 py-2.5 rounded-xl border text-sm text-right ${on ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`}>
-                        {d.name}
-                        {d.date && <span className={`block text-[11px] ${on ? 'text-brand-200' : 'text-slate-400'}`}>{d.date}</span>}
+                      <button key={pk.id} type="button"
+                        onClick={() => { setKid(i, { packageId: pk.id, days: [] }); setErrors({ ...errors, [`kid${i}.package`]: null, [`kid${i}.days`]: null }); }}
+                        className={`w-full text-right px-4 py-3 rounded-xl border flex items-center justify-between ${on ? 'border-brand-600 bg-brand-50' : 'border-slate-200'}`}>
+                        <span className="min-w-0">
+                          <span className="block font-semibold text-slate-800">{pk.name}</span>
+                          <span className="block text-[11px] text-slate-400">
+                            {pk.dayCount ? `${pk.dayCount} أيام` : `كل الأيام (${view.days.length})`}
+                          </span>
+                        </span>
+                        <span className="shrink-0 font-bold text-brand-700">{fmt(pk.price)} ر.س</span>
                       </button>
                     );
                   })}
                 </div>
-                {view.price > 0 && (kid.days || []).length > 0 && (
-                  <div className="text-xs text-slate-500 mt-2">{(kid.days || []).length} يوم · {fmt(dueFor(view, kid))} ر.س</div>
-                )}
               </Row>
             </div>
           )}
+
+          {view.days.length > 0 && (!view.usePackages || kid.packageId) && (() => {
+            const pkg = packageOf(view, kid);
+            const allowed = view.usePackages ? daysAllowed(view, pkg) : view.days.length;
+            const picked = (kid.days || []).length;
+            const full = view.usePackages && picked >= allowed;
+            return (
+              <div data-bad={errors[`kid${i}.days`] ? '1' : undefined}>
+                <Row label="الأيام" required error={errors[`kid${i}.days`]}>
+                  {view.usePackages && (
+                    <div className="text-xs text-slate-500 mb-2">
+                      اختر <b>{allowed}</b> {allowed === 1 ? 'يوم' : 'أيام'} — اخترت {picked}
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                    {view.days.map((d) => {
+                      const on = (kid.days || []).includes(d.id);
+                      // الباقة الممتلئة تقفل بقية الأيام بدل ما يزيد ثم يُرفض
+                      const blocked = !on && full;
+                      return (
+                        <button key={d.id} type="button" disabled={blocked}
+                          onClick={() => { toggleDay(i, d.id); setErrors({ ...errors, [`kid${i}.days`]: null }); }}
+                          className={`px-3 py-2.5 rounded-xl border text-sm text-right disabled:opacity-40 ${on ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`}>
+                          {d.name}
+                          {d.date && <span className={`block text-[11px] ${on ? 'text-brand-200' : 'text-slate-400'}`}>{d.date}</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {dueFor(view, kid) > 0 && (
+                    <div className="text-xs text-slate-500 mt-2">
+                      {view.usePackages ? pkg?.name : `${picked} يوم`} · {fmt(dueFor(view, kid))} ر.س
+                    </div>
+                  )}
+                </Row>
+              </div>
+            );
+          })()}
         </div>
       ))}
 
       <button type="button" className="w-full bg-white border border-dashed border-slate-300 text-brand-700 font-semibold rounded-2xl py-3.5 mb-4 flex items-center justify-center gap-2"
-        onClick={() => setKids([...kids, { name: '', days: view.days.length === 1 ? [view.days[0].id] : [] }])}>
+        onClick={() => setKids([...kids, { name: '', days: (!view.usePackages && view.days.length === 1) ? [view.days[0].id] : [] }])}>
         <Plus size={18} /> أضف ابناً آخر
       </button>
 

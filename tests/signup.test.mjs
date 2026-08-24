@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import {
   makeToken, programByToken, publicView, validateSubmission,
-  dueFor, totalDue, applySubmission, rateLimited,
+  dueFor, totalDue, applySubmission, rateLimited, daysAllowed,
 } from '../src/signup.js';
 import { studentsOf } from '../src/people.js';
 
@@ -169,6 +169,116 @@ test('ما ينفع يختار حسابًا ما عرضته له', () => {
   const v = publicView(d, d.programs[0]);
   assert.equal(validateSubmission(v, { ...goodBody, accountId: 'qasim' }).errors.accountId, 'اختر طريقة الدفع');
   assert.equal(validateSubmission(v, { ...goodBody, accountId: 'ملفّق' }).errors.accountId, 'اختر طريقة الدفع');
+});
+
+/* ------------------------------- الباقات ------------------------------- */
+
+const withPackages = () => {
+  const d = baseData();
+  d.programs[0].type = 'مجمع';
+  d.programs[0].signup.openWeeks = ['w1', 'w2', 'w3'];
+  d.programs[0].signup.mode = 'packages';
+  d.programs[0].signup.packages = [
+    { id: 'pk_all', name: 'الموسم كامل', price: 120, dayCount: 0 },
+    { id: 'pk_two', name: 'يومان', price: 90, dayCount: 2 },
+    { id: 'pk_one', name: 'يوم واحد', price: 50, dayCount: 1 },
+  ];
+  return d;
+};
+
+test('الباقات تظهر لولي الأمر بأسعارها', () => {
+  const d = withPackages();
+  const v = publicView(d, d.programs[0]);
+  assert.equal(v.usePackages, true);
+  assert.deepEqual(v.packages.map((p) => [p.name, p.price]), [['الموسم كامل', 120], ['يومان', 90], ['يوم واحد', 50]]);
+});
+
+test('«كل الأيام» تعني الأيام المفتوحة، وما تزيد لو الباقة أكبر منها', () => {
+  const d = withPackages();
+  d.programs[0].signup.openWeeks = ['w1', 'w2'];
+  d.programs[0].signup.packages.push({ id: 'pk_big', name: 'عشرة أيام', price: 400, dayCount: 10 });
+  const v = publicView(d, d.programs[0]);
+  assert.equal(daysAllowed(v, v.packages[0]), 2, 'صفر = الأيام المتاحة');
+  assert.equal(v.packages.find((p) => p.id === 'pk_big').dayCount, 2, 'ما تتجاوز المتاح');
+});
+
+test('سعر الباقة هو المستحق، مو سعر اليوم', () => {
+  const d = withPackages();
+  const v = publicView(d, d.programs[0]);
+  assert.equal(dueFor(v, { packageId: 'pk_two', days: ['w1', 'w2'] }), 90);
+  assert.equal(dueFor(v, { packageId: 'pk_all', days: ['w1', 'w2', 'w3'] }), 120);
+  assert.equal(dueFor(v, { packageId: 'مو موجودة' }), 0);
+});
+
+test('لازم يختار باقة، وبعدد أيامها بالضبط', () => {
+  const d = withPackages();
+  const v = publicView(d, d.programs[0]);
+  const base = { answers: goodBody.answers, accountId: 'rajhi' };
+
+  assert.equal(validateSubmission(v, { ...base, kids: [{ name: 'سعد', age: '10', days: ['w1'] }] }).errors['kid0.package'], 'اختر الباقة');
+  assert.equal(validateSubmission(v, { ...base, kids: [{ name: 'سعد', age: '10', packageId: 'pk_two', days: ['w1'] }] }).errors['kid0.days'],
+    'هذي الباقة 2 أيام — اخترت 1', 'ناقص');
+  assert.equal(validateSubmission(v, { ...base, kids: [{ name: 'سعد', age: '10', packageId: 'pk_one', days: ['w1', 'w2'] }] }).errors['kid0.days'],
+    'هذي الباقة 1 أيام — اخترت 2', 'زايد');
+  assert.equal(validateSubmission(v, { ...base, kids: [{ name: 'سعد', age: '10', packageId: 'pk_two', days: ['w1', 'w2'] }] }).ok, true);
+});
+
+test('يوم ملفّق ما هو ضمن المعروض يُرفض', () => {
+  const d = withPackages();
+  d.programs[0].signup.openWeeks = ['w1', 'w2'];
+  const v = publicView(d, d.programs[0]);
+  const r = validateSubmission(v, {
+    answers: goodBody.answers, accountId: 'rajhi',
+    kids: [{ name: 'سعد', age: '10', packageId: 'pk_two', days: ['w1', 'w3'] }],
+  });
+  assert.equal(r.errors['kid0.days'], 'فيه يوم غير متاح');
+});
+
+test('التسجيل بباقة يوصل بسعرها واسمها', () => {
+  const d = withPackages();
+  const v = publicView(d, d.programs[0]);
+  const r = applySubmission(d, d.programs[0], v, {
+    answers: goodBody.answers, accountId: 'rajhi',
+    kids: [{ name: 'سعد', age: '10', packageId: 'pk_two', days: ['w1', 'w3'] }],
+  }, { newId, now: 1000 });
+
+  const added = r.data.programs[0].participants.find((p) => p.name === 'سعد');
+  assert.equal(added.amount, 90, 'سعر الباقة');
+  assert.equal(added.packageName, 'يومان');
+  assert.deepEqual(added.days, ['w1', 'w3']);
+  assert.ok(added.pending);
+});
+
+test('كل ابن يقدر ياخذ باقة مختلفة', () => {
+  const d = withPackages();
+  const v = publicView(d, d.programs[0]);
+  const r = applySubmission(d, d.programs[0], v, {
+    answers: goodBody.answers, accountId: 'rajhi',
+    kids: [
+      { name: 'سعد', age: '10', packageId: 'pk_all', days: ['w1', 'w2', 'w3'] },
+      { name: 'عمر', age: '8', packageId: 'pk_one', days: ['w2'] },
+    ],
+  }, { newId, now: 1000 });
+  const parts = r.data.programs[0].participants;
+  assert.equal(parts.find((p) => p.name === 'سعد').amount, 120);
+  assert.equal(parts.find((p) => p.name === 'عمر').amount, 50);
+  assert.equal(totalDue(v, [{ packageId: 'pk_all' }, { packageId: 'pk_one' }]), 170);
+});
+
+/* ---------------------- الاسم اللي يشوفه ولي الأمر ---------------------- */
+
+test('الحساب يظهر لولي الأمر بالاسم اللي يفهمه', () => {
+  const d = baseData();
+  d.faidAccounts[0].publicName = 'STC Pay';
+  const v = publicView(d, d.programs[0]);
+  assert.equal(v.accounts[0].name, 'STC Pay', 'ولي الأمر يشوف الاسم المعروض');
+  assert.equal(d.faidAccounts[0].name, 'الراجحي', 'واسم الحساب عندك ما يتغيّر');
+});
+
+test('بلا اسم معروض يبقى اسم الحساب', () => {
+  const d = baseData();
+  d.faidAccounts[0].publicName = '   ';
+  assert.equal(publicView(d, d.programs[0]).accounts[0].name, 'الراجحي');
 });
 
 /* ------------------------------- المبلغ ------------------------------- */

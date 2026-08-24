@@ -14,7 +14,7 @@ import { makeToken as makeSignupToken } from './signup.js';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
-const APP_VERSION = 'v4.0 · التسجيل الذاتي';
+const APP_VERSION = 'v4.1 · الباقات';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -202,13 +202,15 @@ export function migrate(loaded) {
   for (const f of defaultSignupFields()) {
     if (LOCKED_FIELDS.includes(f.id) && !d.signupFields.some((x) => x.id === f.id)) d.signupFields.push(f);
   }
-  d.faidAccounts = d.faidAccounts.map((a) => ({ transferInfo: '', ...a }));
+  d.faidAccounts = d.faidAccounts.map((a) => ({ transferInfo: '', publicName: '', ...a }));
   return d;
 }
 
 /** إعدادات رابط التسجيل لبرنامج: مقفول ما لم يفتحه صاحبه. */
 export const emptySignup = () => ({
   enabled: false, token: '', price: '', openWeeks: [], accounts: [], extraFields: [],
+  // البرنامج المجمّع يُباع إما بسعر اليوم أو بباقات يحددها صاحب التطبيق
+  mode: 'perDay', packages: [],
 });
 
 /* ------------------------------ عناصر واجهة عامة ------------------------------ */
@@ -1353,6 +1355,21 @@ export default function App() {
   const confirmPending = (partId) => clearPendingFlag((part) => part.id === partId);
   const confirmAllPending = () => { clearPendingFlag((part) => !!part.pending); closeModal(); };
 
+  const savePackage = () => {
+    const name = (form.name || '').trim();
+    const price = Number(form.price || 0);
+    const dayCount = Number(form.dayCount || 0);
+    if (!name) { setForm({ ...form, error: 'اكتب اسم الباقة' }); return; }
+    if (!(price > 0)) { setForm({ ...form, error: 'اكتب سعر الباقة' }); return; }
+    const open = ((program.signup || {}).openWeeks || []).length;
+    if (dayCount < 0 || dayCount > open) {
+      setForm({ ...form, error: `عدد الأيام لازم يكون بين صفر و${open} — هذي الأيام اللي فتحتها للتسجيل` });
+      return;
+    }
+    patchSignup({ packages: [...((program.signup || {}).packages || []), { id: uid(), name, price, dayCount }] });
+    closeModal();
+  };
+
   const saveSignupField = () => {
     const label = (form.label || '').trim();
     if (!label) { setForm({ ...form, error: 'اكتب نص السؤال' }); return; }
@@ -2179,13 +2196,56 @@ export default function App() {
                       </div>
 
                       <div className={cardCls}>
-                        <Field label="سعر الاشتراك (ر.س)"
-                          hint={isGrouped
-                            ? 'لكل يوم. يُقترح من سعر اليوم، وتقدر تعدّله — وما يغيّر تسجيلك اليدوي.'
-                            : 'لكل أسبوع. يُستخدم في الرابط فقط، وتبقى تكتب المبلغ اللي تبي في تسجيلك اليدوي.'}>
-                          <input type="number" className={inputCls} value={s.price ?? ''}
-                            onChange={(e) => patchSignup({ price: e.target.value })} placeholder="50" />
-                        </Field>
+                        {isGrouped && (
+                          <Field label="طريقة التسعير">
+                            <div className="grid grid-cols-2 gap-2">
+                              {[{ id: 'perDay', label: 'سعر لكل يوم' }, { id: 'packages', label: 'باقات' }].map((o) => {
+                                const on = (s.mode || 'perDay') === o.id;
+                                return (
+                                  <button key={o.id} type="button" onClick={() => patchSignup({ mode: o.id })}
+                                    className={`px-3 py-2.5 rounded-lg border text-sm ${on ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`}>
+                                    {o.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </Field>
+                        )}
+
+                        {isGrouped && s.mode === 'packages' ? (
+                          <Field label="الباقات" hint="ولي الأمر يختار باقة وحدة، وبعدها يختار أيامه ضمن عددها.">
+                            {(s.packages || []).length > 0 && (
+                              <div className="space-y-2 mb-3">
+                                {s.packages.map((pk) => (
+                                  <div key={pk.id} className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2.5">
+                                    <div className="min-w-0">
+                                      <div className="text-sm font-semibold text-slate-800 truncate">{pk.name}</div>
+                                      <div className="text-[11px] text-slate-400">
+                                        {fmt(pk.price)} ر.س · {Number(pk.dayCount) ? `${pk.dayCount} أيام` : 'كل الأيام المتاحة'}
+                                      </div>
+                                    </div>
+                                    <button className="text-red-400 p-1 shrink-0"
+                                      onClick={() => patchSignup({ packages: s.packages.filter((x) => x.id !== pk.id) })}>
+                                      <Trash2 size={15} />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            <button className={btnGhost + ' w-full border border-dashed border-slate-300'}
+                              onClick={() => { setForm({ dayCount: '' }); setModal('addPackage'); }}>
+                              <Plus size={15} /> باقة جديدة
+                            </button>
+                          </Field>
+                        ) : (
+                          <Field label="سعر الاشتراك (ر.س)"
+                            hint={isGrouped
+                              ? 'لكل يوم. يُقترح من سعر اليوم، وتقدر تعدّله — وما يغيّر تسجيلك اليدوي.'
+                              : 'لكل أسبوع. يُستخدم في الرابط فقط، وتبقى تكتب المبلغ اللي تبي في تسجيلك اليدوي.'}>
+                            <input type="number" className={inputCls} value={s.price ?? ''}
+                              onChange={(e) => patchSignup({ price: e.target.value })} placeholder="50" />
+                          </Field>
+                        )}
 
                         <Field label={isGrouped ? 'الأيام المتاحة للتسجيل' : 'الأسابيع المتاحة للتسجيل'}
                           hint="اللي ما تختاره ما يظهر لولي الأمر أصلًا.">
@@ -2217,7 +2277,12 @@ export default function App() {
                                 <button key={a.id} type="button"
                                   onClick={() => patchSignup({ accounts: on ? s.accounts.filter((x) => x !== a.id) : [...(s.accounts || []), a.id] })}
                                   className={`w-full text-right px-3 py-2.5 rounded-lg border flex items-center justify-between ${on ? 'border-brand-600 bg-brand-50' : 'border-slate-200'}`}>
-                                  <span className="text-sm text-slate-800">{a.name}</span>
+                                  <span className="text-sm text-slate-800">
+                                    {a.name}
+                                    {a.publicName && a.publicName !== a.name && (
+                                      <span className="text-xs text-slate-400"> ← يشوفه «{a.publicName}»</span>
+                                    )}
+                                  </span>
                                   <span className="text-xs text-slate-400">
                                     {a.transferInfo ? 'فيه تفاصيل تحويل' : 'بلا تفاصيل — يُدفع عند الحضور'}
                                   </span>
@@ -2514,7 +2579,7 @@ export default function App() {
                   <div className="text-[11px] text-slate-400 mt-1">وارد {fmt(a.revenue)} · صادر {fmt(a.expenses)}</div>
                   {isAdmin && (
                     <button className="text-[11px] text-brand-600 mt-2 block"
-                      onClick={() => { setForm({ id: a.id, transferInfo: a.transferInfo || '', name: a.name }); setModal('transferInfo'); }}>
+                      onClick={() => { setForm({ id: a.id, transferInfo: a.transferInfo || '', publicName: a.publicName || '', name: a.name }); setModal('transferInfo'); }}>
                       {a.transferInfo ? 'تفاصيل التحويل ✓' : '+ تفاصيل التحويل'}
                     </button>
                   )}
@@ -3738,6 +3803,10 @@ export default function App() {
           <div className="text-sm text-slate-500 mb-4">
             تظهر لولي الأمر في رابط التسجيل لما يختار هذا الحساب. اتركها فاضية لو الدفع عند الحضور (كاش).
           </div>
+          <Field label="الاسم اللي يشوفه ولي الأمر" hint="اتركه فاضيًا لو تبيه نفس اسم الحساب. مثال: حساب «أبو فارس» عندك، وولي الأمر يشوف «STC Pay».">
+            <input className={inputCls} value={form.publicName ?? ''}
+              onChange={(e) => setForm({ ...form, publicName: e.target.value })} placeholder={form.name} />
+          </Field>
           <Field label="الآيبان أو رقم الجوال">
             <input className={inputCls} dir="ltr" value={form.transferInfo || ''}
               onChange={(e) => setForm({ ...form, transferInfo: e.target.value })}
@@ -3746,9 +3815,30 @@ export default function App() {
           <div className="flex gap-2 mt-2">
             <button className={btnPrimary + ' flex-1'}
               onClick={() => {
-                save({ ...data, faidAccounts: data.faidAccounts.map((a) => (a.id === form.id ? { ...a, transferInfo: (form.transferInfo || '').trim() } : a)) });
+                save({ ...data, faidAccounts: data.faidAccounts.map((a) => (a.id === form.id ? {
+                  ...a, transferInfo: (form.transferInfo || '').trim(), publicName: (form.publicName || '').trim(),
+                } : a)) });
                 closeModal();
               }}>حفظ</button>
+            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+          </div>
+        </Modal>
+      )}
+
+      {modal === 'addPackage' && (
+        <Modal title="باقة جديدة" onClose={closeModal}>
+          <Field label="اسم الباقة">
+            <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} placeholder="مثال: الموسم كامل" />
+          </Field>
+          <Field label="السعر (ر.س)">
+            <input type="number" className={inputCls} value={form.price ?? ''} onChange={(e) => setForm({ ...form, price: e.target.value, error: '' })} placeholder="800" />
+          </Field>
+          <Field label="عدد الأيام" hint="اتركه فاضيًا (أو صفر) لو الباقة تشمل كل الأيام المتاحة. وإلا يختار ولي الأمر هذا العدد من الأيام.">
+            <input type="number" className={inputCls} value={form.dayCount ?? ''} onChange={(e) => setForm({ ...form, dayCount: e.target.value, error: '' })} placeholder="4" />
+          </Field>
+          {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+          <div className="flex gap-2 mt-2">
+            <button className={btnPrimary + ' flex-1'} onClick={savePackage}>إضافة</button>
             <button className={btnGhost} onClick={closeModal}>إلغاء</button>
           </div>
         </Modal>

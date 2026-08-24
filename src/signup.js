@@ -34,21 +34,47 @@ export const fieldsFor = (data, program) => [
 export const publicView = (data, program) => {
   const s = program.signup || {};
   const openIds = s.openWeeks || [];
+  const days = (program.weeks || [])
+    .filter((w) => openIds.includes(w.id))
+    .map((w) => ({ id: w.id, name: w.name, date: w.date || '' }));
+
+  // البرنامج المجمّع يُباع غالبًا باقات: «الموسم كامل»، «أسبوع»، «يوم واحد».
+  const usePackages = (program.type === 'مجمع') && (s.mode === 'packages');
+  const packages = !usePackages ? [] : (s.packages || []).map((p) => ({
+    id: p.id,
+    name: p.name,
+    price: Number(p.price || 0),
+    // صفر = كل الأيام المتاحة؛ وغيره = يختار هذا العدد من الأيام
+    dayCount: Math.min(Number(p.dayCount || 0), days.length),
+  }));
+
   return {
     programId: program.id,
     programName: program.name,
     type: program.type || 'منفصل',
     price: Number(s.price || 0),
+    usePackages,
+    packages,
     // المجمّع يختار ولي الأمر أيامه؛ المنفصل يختار أي أسابيع يبي
-    days: (program.weeks || [])
-      .filter((w) => openIds.includes(w.id))
-      .map((w) => ({ id: w.id, name: w.name, date: w.date || '' })),
+    days,
     accounts: (data.faidAccounts || [])
       .filter((a) => (s.accounts || []).includes(a.id))
-      .map((a) => ({ id: a.id, name: a.name, transferInfo: a.transferInfo || '' })),
+      .map((a) => ({
+        id: a.id,
+        // اسم يفهمه ولي الأمر؛ اسم الحساب عندك يبقى لك
+        name: (a.publicName || '').trim() || a.name,
+        transferInfo: a.transferInfo || '',
+      })),
     fields: fieldsFor(data, program),
   };
 };
+
+/** الباقة المختارة، إن كان البرنامج يُباع باقات. */
+export const packageOf = (view, kid) =>
+  (view.packages || []).find((p) => p.id === kid?.packageId) || null;
+
+/** كم يومًا يحق لهذي الباقة؟ صفر في التعريف يعني كل الأيام المتاحة. */
+export const daysAllowed = (view, pkg) => (pkg?.dayCount ? pkg.dayCount : view.days.length);
 
 /**
  * يتحقق من مُدخلات ولي الأمر. يرجّع { ok, errors } — errors مفتاحه معرّف الخانة
@@ -79,7 +105,22 @@ export const validateSubmission = (view, body) => {
       if (f.required && !v) errors[`kid${i}.${f.id}`] = 'مطلوب';
       else if (f.type === 'number' && v && !/^\d{1,3}$/.test(v)) errors[`kid${i}.${f.id}`] = 'اكتب رقمًا';
     }
-    if (view.days.length && !(kid?.days || []).length) errors[`kid${i}.days`] = 'اختر يومًا واحدًا على الأقل';
+    if (view.usePackages) {
+      const pkg = packageOf(view, kid);
+      if (!pkg) errors[`kid${i}.package`] = 'اختر الباقة';
+      else {
+        const n = (kid?.days || []).length;
+        const allowed = daysAllowed(view, pkg);
+        if (!n) errors[`kid${i}.days`] = 'اختر أيامك';
+        else if (n !== allowed) errors[`kid${i}.days`] = `هذي الباقة ${allowed} أيام — اخترت ${n}`;
+      }
+    } else if (view.days.length && !(kid?.days || []).length) {
+      errors[`kid${i}.days`] = 'اختر يومًا واحدًا على الأقل';
+    }
+    // أيام ملفّقة ما هي ضمن المعروض
+    for (const d of kid?.days || []) {
+      if (!view.days.some((x) => x.id === d)) errors[`kid${i}.days`] = 'فيه يوم غير متاح';
+    }
   });
 
   if (view.accounts.length && !view.accounts.some((a) => a.id === body?.accountId)) {
@@ -90,6 +131,7 @@ export const validateSubmission = (view, body) => {
 
 /** المبلغ المستحق: سعر الاشتراك × عدد الأيام المختارة (أو مرة وحدة لو ما فيه أيام). */
 export const dueFor = (view, kid) => {
+  if (view.usePackages) return Number(packageOf(view, kid)?.price || 0);
   const price = Number(view.price || 0);
   if (!price) return 0;
   if (!view.days.length) return price;
@@ -135,6 +177,7 @@ export const applySubmission = (data, program, view, body, { newId, now = Date.n
       pending: true,          // ينتظر تأكيد وصول المبلغ
       source: 'link',
       submittedAt: now,
+      ...(view.usePackages && packageOf(view, kid) ? { packageName: packageOf(view, kid).name } : {}),
       ...(Object.keys({ ...extras, ...kidExtras }).length ? { answers: { ...extras, ...kidExtras } } : {}),
       ...(grouped ? { days: kid.days || [] } : {}),
     };
