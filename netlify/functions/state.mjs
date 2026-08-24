@@ -137,4 +137,5 @@ export default async (req) => {
   return json({ error: 'unknown_op' }, 400);
 };
 
-export const config = { path: '/api/state' };
+// المسار /api/state يجي من التحويل في netlify.toml — ما نحدّد مسارًا مخصصًا هنا،
+// لأنه يلغي المسار الافتراضي اللي يشير له التحويل.
