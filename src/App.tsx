@@ -13,7 +13,7 @@ import {
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
-const APP_VERSION = 'v3.1 · أولياء الأمور';
+const APP_VERSION = 'v3.2 · المشتركين';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -917,6 +917,8 @@ export default function App() {
           id: uid(), name: form.name.trim(),
           amount: accountId === 'unpaid' ? 0 : Number(form.amount || 0),
           accountId, attendance: 'معلق',
+          // الربط بسجلّ الطالب هو اللي يخلّي تاريخه عبر المواسم يتجمّع في مكان واحد
+          ...(form.studentId ? { studentId: form.studentId } : {}),
           ...(isGrouped ? { days: form.days } : {}),
         }],
       };
@@ -935,6 +937,8 @@ export default function App() {
     patchLedger(activeRef, (l) => ({
       participants: (l.participants || []).map((p) => (p.id !== form.id ? p : {
         ...p, name: form.name.trim(), accountId, amount: accountId === 'unpaid' ? 0 : Number(form.amount || 0),
+        // التعديل يقدر يربط تسجيلًا قديمًا بسجلّ الطالب، أو يفك الربط
+        studentId: form.studentId || undefined,
         ...(isGrouped ? { days: form.days } : {}),
       })),
     }));
@@ -1323,6 +1327,26 @@ export default function App() {
     goto('guardians');
   };
 
+  /**
+   * إضافة مشترك من شاشة واحدة: الطالب + جوال ولي أمره. لو الجوال معروف
+   * ينضاف تحت نفس ولي الأمر بدل ما ننشئ له سجلًا ثانيًا — نفس منطق الرابط.
+   */
+  const savePerson = () => {
+    const name = (form.name || '').trim();
+    const phone = (form.gPhone || '').trim();
+    if (!name) { setForm({ ...form, error: 'اسم الطالب مطلوب' }); return; }
+    if (!isValidPhone(phone)) { setForm({ ...form, error: 'رقم جوال ولي الأمر غير صحيح — مثال: 0551234567' }); return; }
+
+    const res = upsertRegistration({ guardians: data.guardians, students: data.students, newId: uid }, {
+      guardian: { name: (form.gName || '').trim(), phone },
+      kids: [{ name, age: form.age || '', grade: (form.grade || '').trim(), school: (form.school || '').trim(), health: (form.health || '').trim() }],
+    });
+    save({ ...data, guardians: res.guardians, students: res.students });
+    setSelectedGuardianId(res.guardian.id);
+    goto('guardianDetail');
+    closeModal();
+  };
+
   const saveStudent = () => {
     const name = (form.name || '').trim();
     if (!name) { setForm({ ...form, error: 'اسم الطالب مطلوب' }); return; }
@@ -1670,7 +1694,7 @@ export default function App() {
     { id: 'programs', label: 'البرامج', desc: 'عرض وإدارة البرامج', icon: BookOpen, show: canAttend },
     { id: 'faid', label: 'فيض', desc: 'حسابات فيض والأرصدة', icon: Wallet, show: can('فيض - الإيرادات والمصروفات') },
     { id: 'club', label: 'النادي', desc: 'المسابقات والسفرات', icon: Trophy, show: canClub },
-    { id: 'guardians', label: 'أولياء الأمور', desc: 'قاعدة المشتركين وأهاليهم', icon: UsersIcon, show: canGuardians },
+    { id: 'guardians', label: 'المشتركين', desc: 'الطلاب وأولياء أمورهم', icon: UsersIcon, show: canGuardians },
     { id: 'reports', label: 'التقارير', desc: 'التقارير والإحصائيات', icon: FileText, show: canMoney },
     { id: 'settings', label: 'الإعدادات', desc: 'المستخدمون والصلاحيات', icon: Settings, show: isAdmin },
   ].filter((c) => c.show);
@@ -2662,31 +2686,35 @@ export default function App() {
         {view === 'guardians' && canGuardians && (() => {
           const q = normalizeName(guardianSearch);
           const digits = normalizePhone(guardianSearch);
-          const list = data.guardians.filter((g) => {
+          // القائمة بأسماء الطلاب — هم اللي تشتغل عليهم، وولي الأمر تفصيل تحت الاسم
+          const list = data.students.filter((s) => {
             if (!guardianSearch.trim()) return true;
-            if (digits && normalizePhone(g.phone).includes(digits)) return true;
-            if (q && normalizeName(g.name).includes(q)) return true;
-            return studentsOf(data.students, g.id).some((s) => q && normalizeName(s.name).includes(q));
-          }).sort((a, b) => (b.lastSeenAt || b.createdAt || 0) - (a.lastSeenAt || a.createdAt || 0));
+            const g = data.guardians.find((x) => x.id === s.guardianId);
+            if (q && normalizeName(s.name).includes(q)) return true;
+            if (q && g && normalizeName(g.name).includes(q)) return true;
+            if (digits && g && normalizePhone(g.phone).includes(digits)) return true;
+            if (q && normalizeName(s.school || '').includes(q)) return true;
+            return false;
+          }).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
           return (
             <div>
               <div className="flex items-center justify-between mb-1 gap-3">
-                <h2 className="text-xl font-extrabold text-slate-800">أولياء الأمور</h2>
-                <button className={btnPrimary} onClick={() => { setForm({}); setModal('editGuardian'); }}><Plus size={16} /> ولي أمر</button>
+                <h2 className="text-xl font-extrabold text-slate-800">المشتركين</h2>
+                <button className={btnPrimary} onClick={() => { setForm({}); setModal('newPerson'); }}><Plus size={16} /> مشترك</button>
               </div>
               <div className="text-sm text-slate-400 mb-4">
-                قاعدة المشتركين وأهاليهم — تعيش عبر المواسم كلها، مو داخل ترم واحد.
+                الطلاب وأولياء أمورهم — تعيش عبر المواسم كلها، مو داخل ترم واحد.
               </div>
 
               <div className="grid grid-cols-2 gap-3 mb-4">
                 <div className={cardCls + ' text-center'}>
-                  <div className="text-2xl font-extrabold text-brand-700">{data.guardians.length}</div>
-                  <div className="text-xs text-slate-400 mt-1">ولي أمر</div>
-                </div>
-                <div className={cardCls + ' text-center'}>
                   <div className="text-2xl font-extrabold text-brand-700">{data.students.length}</div>
                   <div className="text-xs text-slate-400 mt-1">طالب</div>
+                </div>
+                <div className={cardCls + ' text-center'}>
+                  <div className="text-2xl font-extrabold text-brand-700">{data.guardians.length}</div>
+                  <div className="text-xs text-slate-400 mt-1">ولي أمر</div>
                 </div>
               </div>
 
@@ -2703,35 +2731,42 @@ export default function App() {
               <div className="relative mb-4">
                 <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input className={inputCls + ' pr-9'} value={guardianSearch} onChange={(e) => setGuardianSearch(e.target.value)}
-                  placeholder="ابحث باسم ولي الأمر أو الطالب أو الجوال" />
+                  placeholder="ابحث باسم الطالب أو ولي أمره أو الجوال" />
               </div>
 
               {list.length === 0 ? (
                 <div className={emptyCls}>
-                  {data.guardians.length === 0
-                    ? 'ما فيه أولياء أمور بعد. أضف واحدًا، أو خلّهم يسجّلون بأنفسهم من رابط التسجيل.'
+                  {data.students.length === 0
+                    ? 'ما فيه مشتركين بعد. أضف واحدًا، أو خلّهم يسجّلون بأنفسهم من رابط التسجيل.'
                     : 'ما فيه نتيجة لهذا البحث.'}
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {list.map((g) => {
-                    const { kids, regs } = guardianSummary(g);
+                  {list.map((s) => {
+                    const g = data.guardians.find((x) => x.id === s.guardianId);
+                    const regs = historyOf(s.id);
                     return (
-                      <button key={g.id} className="w-full text-right bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3"
-                        onClick={() => { setSelectedGuardianId(g.id); goto('guardianDetail'); }}>
+                      <button key={s.id} className="w-full text-right bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3"
+                        onClick={() => { setSelectedGuardianId(s.guardianId); goto('guardianDetail'); }}>
                         <div className="w-10 h-10 rounded-full bg-brand-100 text-brand-800 font-bold flex items-center justify-center shrink-0">
-                          {(g.name || '؟').slice(0, 1)}
+                          {(s.name || '؟').slice(0, 1)}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="font-semibold text-slate-800 truncate">{g.name || 'بلا اسم'}</div>
-                          <div className="text-xs text-slate-400" dir="ltr">{formatPhone(g.phone)}</div>
-                          {kids.length > 0 && (
-                            <div className="text-xs text-slate-500 mt-1 truncate">{kids.map((k) => k.name).join(' · ')}</div>
+                          <div className="font-semibold text-slate-800 truncate">{s.name}</div>
+                          <div className="text-xs text-slate-400 truncate">
+                            {[s.age && `${s.age} سنة`, s.grade, s.school].filter(Boolean).join(' · ') || 'بلا تفاصيل'}
+                          </div>
+                          {g && (
+                            <div className="text-xs text-slate-500 mt-1 truncate">
+                              {g.name} · <span dir="ltr">{formatPhone(g.phone)}</span>
+                            </div>
                           )}
+                          {s.health && <div className="text-[11px] text-amber-700 mt-1 truncate">⚠ {s.health}</div>}
                         </div>
                         <div className="shrink-0 text-left">
-                          <Badge tone="slate">{kids.length} طالب</Badge>
-                          {regs.length > 0 && <div className="text-[11px] text-slate-400 mt-1">{regs.length} تسجيل</div>}
+                          {regs.length > 0
+                            ? <Badge tone="brand">{regs.length} تسجيل</Badge>
+                            : <Badge tone="slate">جديد</Badge>}
                         </div>
                       </button>
                     );
@@ -2748,7 +2783,7 @@ export default function App() {
           const { kids, regs, paid } = guardianSummary(g);
           return (
             <div>
-              <Breadcrumb items={[{ label: 'أولياء الأمور', onClick: () => goto('guardians') }, { label: g.name || 'بلا اسم' }]} />
+              <Breadcrumb items={[{ label: 'المشتركين', onClick: () => goto('guardians') }, { label: g.name || 'بلا اسم' }]} />
 
               <div className={cardCls + ' mb-4'}>
                 <div className="flex items-start justify-between gap-3">
@@ -2771,7 +2806,7 @@ export default function App() {
                 <div className="grid grid-cols-3 gap-2 mt-4 pt-4 border-t border-slate-100 text-center">
                   <div><div className="font-bold text-slate-800">{kids.length}</div><div className="text-[11px] text-slate-400">طالب</div></div>
                   <div><div className="font-bold text-slate-800">{regs.length}</div><div className="text-[11px] text-slate-400">تسجيل</div></div>
-                  <div><div className="font-bold text-brand-700">{paid.toLocaleString('ar-SA')}</div><div className="text-[11px] text-slate-400">ريال مدفوع</div></div>
+                  <div><div className="font-bold text-brand-700">{fmt(paid)}</div><div className="text-[11px] text-slate-400">ريال مدفوع</div></div>
                 </div>
               </div>
 
@@ -2814,7 +2849,7 @@ export default function App() {
                                 <span className="shrink-0 text-slate-400">
                                   {part.pending ? <Badge tone="amber">يحتاج تأكيد</Badge>
                                     : part.accountId === 'unpaid' ? <Badge tone="red">ما دفع</Badge>
-                                    : `${Number(part.amount || 0).toLocaleString('ar-SA')} ر.س`}
+                                    : `${fmt(part.amount)} ر.س`}
                                 </span>
                               </div>
                             ))}
@@ -2929,7 +2964,55 @@ export default function App() {
 
       {(modal === 'addParticipant' || modal === 'editParticipant') && (
         <Modal title={modal === 'addParticipant' ? (isGrouped ? 'إضافة مشترك' : 'إضافة مشارك') : 'تعديل المشارك'} onClose={closeModal}>
-          <Field label="الاسم"><input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} /></Field>
+          {/*
+            الاسم يبحث في قاعدة المشتركين وأنت تكتب: تختار الموجود فينربط تسجيله
+            بسجلّه (فتعرف بعدين كم برنامجًا حضر وكم دفع)، أو تكمل باسم جديد.
+          */}
+          <Field label="اسم الطالب"
+            hint={form.studentId ? undefined : (canGuardians ? 'اكتب الاسم — لو مسجّل عندك من قبل بيطلع لك.' : undefined)}>
+            <input className={inputCls} value={form.name || ''} autoComplete="off"
+              onChange={(e) => setForm({ ...form, name: e.target.value, studentId: null, error: '' })} />
+          </Field>
+
+          {form.studentId && (() => {
+            const s = data.students.find((x) => x.id === form.studentId);
+            const g = s && data.guardians.find((x) => x.id === s.guardianId);
+            return (
+              <div className="-mt-2 mb-4 bg-brand-50 rounded-xl px-3 py-2 flex items-center justify-between gap-2">
+                <div className="text-xs text-brand-900 min-w-0">
+                  <b>مربوط بسجلّه</b>
+                  {g && <span className="text-brand-700"> · ولي الأمر: {g.name}</span>}
+                  {s?.health && <span className="block text-amber-700 mt-0.5">⚠ {s.health}</span>}
+                </div>
+                <button type="button" className="text-xs text-slate-500 shrink-0" onClick={() => setForm({ ...form, studentId: null })}>فك</button>
+              </div>
+            );
+          })()}
+
+          {canGuardians && !form.studentId && (form.name || '').trim().length >= 2 && (() => {
+            const q = normalizeName(form.name);
+            const hits = data.students
+              .filter((s) => normalizeName(s.name).includes(q))
+              .slice(0, 5);
+            if (!hits.length) return null;
+            return (
+              <div className="-mt-2 mb-4 border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
+                {hits.map((s) => {
+                  const g = data.guardians.find((x) => x.id === s.guardianId);
+                  return (
+                    <button key={s.id} type="button" className="w-full text-right px-3 py-2.5 hover:bg-slate-50"
+                      onClick={() => setForm({ ...form, name: s.name, studentId: s.id, error: '' })}>
+                      <div className="text-sm font-semibold text-slate-800">{s.name}</div>
+                      <div className="text-[11px] text-slate-400">
+                        {[g?.name, s.school, s.age && `${s.age} سنة`].filter(Boolean).join(' · ') || 'بلا تفاصيل'}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
           <Field label="طريقة الدفع / التصنيف">
             <select className={inputCls} value={form.accountId || data.faidAccounts[0]?.id || ''}
               onChange={(e) => setForm({ ...form, accountId: e.target.value, ...(e.target.value === 'unpaid' ? { amount: 0 } : {}) })}>
@@ -3319,6 +3402,48 @@ export default function App() {
           </div>
         </Modal>
       )}
+
+      {modal === 'newPerson' && (() => {
+        const known = isValidPhone(form.gPhone || '')
+          ? data.guardians.find((g) => normalizePhone(g.phone) === normalizePhone(form.gPhone)) : null;
+        return (
+          <Modal title="مشترك جديد" onClose={closeModal}>
+            <Field label="اسم الطالب">
+              <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} placeholder="مثال: سعد" />
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="العمر"><input type="number" className={inputCls} value={form.age || ''} onChange={(e) => setForm({ ...form, age: e.target.value })} placeholder="10" /></Field>
+              <Field label="الصف"><input className={inputCls} value={form.grade || ''} onChange={(e) => setForm({ ...form, grade: e.target.value })} placeholder="رابع ابتدائي" /></Field>
+            </div>
+            <Field label="المدرسة"><input className={inputCls} value={form.school || ''} onChange={(e) => setForm({ ...form, school: e.target.value })} placeholder="الرواد" /></Field>
+            <Field label="ملاحظات صحية" hint="حساسية، ربو، دواء... يشوفها المشرف قبل النشاط.">
+              <input className={inputCls} value={form.health || ''} onChange={(e) => setForm({ ...form, health: e.target.value })} />
+            </Field>
+
+            <div className="border-t border-slate-100 pt-4 mt-1">
+              <Field label="جوال ولي الأمر" hint="هذا اللي يمنع التكرار — لو مسجّل من قبل ينضاف تحته مباشرة.">
+                <input className={inputCls} dir="ltr" inputMode="tel" value={form.gPhone || ''}
+                  onChange={(e) => setForm({ ...form, gPhone: e.target.value, error: '' })} placeholder="0551234567" />
+              </Field>
+              {known ? (
+                <div className="-mt-2 mb-4 bg-brand-50 rounded-xl px-3 py-2 text-xs text-brand-900">
+                  مسجّل عندك: <b>{known.name || 'بلا اسم'}</b> — بينضاف تحته بدل ما نكرّره.
+                </div>
+              ) : (
+                <Field label="اسم ولي الأمر">
+                  <input className={inputCls} value={form.gName || ''} onChange={(e) => setForm({ ...form, gName: e.target.value })} placeholder="مثال: محمد العتيبي" />
+                </Field>
+              )}
+            </div>
+
+            {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+            <div className="flex gap-2 mt-2">
+              <button className={btnPrimary + ' flex-1'} onClick={savePerson}>إضافة</button>
+              <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {modal === 'editGuardian' && (
         <Modal title={form.id ? 'تعديل ولي أمر' : 'ولي أمر جديد'} onClose={closeModal}>
