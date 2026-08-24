@@ -9,6 +9,7 @@
  */
 import { getStore } from '@netlify/blobs';
 import crypto from 'node:crypto';
+import { programByToken, publicView, validateSubmission, applySubmission, rateLimited } from '../../src/signup.js';
 
 const KEY = 'state';
 const store = () => getStore({ name: 'faid-team', consistency: 'strong' });
@@ -116,6 +117,40 @@ export default async (req) => {
   // هل المخزن جاهز أصلًا؟ يستخدمه التطبيق قبل شاشة الدخول.
   if (op === 'status') return json({ ok: true, initialized });
 
+  /* ------------------------- الرابط العام (بلا دخول) ------------------------- */
+  // ملاحظة: هذولا مفتوحان لأي أحد، فما يخرج منهما إلا ما يحتاجه ولي الأمر —
+  // ولا حرف عن المسجّلين ولا الحسابات ولا بقية البرامج.
+
+  if (op === 'signup_info') {
+    const program = doc && programByToken(doc.data?.programs, body.token);
+    if (!program) return json({ error: 'closed' }, 404);
+    return json({ ok: true, view: publicView(doc.data, program) });
+  }
+
+  if (op === 'signup_submit') {
+    const program = doc && programByToken(doc.data?.programs, body.token);
+    if (!program) return json({ error: 'closed' }, 404);
+
+    const view = publicView(doc.data, program);
+    // نتحقق هنا من جديد: ما يجي من الشبكة لا يُوثق به مهما فحصه المتصفح
+    const { ok, errors } = validateSubmission(view, body);
+    if (!ok) return json({ error: 'invalid', errors }, 400);
+
+    const now = Date.now();
+    const { blocked, recent } = rateLimited(doc.signupLog, body.answers?.gPhone, now);
+    if (blocked) return json({ error: 'too_many' }, 429);
+
+    const next = applySubmission(doc.data, program, view, body, { newId: () => crypto.randomUUID(), now });
+    await writeDoc({
+      rev: doc.rev + 1,
+      updatedAt: new Date(now).toISOString(),
+      secret: doc.secret,
+      data: next.data,
+      signupLog: [...recent, { at: now, phone: String(body.answers?.gPhone || '') }],
+    });
+    return json({ ok: true, count: next.count, ref: String(doc.rev + 1).padStart(4, '0') });
+  }
+
   // أول مدير: يُسمح فيه مرة وحدة بس، وبعدها يُقفل الباب.
   if (op === 'init') {
     if (initialized) return json({ error: 'already_initialized' }, 409);
@@ -153,7 +188,7 @@ export default async (req) => {
       return json({ error: 'conflict', rev: doc.rev, data: strip(doc.data, me) }, 409);
     }
     const data = guard(body.data, doc.data, me);
-    const next = { rev: doc.rev + 1, updatedAt: new Date().toISOString(), secret: doc.secret, data };
+    const next = { rev: doc.rev + 1, updatedAt: new Date().toISOString(), secret: doc.secret, data, signupLog: doc.signupLog || [] };
     await writeDoc(next);
     return json({ ok: true, rev: next.rev });
   }

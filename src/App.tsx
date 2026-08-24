@@ -3,17 +3,18 @@ import {
   Home, BookOpen, Wallet, Settings, Plus, X, Check, ChevronLeft, Trash2, Pencil,
   Users as UsersIcon, Calendar, TrendingUp, TrendingDown, Layers, ShieldCheck,
   Lock, Unlock, Trophy, LogOut, KeyRound, Plane, Search, AlertTriangle, Send,
-  RotateCcw, Wand2, CalendarDays, FileText,
+  RotateCcw, Wand2, CalendarDays, FileText, Copy,
 } from 'lucide-react';
 import { api, clone, merge3, readSession, writeSession, clearSession, readPending, writePending, clearPending } from './cloud.js';
 import {
   normalizePhone, isValidPhone, formatPhone, normalizeName, sameName,
   studentsOf, upsertRegistration, findDuplicates, mergeGuardians,
 } from './people.js';
+import { makeToken as makeSignupToken } from './signup.js';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
-const APP_VERSION = 'v3.2 · المشتركين';
+const APP_VERSION = 'v4.0 · التسجيل الذاتي';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -126,7 +127,24 @@ const defaultData = () => ({
   // قاعدة العملاء: ولي الأمر ← أبناؤه. تعيش عبر المواسم كلها، مو داخل ترم واحد.
   guardians: [],
   students: [],
+  /**
+   * نموذج التسجيل الذاتي: واحد لكل الروابط، تعدّله مرة وينطبق على الكل.
+   * الجوال واسم الطالب مقفولان — الأول يمنع التكرار، والثاني هو المشترك نفسه.
+   */
+  signupFields: defaultSignupFields(),
 });
+
+export const LOCKED_FIELDS = ['gPhone', 'name'];
+
+export const defaultSignupFields = () => ([
+  { id: 'gName', label: 'اسم ولي الأمر', type: 'text', required: true },
+  { id: 'gPhone', label: 'جوال ولي الأمر', type: 'phone', required: true },
+  { id: 'name', label: 'اسم الطالب', type: 'text', required: true },
+  { id: 'age', label: 'العمر', type: 'number', required: true },
+  { id: 'grade', label: 'الصف', type: 'text', required: false },
+  { id: 'school', label: 'المدرسة', type: 'text', required: false },
+  { id: 'health', label: 'ملاحظات صحية', type: 'text', required: false },
+]);
 
 /** ترقية البيانات القديمة للشكل الجديد بدون فقدان أي شيء مسجّل سابقًا. */
 export function migrate(loaded) {
@@ -179,8 +197,19 @@ export function migrate(loaded) {
   // قاعدة أولياء الأمور جديدة؛ الجوالات تُوحَّد مرة وحدة عشان المقارنة تصير سريعة
   d.guardians = (d.guardians || []).map((g) => ({ notes: '', altPhone: '', ...g, phone: normalizePhone(g.phone) }));
   d.students = (d.students || []).map((s) => ({ age: '', grade: '', school: '', health: '', ...s }));
+  // النموذج لازم يبقى فيه الخانتان المقفولتان مهما عبث فيه أحد
+  d.signupFields = (d.signupFields?.length ? d.signupFields : defaultSignupFields());
+  for (const f of defaultSignupFields()) {
+    if (LOCKED_FIELDS.includes(f.id) && !d.signupFields.some((x) => x.id === f.id)) d.signupFields.push(f);
+  }
+  d.faidAccounts = d.faidAccounts.map((a) => ({ transferInfo: '', ...a }));
   return d;
 }
+
+/** إعدادات رابط التسجيل لبرنامج: مقفول ما لم يفتحه صاحبه. */
+export const emptySignup = () => ({
+  enabled: false, token: '', price: '', openWeeks: [], accounts: [], extraFields: [],
+});
 
 /* ------------------------------ عناصر واجهة عامة ------------------------------ */
 
@@ -874,7 +903,8 @@ export default function App() {
 
   const goto = (v) => { setView(v); setModal(null); setSearch(''); setPayFilter('all'); };
   const closeModal = () => { setModal(null); setForm({}); };
-  const askConfirm = (text, onYes) => setConfirm({ text, onYes });
+  /** نص زر الموافقة يوصف الفعل نفسه — «نعم، احذف» ما تصلح لتأكيد استلام مبلغ. */
+  const askConfirm = (text, onYes, yes = 'نعم، احذف') => setConfirm({ text, onYes, yes });
 
   /* --------------------------- تعديل الدفاتر --------------------------- */
 
@@ -1269,6 +1299,74 @@ export default function App() {
   const removeTripItem = (key, itemId) => patchTrip({ [key]: (trip[key] || []).filter((x) => x.id !== itemId) });
   const removeTrip = (tid) => { save({ ...data, trips: data.trips.filter((t) => t.id !== tid) }); goto('club'); };
 
+  /* --------------------------- رابط التسجيل --------------------------- */
+
+  const patchSignup = (patch) => save({
+    ...data,
+    programs: data.programs.map((p) => (p.id !== program.id ? p
+      : { ...p, signup: { ...emptySignup(), ...(p.signup || {}), ...patch } })),
+  });
+
+  /** أول فتح يولّد الرمز ويقترح إعدادات معقولة بدل ما يبدأ من فراغ. */
+  const toggleSignup = () => {
+    const s = { ...emptySignup(), ...(program.signup || {}) };
+    if (s.enabled) { patchSignup({ enabled: false }); return; }
+    patchSignup({
+      enabled: true,
+      token: s.token || makeSignupToken(),
+      price: s.price || (program.type === 'مجمع' ? program.dayPrice || '' : ''),
+      openWeeks: s.openWeeks?.length ? s.openWeeks : (program.weeks || []).map((w) => w.id),
+      accounts: s.accounts?.length ? s.accounts : data.faidAccounts.map((a) => a.id),
+    });
+  };
+
+  const regenerateToken = () => { patchSignup({ token: makeSignupToken() }); closeModal(); };
+
+  /** التسجيلات اللي تنتظر تأكيد وصول مبلغها، عبر البرنامج وأسابيعه. */
+  const signupPending = (p) => {
+    const out = [];
+    for (const part of p.participants || []) {
+      if (part.pending) out.push({ part, where: 'البرنامج', weekId: null });
+    }
+    for (const w of p.weeks || []) {
+      for (const part of w.participants || []) {
+        if (part.pending) out.push({ part, where: w.name, weekId: w.id });
+      }
+    }
+    return out;
+  };
+
+  /** التأكيد يعني: الفلوس وصلت الحساب فعلًا. عندها فقط يدخل الإيراد. */
+  const clearPendingFlag = (pred) => save({
+    ...data,
+    programs: data.programs.map((p) => {
+      if (p.id !== program.id) return p;
+      const fix = (part) => (pred(part) ? { ...part, pending: false, confirmedAt: Date.now() } : part);
+      return {
+        ...p,
+        participants: (p.participants || []).map(fix),
+        weeks: (p.weeks || []).map((w) => ({ ...w, participants: (w.participants || []).map(fix) })),
+      };
+    }),
+  });
+
+  const confirmPending = (partId) => clearPendingFlag((part) => part.id === partId);
+  const confirmAllPending = () => { clearPendingFlag((part) => !!part.pending); closeModal(); };
+
+  const saveSignupField = () => {
+    const label = (form.label || '').trim();
+    if (!label) { setForm({ ...form, error: 'اكتب نص السؤال' }); return; }
+    const options = (form.options || '').split(/[,،\n]/).map((s) => s.trim()).filter(Boolean);
+    if (form.type === 'choice' && options.length < 2) { setForm({ ...form, error: 'اكتب خيارين على الأقل، بينهما فاصلة' }); return; }
+    const field = { id: `f_${uid()}`, label, type: form.type || 'text', required: !!form.required, ...(form.type === 'choice' ? { options } : {}) };
+    if (form.scope === 'program') {
+      patchSignup({ extraFields: [...((program.signup || {}).extraFields || []), field] });
+    } else {
+      save({ ...data, signupFields: [...data.signupFields, field] });
+    }
+    closeModal();
+  };
+
   /* --------------------------- أولياء الأمور --------------------------- */
 
   /** كل تسجيلات طالب عبر المواسم كلها — من البرنامج المجمّع أو من أسابيع المنفصل. */
@@ -1495,6 +1593,8 @@ export default function App() {
    * مستقلة: مسجّل الحضور يشوف الأسماء عشان يحضّر، وما يشوف تفاصيل أهاليهم.
    */
   const canGuardians = can('أولياء الأمور');
+  /** فتح رابط عام قرار مالي وإداري، فيبقى لمن يملك المال والمشتركين معًا. */
+  const canSignup = canMoney && canGuardians;
   /** التكرار المحتمل: التطبيق يشتبه، والمستخدم يقرّر. */
   const duplicates = canGuardians ? findDuplicates(data.guardians, data.students) : [];
 
@@ -1742,6 +1842,7 @@ export default function App() {
     ...(isGrouped && canMoney ? [{ id: 'participants', label: 'المشتركون' }] : []),
     ...(canMoney ? [{ id: 'finance', label: isGrouped ? 'المالية والتوزيع' : 'ملخص البرنامج' }] : []),
     ...(canMoney ? [{ id: 'report', label: 'التقرير' }] : []),
+    ...(canSignup ? [{ id: 'signup', label: 'رابط التسجيل' }] : []),
   ];
   const activeProgramTab = programTabs.some((t) => t.id === programTab) ? programTab : programTabs[0]?.id;
 
@@ -1858,7 +1959,11 @@ export default function App() {
                       return (
                         <tr key={p.id} className="border-t border-slate-50 hover:bg-slate-50/50 cursor-pointer"
                           onClick={() => { setSelectedProgramId(p.id); setProgramTab('days'); goto('programDetail'); }}>
-                          <td className="px-4 py-3 font-semibold text-slate-800">{p.name}</td>
+                          <td className="px-4 py-3 font-semibold text-slate-800">
+                {p.name}
+                {/* سجّل نفسه من الرابط ولسه ما تأكّد وصول مبلغه */}
+                {p.pending && <span className="mr-2 align-middle"><Badge tone="amber">ينتظر تأكيدك</Badge></span>}
+              </td>
                           <td className="px-4 py-3"><Badge tone={p.type === 'مجمع' ? 'blue' : 'brand'}>{p.type}</Badge></td>
                           <td className="px-4 py-3 text-slate-600">{p.weeks.length}</td>
                           <td className="px-4 py-3 font-semibold text-slate-700">{canMoney ? fmt(net) + ' ر.س' : '-'}</td>
@@ -2030,6 +2135,160 @@ export default function App() {
                 ? <GroupedReport program={program} accounts={data.faidAccounts} canMoney={canMoney} />
                 : <SeparateReport program={program} accounts={data.faidAccounts} canMoney={canMoney} />
             )}
+
+            {activeProgramTab === 'signup' && (() => {
+              const s = { ...emptySignup(), ...(program.signup || {}) };
+              const url = s.token ? `${location.origin}/r/${s.token}` : '';
+              const pending = signupPending(program);
+              return (
+                <div className="space-y-4">
+                  <div className={cardCls}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-bold text-slate-800">التسجيل الذاتي</div>
+                        <div className="text-xs text-slate-400 mt-0.5">
+                          {s.enabled ? 'مفتوح — ولي الأمر يقدر يسجّل' : 'مقفل — ما أحد يقدر يسجّل'}
+                        </div>
+                      </div>
+                      <button onClick={toggleSignup}
+                        className={`shrink-0 w-14 h-8 rounded-full transition-colors relative ${s.enabled ? 'bg-brand-600' : 'bg-slate-200'}`}>
+                        <span className={`absolute top-1 w-6 h-6 rounded-full bg-white transition-all ${s.enabled ? 'right-1' : 'right-7'}`} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {s.enabled && (
+                    <>
+                      <div className={cardCls}>
+                        <div className="text-xs text-slate-400 mb-2">الرابط — أرسله للأهالي</div>
+                        <div className="bg-slate-50 rounded-xl px-3 py-2.5 text-sm text-slate-700 break-all mb-3" dir="ltr">{url}</div>
+                        <div className="flex gap-2">
+                          <button className={btnPrimary + ' flex-1'}
+                            onClick={() => { navigator.clipboard?.writeText(url); setSavedAt(Date.now()); }}>
+                            <Copy size={16} /> نسخ
+                          </button>
+                          <a className={btnPrimary + ' flex-1'} target="_blank" rel="noreferrer"
+                            href={`https://wa.me/?text=${encodeURIComponent(`التسجيل في ${program.name}:\n${url}`)}`}>
+                            <Send size={16} /> واتساب
+                          </a>
+                        </div>
+                        <button className="text-xs text-slate-400 mt-3 w-full text-center"
+                          onClick={() => askConfirm('نولّد رابطًا جديدًا؟ القديم بيتوقف فورًا، فمن عنده الرابط القديم ما راح يقدر يسجّل.', regenerateToken, 'نعم، ولّد رابطًا جديدًا')}>
+                          رابط جديد (يبطّل القديم)
+                        </button>
+                      </div>
+
+                      <div className={cardCls}>
+                        <Field label="سعر الاشتراك (ر.س)"
+                          hint={isGrouped
+                            ? 'لكل يوم. يُقترح من سعر اليوم، وتقدر تعدّله — وما يغيّر تسجيلك اليدوي.'
+                            : 'لكل أسبوع. يُستخدم في الرابط فقط، وتبقى تكتب المبلغ اللي تبي في تسجيلك اليدوي.'}>
+                          <input type="number" className={inputCls} value={s.price ?? ''}
+                            onChange={(e) => patchSignup({ price: e.target.value })} placeholder="50" />
+                        </Field>
+
+                        <Field label={isGrouped ? 'الأيام المتاحة للتسجيل' : 'الأسابيع المتاحة للتسجيل'}
+                          hint="اللي ما تختاره ما يظهر لولي الأمر أصلًا.">
+                          <div className="flex items-center gap-2 mb-2">
+                            <button type="button" className="text-xs text-brand-600"
+                              onClick={() => patchSignup({ openWeeks: program.weeks.map((w) => w.id) })}>تحديد الكل</button>
+                            <span className="text-slate-200">|</span>
+                            <button type="button" className="text-xs text-slate-500" onClick={() => patchSignup({ openWeeks: [] })}>إلغاء الكل</button>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            {(program.weeks || []).map((w) => {
+                              const on = (s.openWeeks || []).includes(w.id);
+                              return (
+                                <button key={w.id} type="button"
+                                  onClick={() => patchSignup({ openWeeks: on ? s.openWeeks.filter((x) => x !== w.id) : [...(s.openWeeks || []), w.id] })}
+                                  className={`text-xs px-3 py-2 rounded-lg border text-right ${on ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`}>
+                                  {w.name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </Field>
+
+                        <Field label="طرق الدفع المعروضة" hint="تفاصيل التحويل (الآيبان أو الجوال) تكتبها في الإعدادات ← الحسابات.">
+                          <div className="space-y-2">
+                            {data.faidAccounts.map((a) => {
+                              const on = (s.accounts || []).includes(a.id);
+                              return (
+                                <button key={a.id} type="button"
+                                  onClick={() => patchSignup({ accounts: on ? s.accounts.filter((x) => x !== a.id) : [...(s.accounts || []), a.id] })}
+                                  className={`w-full text-right px-3 py-2.5 rounded-lg border flex items-center justify-between ${on ? 'border-brand-600 bg-brand-50' : 'border-slate-200'}`}>
+                                  <span className="text-sm text-slate-800">{a.name}</span>
+                                  <span className="text-xs text-slate-400">
+                                    {a.transferInfo ? 'فيه تفاصيل تحويل' : 'بلا تفاصيل — يُدفع عند الحضور'}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </Field>
+
+                        <Field label="أسئلة خاصة بهذا البرنامج" hint="تنضاف للنموذج العام، وتظهر في هذا الرابط فقط.">
+                          {(s.extraFields || []).length > 0 && (
+                            <div className="space-y-2 mb-3">
+                              {s.extraFields.map((f) => (
+                                <div key={f.id} className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2">
+                                  <div className="min-w-0">
+                                    <div className="text-sm text-slate-800 truncate">{f.label}</div>
+                                    <div className="text-[11px] text-slate-400">
+                                      {f.type === 'choice' ? (f.options || []).join(' / ') : f.type === 'number' ? 'رقم' : 'نص'}
+                                      {f.required ? ' · مطلوب' : ' · اختياري'}
+                                    </div>
+                                  </div>
+                                  <button className="text-red-400 p-1 shrink-0"
+                                    onClick={() => patchSignup({ extraFields: s.extraFields.filter((x) => x.id !== f.id) })}>
+                                    <Trash2 size={15} />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <button className={btnGhost + ' w-full border border-dashed border-slate-300'}
+                            onClick={() => { setForm({ scope: 'program', type: 'text' }); setModal('addSignupField'); }}>
+                            <Plus size={15} /> سؤال جديد
+                          </button>
+                        </Field>
+                      </div>
+                    </>
+                  )}
+
+                  {pending.length > 0 && (
+                    <div className={cardCls}>
+                      <div className="font-bold text-slate-800 mb-1">ينتظر تأكيدك ({pending.length})</div>
+                      <div className="text-xs text-slate-400 mb-4">
+                        هذولا سجّلوا من الرابط. مبالغهم ما تُحسب إيرادًا لين تأكّد إن الفلوس وصلت.
+                      </div>
+                      <div className="space-y-2">
+                        {pending.map(({ part, where, weekId }) => (
+                          <div key={part.id} className="border border-amber-200 bg-amber-50 rounded-xl px-3 py-2.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="font-semibold text-sm text-slate-800 truncate">{part.name}</div>
+                                <div className="text-[11px] text-slate-500">
+                                  {where} · {fmt(part.amount)} ر.س · {(data.faidAccounts.find((a) => a.id === part.accountId) || {}).name || 'بلا حساب'}
+                                </div>
+                              </div>
+                              <button className="shrink-0 bg-green-600 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1"
+                                onClick={() => confirmPending(part.id, weekId)}>
+                                <Check size={14} /> تأكيد
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <button className={btnPrimary + ' w-full mt-3'}
+                        onClick={() => askConfirm(`تأكيد وصول مبالغ ${pending.length} تسجيل؟ بتدخل الإيراد.`, confirmAllPending, 'نعم، وصلت')}>
+                        <Check size={16} /> تأكيد الكل
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -2130,7 +2389,7 @@ export default function App() {
                           onClick={() => { setForm({ quickCount: week.quickCount || 0, quickRevenue: week.quickRevenue || '', date: week.date || '' }); setModal('quickRegister'); }}>
                           <Pencil size={16} /> {weekState(week) === 'لم يبدأ' ? 'تسجيل الطلاب والإيراد' : 'تعديل التسجيل'}
                         </button>
-                        <button onClick={() => askConfirm('تحويل هذا اليوم لتسجيل بالأسماء؟ المبلغ المسجّل حاليًا ينتقل لبند «تحصيل إضافي» فما يضيع من الحساب.', () => patchWeek(quickToNamed(week)))}
+                        <button onClick={() => askConfirm('تحويل هذا اليوم لتسجيل بالأسماء؟ المبلغ المسجّل حاليًا ينتقل لبند «تحصيل إضافي» فما يضيع من الحساب.', () => patchWeek(quickToNamed(week)), 'نعم، حوّله')}
                           className="w-full text-xs text-slate-500 py-2 hover:text-brand-700">أو سجّل الطلاب بأسمائهم وحضورهم</button>
                       </>
                     ) : (
@@ -2253,6 +2512,12 @@ export default function App() {
                   <div className="text-sm text-slate-500 mb-1">{a.name}</div>
                   <div className={`text-lg sm:text-xl font-bold ${a.balance >= 0 ? 'text-slate-800' : 'text-red-600'}`}>{fmt(a.balance)} ر.س</div>
                   <div className="text-[11px] text-slate-400 mt-1">وارد {fmt(a.revenue)} · صادر {fmt(a.expenses)}</div>
+                  {isAdmin && (
+                    <button className="text-[11px] text-brand-600 mt-2 block"
+                      onClick={() => { setForm({ id: a.id, transferInfo: a.transferInfo || '', name: a.name }); setModal('transferInfo'); }}>
+                      {a.transferInfo ? 'تفاصيل التحويل ✓' : '+ تفاصيل التحويل'}
+                    </button>
+                  )}
                   {isAdmin && !accountInUse(a.id) && (
                     <button onClick={() => askConfirm(`حذف حساب «${a.name}»؟`, () => removeFaidAccount(a.id))}
                       className="absolute top-3 left-3 text-slate-200 hover:text-red-500"><Trash2 size={14} /></button>
@@ -2547,6 +2812,7 @@ export default function App() {
             <Tabs value={settingsTab} onChange={(t) => { setSettingsTab(t); setForm({}); }} tabs={[
               { id: 'users', label: 'المستخدمون والصلاحيات' },
               { id: 'terms', label: 'السنوات والفصول' },
+              { id: 'signup', label: 'نموذج التسجيل' },
               { id: 'backup', label: 'النسخ الاحتياطي' },
             ]} />
 
@@ -2626,6 +2892,70 @@ export default function App() {
               </div>
             )}
 
+            {settingsTab === 'signup' && (
+              <div className="space-y-4">
+                <div className="text-sm text-slate-500">
+                  هذي الخانات اللي يعبّيها ولي الأمر في كل روابط التسجيل. تعدّلها هنا مرة، وتنطبق على الكل.
+                </div>
+                <div className={cardCls}>
+                  <div className="space-y-2">
+                    {data.signupFields.map((f) => {
+                      const locked = LOCKED_FIELDS.includes(f.id);
+                      return (
+                        <div key={f.id} className="flex items-center justify-between gap-2 bg-slate-50 rounded-xl px-3 py-2.5">
+                          <div className="min-w-0">
+                            <div className="text-sm text-slate-800 truncate">
+                              {f.label}
+                              {locked && <span className="text-[11px] text-slate-400 mr-1.5">🔒</span>}
+                            </div>
+                            <div className="text-[11px] text-slate-400">
+                              {f.type === 'choice' ? (f.options || []).join(' / ') : f.type === 'number' ? 'رقم' : f.type === 'phone' ? 'جوال' : 'نص'}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <select className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 disabled:opacity-50"
+                              disabled={locked} value={f.required ? 'req' : 'opt'}
+                              onChange={(e) => save({
+                                ...data,
+                                signupFields: data.signupFields.map((x) => (x.id === f.id ? { ...x, required: e.target.value === 'req' } : x)),
+                              })}>
+                              <option value="req">مطلوب</option>
+                              <option value="opt">اختياري</option>
+                            </select>
+                            {!locked && (
+                              <button className="text-red-400 p-1"
+                                onClick={() => askConfirm(`حذف خانة «${f.label}» من كل الروابط؟`, () => save({
+                                  ...data, signupFields: data.signupFields.filter((x) => x.id !== f.id),
+                                }))}>
+                                <Trash2 size={15} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <button className={btnGhost + ' w-full mt-3 border border-dashed border-slate-300'}
+                    onClick={() => { setForm({ scope: 'global', type: 'text' }); setModal('addSignupField'); }}>
+                    <Plus size={15} /> خانة جديدة
+                  </button>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-xs text-slate-500 flex items-start gap-2">
+                  <ShieldCheck size={15} className="shrink-0 mt-0.5 text-slate-400" />
+                  <span>
+                    <b>جوال ولي الأمر</b> و<b>اسم الطالب</b> مقفولان وما ينحذفان:
+                    الجوال هو اللي يمنع تكرار ولي الأمر لو سجّل مرة ثانية، والاسم هو المشترك نفسه.
+                  </span>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-xs text-slate-500">
+                  رابط كل برنامج تفتحه من داخله: <b>البرامج ← افتح البرنامج ← تبويب «رابط التسجيل»</b>.
+                  وهناك تحدد سعره وأيامه وطرق الدفع، وتقدر تضيف أسئلة تخصّه وحده.
+                </div>
+              </div>
+            )}
+
             {settingsTab === 'backup' && (
               <div className="space-y-4">
                 <div className="bg-amber-50 border border-amber-100 rounded-2xl px-4 py-3 text-sm text-amber-900 flex items-start gap-2">
@@ -2670,7 +3000,7 @@ export default function App() {
                       <div className="font-semibold mb-1">النسخة سليمة، وفيها:</div>
                       <div className="text-xs">{form.restore.programs} برنامج · {form.restore.weeks} يوم · {form.restore.users} مستخدم · {form.restore.txns} عملية فيض</div>
                       <button className={btnDanger + ' w-full mt-3'}
-                        onClick={() => askConfirm('استبدال كل البيانات الحالية بهذه النسخة؟ ما فيه تراجع.', applyRestore)}>
+                        onClick={() => askConfirm('استبدال كل البيانات الحالية بهذه النسخة؟ ما فيه تراجع.', applyRestore, 'نعم، استرجع')}>
                         <RotateCcw size={15} /> استرجاع هذه النسخة
                       </button>
                     </div>
@@ -3403,6 +3733,61 @@ export default function App() {
         </Modal>
       )}
 
+      {modal === 'transferInfo' && (
+        <Modal title={`تفاصيل تحويل «${form.name}»`} onClose={closeModal}>
+          <div className="text-sm text-slate-500 mb-4">
+            تظهر لولي الأمر في رابط التسجيل لما يختار هذا الحساب. اتركها فاضية لو الدفع عند الحضور (كاش).
+          </div>
+          <Field label="الآيبان أو رقم الجوال">
+            <input className={inputCls} dir="ltr" value={form.transferInfo || ''}
+              onChange={(e) => setForm({ ...form, transferInfo: e.target.value })}
+              placeholder="SA00 0000 0000 0000 0000 0000" />
+          </Field>
+          <div className="flex gap-2 mt-2">
+            <button className={btnPrimary + ' flex-1'}
+              onClick={() => {
+                save({ ...data, faidAccounts: data.faidAccounts.map((a) => (a.id === form.id ? { ...a, transferInfo: (form.transferInfo || '').trim() } : a)) });
+                closeModal();
+              }}>حفظ</button>
+            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+          </div>
+        </Modal>
+      )}
+
+      {modal === 'addSignupField' && (
+        <Modal title="سؤال جديد" onClose={closeModal}>
+          <div className="text-sm text-slate-500 mb-4">
+            {form.scope === 'program'
+              ? 'يظهر في رابط هذا البرنامج فقط.'
+              : 'يظهر في كل روابط التسجيل.'}
+          </div>
+          <Field label="نص السؤال">
+            <input className={inputCls} value={form.label || ''} onChange={(e) => setForm({ ...form, label: e.target.value, error: '' })} placeholder="مثال: هل يحتاج نقل؟" />
+          </Field>
+          <Field label="النوع">
+            <select className={inputCls} value={form.type || 'text'} onChange={(e) => setForm({ ...form, type: e.target.value, error: '' })}>
+              <option value="text">نص</option>
+              <option value="number">رقم</option>
+              <option value="choice">اختيار من قائمة</option>
+            </select>
+          </Field>
+          {form.type === 'choice' && (
+            <Field label="الخيارات" hint="افصل بينها بفاصلة. مثال: نعم، لا">
+              <input className={inputCls} value={form.options || ''} onChange={(e) => setForm({ ...form, options: e.target.value, error: '' })} placeholder="نعم، لا" />
+            </Field>
+          )}
+          <label className="flex items-center gap-2 mb-4 text-sm text-slate-700">
+            <input type="checkbox" checked={!!form.required} onChange={(e) => setForm({ ...form, required: e.target.checked })} />
+            مطلوب — ما يقدر يرسل بدونه
+          </label>
+          {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+          <div className="flex gap-2 mt-2">
+            <button className={btnPrimary + ' flex-1'} onClick={saveSignupField}>إضافة</button>
+            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+          </div>
+        </Modal>
+      )}
+
       {modal === 'newPerson' && (() => {
         const known = isValidPhone(form.gPhone || '')
           ? data.guardians.find((g) => normalizePhone(g.phone) === normalizePhone(form.gPhone)) : null;
@@ -3513,11 +3898,11 @@ export default function App() {
                   </div>
                   <div className="flex gap-2 mt-3">
                     <button className={btnPrimary + ' flex-1 text-xs'}
-                      onClick={() => askConfirm(`ندمجهم ونخلّي «${a.name || 'الأول'}»؟`, () => doMerge(a.id, b.id))}>
+                      onClick={() => askConfirm(`ندمجهم ونخلّي «${a.name || 'الأول'}»؟`, () => doMerge(a.id, b.id), 'نعم، ادمج')}>
                       ادمج في «{a.name || 'الأول'}»
                     </button>
                     <button className={btnPrimary + ' flex-1 text-xs'}
-                      onClick={() => askConfirm(`ندمجهم ونخلّي «${b.name || 'الثاني'}»؟`, () => doMerge(b.id, a.id))}>
+                      onClick={() => askConfirm(`ندمجهم ونخلّي «${b.name || 'الثاني'}»؟`, () => doMerge(b.id, a.id), 'نعم، ادمج')}>
                       ادمج في «{b.name || 'الثاني'}»
                     </button>
                   </div>
@@ -3553,7 +3938,8 @@ export default function App() {
           <div className="text-sm text-slate-600 mb-5">{confirm.text}</div>
           {confirm.onYes ? (
             <div className="flex gap-2">
-              <button className={btnDanger + ' flex-1'} onClick={() => { confirm.onYes(); setConfirm(null); }}>نعم، احذف</button>
+              <button className={(confirm.yes === 'نعم، احذف' ? btnDanger : btnPrimary) + ' flex-1'}
+                onClick={() => { confirm.onYes(); setConfirm(null); }}>{confirm.yes || 'نعم، احذف'}</button>
               <button className={btnGhost} onClick={() => setConfirm(null)}>إلغاء</button>
             </div>
           ) : (
@@ -3653,7 +4039,11 @@ function ParticipantsTable({ participants, accounts, showAttendance, statusOf, o
         <tbody>
           {participants.map((p) => (
             <tr key={p.id} className="border-t border-slate-50">
-              <td className="px-4 py-3 font-semibold text-slate-800">{p.name}</td>
+              <td className="px-4 py-3 font-semibold text-slate-800">
+                {p.name}
+                {/* سجّل نفسه من الرابط ولسه ما تأكّد وصول مبلغه */}
+                {p.pending && <span className="mr-2 align-middle"><Badge tone="amber">ينتظر تأكيدك</Badge></span>}
+              </td>
               {weeks && (() => {
                 const mine = enrolledDays(p, weeks);
                 const all = mine.length === weeks.length;
