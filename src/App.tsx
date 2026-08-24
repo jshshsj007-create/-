@@ -9,6 +9,7 @@ import { api, clone, merge3, readSession, writeSession, clearSession, readPendin
 import {
   normalizePhone, isValidPhone, formatPhone, normalizeName, sameName,
   studentsOf, upsertRegistration, findDuplicates, mergeGuardians, mergeStudents, guardianNameFrom,
+  dedupeByPhone, remapParticipants,
 } from './people.js';
 import { makeToken as makeSignupToken } from './signup.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
@@ -16,7 +17,7 @@ import { FaidLogo } from './logo.jsx';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
-const APP_VERSION = 'v4.9 · شعار وباقة كاملة';
+const APP_VERSION = 'v5.0 · ولي أمر واحد';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -199,6 +200,13 @@ export function migrate(loaded) {
   // قاعدة أولياء الأمور جديدة؛ الجوالات تُوحَّد مرة وحدة عشان المقارنة تصير سريعة
   d.guardians = (d.guardians || []).map((g) => ({ notes: '', altPhone: '', ...g, phone: normalizePhone(g.phone) }));
   d.students = (d.students || []).map((s) => ({ age: '', grade: '', school: '', health: '', ...s }));
+  // بيانات أُنشئت قبل ما يصير الجوال مفتاحًا فريدًا: نوحّدها مرة وحدة
+  const dedup = dedupeByPhone(d);
+  if (dedup.mergedGuardians || dedup.mergedStudents) {
+    d.guardians = dedup.guardians;
+    d.students = dedup.students;
+    d.programs = remapParticipants(d.programs, dedup.remap);
+  }
   // النموذج لازم يبقى فيه الخانتان المقفولتان مهما عبث فيه أحد
   d.signupFields = (d.signupFields?.length ? d.signupFields : defaultSignupFields());
   // خانة اسم ولي الأمر انشالت: اسم الطالب الثلاثي يعطيه. مرة وحدة عشان

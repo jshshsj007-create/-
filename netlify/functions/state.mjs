@@ -10,6 +10,18 @@
 import { getStore } from '@netlify/blobs';
 import crypto from 'node:crypto';
 import { programByToken, publicView, validateSubmission, applySubmission, rateLimited } from '../../src/signup.js';
+import { dedupeByPhone, remapParticipants } from '../../src/people.js';
+
+/**
+ * القاعدة تُفرض هنا، لا في المتصفح: ولي أمر واحد لكل جوال، وابن واحد لكل اسم
+ * أول تحته. أي حفظ يمرّ من هنا يخرج موحَّدًا، مهما كان مصدره — رابطًا أو
+ * تطبيقًا أو جهازًا يحمل نسخة قديمة.
+ */
+const enforceOnePerPhone = (data) => {
+  const r = dedupeByPhone(data);
+  if (!r.mergedGuardians && !r.mergedStudents) return data;
+  return { ...data, guardians: r.guardians, students: r.students, programs: remapParticipants(data.programs, r.remap) };
+};
 
 const KEY = 'state';
 const store = () => getStore({ name: 'faid-team', consistency: 'strong' });
@@ -146,7 +158,7 @@ export default async (req) => {
       rev: doc.rev + 1,
       updatedAt: new Date(now).toISOString(),
       secret: doc.secret,
-      data: next.data,
+      data: enforceOnePerPhone(next.data),
       signupLog: [...recent, { at: now, phone: String(body.answers?.gPhone || '') }],
     });
     return json({ ok: true, count: next.count, ref: String(doc.rev + 1).padStart(4, '0') });
@@ -188,7 +200,7 @@ export default async (req) => {
     if (Number(body.baseRev) !== doc.rev) {
       return json({ error: 'conflict', rev: doc.rev, data: strip(doc.data, me) }, 409);
     }
-    const data = guard(body.data, doc.data, me);
+    const data = enforceOnePerPhone(guard(body.data, doc.data, me));
     const next = { rev: doc.rev + 1, updatedAt: new Date().toISOString(), secret: doc.secret, data, signupLog: doc.signupLog || [] };
     await writeDoc(next);
     return json({ ok: true, rev: next.rev });

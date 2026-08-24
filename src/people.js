@@ -46,13 +46,33 @@ export const normalizeName = (raw) => String(raw || '')
   .trim()
   .toLowerCase();
 
-/** «بن/بنت/ال» وسط الاسم ما تفرّق بين شخصين. */
-const nameTokens = (raw) => normalizeName(raw)
-  .split(' ')
-  .map((t) => t.replace(/^(ال)/, ''))
-  .filter((t) => t && !['بن', 'ابن', 'بنت'].includes(t));
+/**
+ * «عبد» و«أبو» و«أم» ما تنفصل عمّا بعدها: «عبد الله» و«عبدالله» اسم واحد،
+ * ولو فصلناهما صار الاسم الأول «عبد» في وحدة و«عبدالله» في الثانية.
+ */
+const JOINERS = ['عبد', 'ابو', 'ام', 'بنت'];
 
-/** الاسم الأول — نستخدمه لما يكتب ولي الأمر اسم ابنه مختصرًا مرة وكاملًا مرة. */
+/**
+ * «بن/ابن» وسط الاسم ما تفرّق بين شخصين، و«ال» التعريف ما تفرّق كذلك.
+ * والوصل يسبق تجريد «ال»، وإلا صارت «عبد الله» ← «عبد» + «له».
+ */
+const nameTokens = (raw) => {
+  const parts = normalizeName(raw)
+    .split(' ')
+    .filter((t) => t && !['بن', 'ابن'].includes(t));
+
+  const joined = [];
+  for (let i = 0; i < parts.length; i++) {
+    if (JOINERS.includes(parts[i]) && parts[i + 1]) { joined.push(parts[i] + parts[i + 1]); i++; }
+    else joined.push(parts[i]);
+  }
+  return joined.map((t) => (t.length > 3 ? t.replace(/^ال/, '') : t)).filter(Boolean);
+};
+
+/**
+ * الاسم الأول — وهو هوية الطالب داخل بيته. الباقي نسبٌ يشترك فيه الإخوة،
+ * فما ينفع نميّز به بينهم.
+ */
 export const firstName = (raw) => nameTokens(raw)[0] || '';
 
 /**
@@ -66,23 +86,16 @@ export const guardianNameFrom = (studentName) => {
 };
 
 /**
- * هل الاسمان لنفس الشخص على الأرجح؟
+ * هل الاسمان لنفس الطالب؟ — تُستخدم داخل أبناء ولي أمر واحد فقط.
  *
- * الاسم العربي يُكتب ناقصًا بأي موضع: «سعد» و«محمد سعد» لنفس الولد، وكذلك
- * «محمد» و«محمد سعد». فنقبل الأقصر لو كانت كلماته موجودة في الأطول بنفس
- * ترتيبها — مو بدايته وحدها. والترتيب مهم: «سعد محمد» غير «محمد سعد».
+ * الاسم الأول وحده هو الفيصل: «محمد سعد فهد» و«محمد فهد» ولدٌ واحد كتب أبوه
+ * نسبه ناقصًا مرة، بينما «مبارك سعد فهد» أخوه. والأب الواحد ما عنده ولدان
+ * بنفس الاسم الأول، فما نحتاج نقارن بقية النسب — وهو الذي يشترك فيه الإخوة.
  */
 export const sameName = (a, b) => {
-  const x = nameTokens(a);
-  const y = nameTokens(b);
-  if (!x.length || !y.length) return false;
-  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
-  let i = 0;
-  for (const t of long) {
-    if (t === short[i]) i++;
-    if (i === short.length) return true;
-  }
-  return false;
+  const x = firstName(a);
+  const y = firstName(b);
+  return Boolean(x) && x === y;
 };
 
 /* ------------------------------ البحث والربط ------------------------------ */
@@ -263,6 +276,8 @@ export const mergeGuardians = (db, keepId, dropId) => {
       const idx = students.indexOf(twin);
       const merged = { ...twin };
       for (const k of ['age', 'grade', 'school', 'health']) if (!merged[k] && s[k]) merged[k] = s[k];
+      // الأطول نسبًا يفوز لأنه الأكمل
+      if (String(s.name || '').trim().length > String(merged.name || '').trim().length) merged.name = String(s.name).trim();
       students[idx] = merged;
       remap[s.id] = twin.id;
       students = students.filter((x) => x.id !== s.id);
@@ -271,4 +286,69 @@ export const mergeGuardians = (db, keepId, dropId) => {
     }
   }
   return { guardians, students, remap };
+};
+
+/* --------------------- الجوال مفتاح فريد لا يقبل التكرار --------------------- */
+
+/**
+ * يفرض القاعدة على القاعدة كلها: ولي أمر واحد لكل رقم جوال، وابن واحد لكل
+ * اسم أول تحته. أي سجلّين يخالفان ذلك يُوحَّدان — وهذا حسمٌ لا تخمين، لأن
+ * نفس الجوال يعني نفس الأب، ونفس الاسم الأول تحته يعني نفس الولد.
+ *
+ * يرجّع القاعدة بعد التوحيد + خريطة الطلاب المدموجين عشان التسجيلات القديمة
+ * تتبع الباقي، وعدد ما اندمج.
+ */
+export const dedupeByPhone = (db) => {
+  let guardians = [...(db.guardians || [])];
+  let students = [...(db.students || [])];
+  const remap = {};
+  let mergedGuardians = 0;
+  let mergedStudents = 0;
+
+  // ولي أمر واحد لكل رقم: نُبقي الأقدم لأنه صاحب التسجيلات الأولى
+  const byPhone = new Map();
+  for (const g of [...guardians].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))) {
+    const key = normalizePhone(g.phone);
+    if (!key) continue;
+    const keep = byPhone.get(key);
+    if (!keep) { byPhone.set(key, g); continue; }
+    const res = mergeGuardians({ guardians, students }, keep.id, g.id);
+    guardians = res.guardians;
+    students = res.students;
+    Object.assign(remap, res.remap);
+    mergedGuardians++;
+  }
+
+  // وابن واحد لكل اسم أول تحت كل ولي أمر
+  for (const g of guardians) {
+    let kids = studentsOf(students, g.id);
+    for (let i = 0; i < kids.length; i++) {
+      for (let j = kids.length - 1; j > i; j--) {
+        if (!sameName(kids[i].name, kids[j].name)) continue;
+        // الاسم الأطول يفوز لأنه الأكمل نسبًا
+        const [keep, drop] = String(kids[i].name).length >= String(kids[j].name).length
+          ? [kids[i], kids[j]] : [kids[j], kids[i]];
+        const res = mergeStudents({ students }, keep.id, drop.id);
+        students = res.students;
+        Object.assign(remap, res.remap);
+        mergedStudents++;
+        kids = studentsOf(students, g.id);
+        i = -1; // نبدأ من جديد لأن القائمة تغيّرت
+        break;
+      }
+    }
+  }
+
+  return { guardians, students, remap, mergedGuardians, mergedStudents };
+};
+
+/** يُطبّق خريطة الدمج على تسجيلات البرامج فما يتيتّم تسجيل. */
+export const remapParticipants = (programs, remap) => {
+  if (!Object.keys(remap || {}).length) return programs;
+  const fix = (p) => (remap[p.studentId] ? { ...p, studentId: remap[p.studentId] } : p);
+  return (programs || []).map((prog) => ({
+    ...prog,
+    participants: (prog.participants || []).map(fix),
+    weeks: (prog.weeks || []).map((w) => ({ ...w, participants: (w.participants || []).map(fix) })),
+  }));
 };
