@@ -50,4 +50,5 @@ node tests/faid.test.mjs
 node tests/merge.test.mjs
 node tests/people.test.mjs
 node tests/signup.test.mjs
+node tests/freshness.test.mjs
 rm -rf "$STUB" tests/build

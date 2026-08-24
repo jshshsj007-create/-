@@ -28,3 +28,10 @@
   [headers.values]
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "no-referrer"
+
+# الصفحة نفسها ما تُخزَّن: هي اللي تدل على ملفات النسخة الجديدة،
+# فلو انحفظت بقي المتصفح على نسخة قديمة وما شاف أي تحديث.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-store, must-revalidate"

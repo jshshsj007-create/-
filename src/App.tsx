@@ -11,10 +11,11 @@ import {
   studentsOf, upsertRegistration, findDuplicates, mergeGuardians,
 } from './people.js';
 import { makeToken as makeSignupToken } from './signup.js';
+import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
-const APP_VERSION = 'v4.3 · وصول التسجيلات';
+const APP_VERSION = 'v4.4 · التحديث التلقائي';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -694,7 +695,22 @@ export default function App() {
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [stage, setStage] = useState('splash'); // splash → login → year → term → app
   const [savedAt, setSavedAt] = useState(null); // وقت آخر حفظ تلقائي
+  const [staleBuild, setStaleBuild] = useState(false); // فيه نسخة أحدث على الخادم
   const [loginError, setLoginError] = useState('');
+
+  /** نقارن نسختنا بالمنشورة عند الفتح وكل ما رجع للتطبيق، وكل خمس دقائق. */
+  useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      const published = await publishedBuild();
+      if (alive && isStale(runningBuild(), published)) setStaleBuild(true);
+    };
+    check();
+    const t = setInterval(check, 5 * 60 * 1000);
+    const onFocus = () => { if (document.visibilityState === 'visible') check(); };
+    document.addEventListener('visibilitychange', onFocus);
+    return () => { alive = false; clearInterval(t); document.removeEventListener('visibilitychange', onFocus); };
+  }, []);
 
   useEffect(() => {
     if (!savedAt) return;
@@ -1895,6 +1911,21 @@ export default function App() {
           </div>
         </header>
 
+      {/* النسخة المحفوظة في المتصفح تخفي التحسينات عن صاحبها بلا ما يدري */}
+      {staleBuild && (
+        <div className="px-5 pt-4">
+          <div className="bg-brand-600 text-white rounded-2xl px-4 py-3 flex items-center gap-3">
+            <RotateCcw size={18} className="shrink-0" />
+            <div className="flex-1 min-w-0 text-sm">
+              <div className="font-bold">فيه نسخة أحدث</div>
+              <div className="text-brand-100 text-xs mt-0.5">اللي عندك محفوظ في المتصفح من قبل.</div>
+            </div>
+            <button className="shrink-0 bg-white text-brand-800 text-sm font-bold px-4 py-2 rounded-lg"
+              onClick={hardReload}>تحديث</button>
+          </div>
+        </div>
+      )}
+
       <main className="flex-1 px-5 pb-28 w-full">
 
         {/* ------------------------------- الرئيسية ------------------------------- */}
@@ -2319,7 +2350,7 @@ export default function App() {
                           </div>
                         </Field>
 
-                        <Field label="طرق الدفع المعروضة" hint="تفاصيل التحويل (الآيبان أو الجوال) تكتبها في الإعدادات ← الحسابات.">
+                        <Field label="طرق الدفع المعروضة" hint="تفاصيل التحويل (الآيبان أو الجوال) والاسم اللي يشوفه ولي الأمر تكتبها في الإعدادات ← طرق الدفع.">
                           <div className="space-y-2">
                             {data.faidAccounts.map((a) => {
                               const on = (s.accounts || []).includes(a.id);
@@ -4147,6 +4178,9 @@ export default function App() {
               : (currentUser.permissions || []).map((p) => <Badge key={p} tone="slate">{p}</Badge>)}
           </div>
           <button className={btnDanger + ' w-full'} onClick={() => { closeModal(); doLogout(); }}><LogOut size={16} /> تسجيل خروج</button>
+          <button className={btnGhost + ' w-full mt-2 border border-slate-200'} onClick={hardReload}>
+            <RotateCcw size={15} /> تحديث التطبيق لآخر نسخة
+          </button>
           <div className="text-center text-[11px] text-slate-400 mt-3">نسخة التطبيق: {APP_VERSION}</div>
         </Modal>
       )}
