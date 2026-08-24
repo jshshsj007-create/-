@@ -26,6 +26,14 @@ test('تحصيل المشاركين يتجاهل «ما دفع»', () => {
   assert.equal(paidAmount(week.participants), 100);
 });
 
+test('اللي ينتظر تأكيدك ما يُحسب إيرادًا', () => {
+  const claimed = [...week.participants, { id: 'z', name: 'محوّل', amount: 500, accountId: 'rajhi', pending: true }];
+  assert.equal(paidAmount(claimed), 100, 'ما يدخل قبل ما تأكّد وصول الفلوس');
+  // وبعد التأكيد يدخل مثل أي تسجيل عادي
+  const confirmed = claimed.map((p) => (p.id === 'z' ? { ...p, pending: false } : p));
+  assert.equal(paidAmount(confirmed), 600);
+});
+
 test('الإيراد = تحصيل المشاركين + التحصيل الإضافي', () => {
   assert.equal(L.revenue(week), 200);
 });

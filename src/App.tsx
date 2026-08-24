@@ -6,11 +6,15 @@ import {
   RotateCcw, Wand2, CalendarDays, FileText,
 } from 'lucide-react';
 import { api, clone, merge3, readSession, writeSession, clearSession, readPending, writePending, clearPending } from './cloud.js';
+import {
+  normalizePhone, isValidPhone, formatPhone, normalizeName, sameName,
+  studentsOf, upsertRegistration, findDuplicates, mergeGuardians,
+} from './people.js';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
-const APP_VERSION = 'v3.0 · بيانات مشتركة';
-const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'المستخدمون والصلاحيات'];
+const APP_VERSION = 'v3.1 · أولياء الأمور';
+const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
 const LEVELS = ['أولية', 'متوسطة', 'عليا'];
@@ -21,7 +25,13 @@ export const ORDINALS = ['الأول', 'الثاني', 'الثالث', 'الرا
 const uid = () => Math.random().toString(36).slice(2, 9);
 const fmt = (n) => Number(n || 0).toLocaleString('en-US');
 export const sumAmt = (arr) => (arr || []).reduce((s, x) => s + Number(x.amount || 0), 0);
-export const paidAmount = (parts) => (parts || []).filter((p) => p.accountId !== 'unpaid').reduce((s, p) => s + Number(p.amount || 0), 0);
+/**
+ * المحصّل فعلًا. تسجيل الرابط اللي ينتظر تأكيدك ما يُحسب إيرادًا مهما كتب ولي
+ * الأمر — «قال إنه حوّل» غير «الفلوس وصلت»، والحسابات تتبع الثاني.
+ */
+export const paidAmount = (parts) => (parts || [])
+  .filter((p) => p.accountId !== 'unpaid' && !p.pending)
+  .reduce((s, p) => s + Number(p.amount || 0), 0);
 
 /**
  * الدفتر المالي (ledger): كائن فيه participants / collections / expenseItems / schoolPayouts / faidPayouts.
@@ -113,6 +123,9 @@ const defaultData = () => ({
   competitions: [],
   trips: [],
   users: [],
+  // قاعدة العملاء: ولي الأمر ← أبناؤه. تعيش عبر المواسم كلها، مو داخل ترم واحد.
+  guardians: [],
+  students: [],
 });
 
 /** ترقية البيانات القديمة للشكل الجديد بدون فقدان أي شيء مسجّل سابقًا. */
@@ -163,6 +176,9 @@ export function migrate(loaded) {
     delete user.code;
     return user;
   });
+  // قاعدة أولياء الأمور جديدة؛ الجوالات تُوحَّد مرة وحدة عشان المقارنة تصير سريعة
+  d.guardians = (d.guardians || []).map((g) => ({ notes: '', altPhone: '', ...g, phone: normalizePhone(g.phone) }));
+  d.students = (d.students || []).map((s) => ({ age: '', grade: '', school: '', health: '', ...s }));
   return d;
 }
 
@@ -627,6 +643,8 @@ export default function App() {
   const [selectedWeekId, setSelectedWeekId] = useState(null);
   const [selectedTripId, setSelectedTripId] = useState(null);
   const [selectedCompId, setSelectedCompId] = useState(null);
+  const [selectedGuardianId, setSelectedGuardianId] = useState(null);
+  const [guardianSearch, setGuardianSearch] = useState('');
   const [weekTab, setWeekTab] = useState('finance');
   const [programTab, setProgramTab] = useState('days');
   const [settingsTab, setSettingsTab] = useState('users');
@@ -1247,6 +1265,100 @@ export default function App() {
   const removeTripItem = (key, itemId) => patchTrip({ [key]: (trip[key] || []).filter((x) => x.id !== itemId) });
   const removeTrip = (tid) => { save({ ...data, trips: data.trips.filter((t) => t.id !== tid) }); goto('club'); };
 
+  /* --------------------------- أولياء الأمور --------------------------- */
+
+  /** كل تسجيلات طالب عبر المواسم كلها — من البرنامج المجمّع أو من أسابيع المنفصل. */
+  const historyOf = (studentId) => {
+    const out = [];
+    for (const p of data.programs || []) {
+      for (const part of p.participants || []) {
+        if (part.studentId === studentId) out.push({ program: p, week: null, part });
+      }
+      for (const w of p.weeks || []) {
+        for (const part of w.participants || []) {
+          if (part.studentId === studentId) out.push({ program: p, week: w, part });
+        }
+      }
+    }
+    return out;
+  };
+
+  /** ملخّص ولي أمر: أبناؤه، وكم تسجيلًا لهم، وكم دفع فعلًا عبر المواسم. */
+  const guardianSummary = (g) => {
+    const kids = studentsOf(data.students, g.id);
+    const regs = kids.flatMap((k) => historyOf(k.id));
+    const paid = regs
+      .filter((r) => r.part.accountId !== 'unpaid' && !r.part.pending)
+      .reduce((s, r) => s + Number(r.part.amount || 0), 0);
+    return { kids, regs, paid };
+  };
+
+  const saveGuardian = () => {
+    const name = (form.name || '').trim();
+    const phone = (form.phone || '').trim();
+    if (!name) { setForm({ ...form, error: 'الاسم مطلوب' }); return; }
+    if (!isValidPhone(phone)) { setForm({ ...form, error: 'رقم جوال غير صحيح — مثال: 0551234567' }); return; }
+    const clash = data.guardians.find((g) => normalizePhone(g.phone) === normalizePhone(phone) && g.id !== form.id);
+    if (clash) { setForm({ ...form, error: `هذا الجوال مسجّل باسم «${clash.name}»` }); return; }
+
+    const fields = { name, phone: normalizePhone(phone), notes: (form.notes || '').trim() };
+    if (form.id) {
+      save({ ...data, guardians: data.guardians.map((g) => (g.id === form.id ? { ...g, ...fields } : g)) });
+    } else {
+      const created = { id: uid(), ...fields, altPhone: '', createdAt: Date.now(), lastSeenAt: Date.now() };
+      save({ ...data, guardians: [...data.guardians, created] });
+      // نفتح صفحته على طول — الخطوة الطبيعية بعدها إضافة أبنائه
+      setSelectedGuardianId(created.id);
+      goto('guardianDetail');
+    }
+    closeModal();
+  };
+
+  const removeGuardian = (gid) => {
+    save({
+      ...data,
+      guardians: data.guardians.filter((g) => g.id !== gid),
+      students: data.students.filter((s) => s.guardianId !== gid),
+    });
+    goto('guardians');
+  };
+
+  const saveStudent = () => {
+    const name = (form.name || '').trim();
+    if (!name) { setForm({ ...form, error: 'اسم الطالب مطلوب' }); return; }
+    const fields = {
+      name, age: form.age || '', grade: (form.grade || '').trim(),
+      school: (form.school || '').trim(), health: (form.health || '').trim(),
+    };
+    if (form.id) {
+      save({ ...data, students: data.students.map((s) => (s.id === form.id ? { ...s, ...fields } : s)) });
+    } else {
+      const twin = studentsOf(data.students, form.guardianId).find((s) => sameName(s.name, name));
+      if (twin) { setForm({ ...form, error: `«${twin.name}» مسجّل تحته من قبل` }); return; }
+      save({ ...data, students: [...data.students, { id: uid(), guardianId: form.guardianId, ...fields, createdAt: Date.now() }] });
+    }
+    closeModal();
+  };
+
+  /** حذف الطالب ما يمس تسجيلاته المالية — يفك الربط فقط عشان الحسابات ما تختل. */
+  const removeStudent = (sid) => {
+    save({ ...data, students: data.students.filter((s) => s.id !== sid) });
+  };
+
+  /** الدمج ينقل الأبناء، والتسجيلات القديمة تتبع الطالب الباقي. */
+  const doMerge = (keepId, dropId) => {
+    const { guardians, students, remap } = mergeGuardians(data, keepId, dropId);
+    const fixPart = (part) => (remap[part.studentId] ? { ...part, studentId: remap[part.studentId] } : part);
+    const programs = data.programs.map((p) => ({
+      ...p,
+      participants: (p.participants || []).map(fixPart),
+      weeks: (p.weeks || []).map((w) => ({ ...w, participants: (w.participants || []).map(fixPart) })),
+    }));
+    save({ ...data, guardians, students, programs });
+    setSelectedGuardianId(keepId);
+    closeModal();
+  };
+
   /* --------------------------- النسخ الاحتياطي --------------------------- */
   const backupText = () => JSON.stringify({ app: 'faid', version: 1, savedAt: new Date().toISOString(), data }, null, 2);
   const backupName = () => `faid-backup-${new Date().toISOString().slice(0, 10)}.json`;
@@ -1354,6 +1466,13 @@ export default function App() {
   const myWeeks = !limitedScope ? [] : termPrograms.flatMap((p) =>
     p.weeks.filter((w) => canSeeWeek(p.id, w.id)).map((w) => ({ program: p, week: w })));
   const canTransfer = can('فيض - الإيرادات والمصروفات') && canMoney;
+  /**
+   * جوالات الأهالي وأعمار الأطفال وملاحظاتهم الصحية بيانات حسّاسة، فلها صلاحية
+   * مستقلة: مسجّل الحضور يشوف الأسماء عشان يحضّر، وما يشوف تفاصيل أهاليهم.
+   */
+  const canGuardians = can('أولياء الأمور');
+  /** التكرار المحتمل: التطبيق يشتبه، والمستخدم يقرّر. */
+  const duplicates = canGuardians ? findDuplicates(data.guardians, data.students) : [];
 
   /** آخر مدير نشط ما ينحذف ولا يتعطّل، وإلا انقفل التطبيق على الجميع. */
   const activeAdmins = data.users.filter((u) => u.role === 'مدير' && u.status === 'نشط');
@@ -1551,6 +1670,7 @@ export default function App() {
     { id: 'programs', label: 'البرامج', desc: 'عرض وإدارة البرامج', icon: BookOpen, show: canAttend },
     { id: 'faid', label: 'فيض', desc: 'حسابات فيض والأرصدة', icon: Wallet, show: can('فيض - الإيرادات والمصروفات') },
     { id: 'club', label: 'النادي', desc: 'المسابقات والسفرات', icon: Trophy, show: canClub },
+    { id: 'guardians', label: 'أولياء الأمور', desc: 'قاعدة المشتركين وأهاليهم', icon: UsersIcon, show: canGuardians },
     { id: 'reports', label: 'التقارير', desc: 'التقارير والإحصائيات', icon: FileText, show: canMoney },
     { id: 'settings', label: 'الإعدادات', desc: 'المستخدمون والصلاحيات', icon: Settings, show: isAdmin },
   ].filter((c) => c.show);
@@ -1566,7 +1686,8 @@ export default function App() {
     view === id ||
     (id === 'programs' && (view === 'programDetail' || view === 'weekDetail')) ||
     (id === 'reports' && view === 'club') ||
-    (id === 'home' && (view === 'club' || view === 'tripDetail' || view === 'competitionDetail'));
+    (id === 'home' && (view === 'club' || view === 'tripDetail' || view === 'competitionDetail'
+      || view === 'guardians' || view === 'guardianDetail'));
 
   /** فلترة حسب طريقة الدفع: حساب معيّن، أو «ما دفع»، أو الكل. */
   const byPay = (p) => payFilter === 'all' || p.accountId === payFilter;
@@ -2537,6 +2658,177 @@ export default function App() {
             )}
           </div>
         )}
+        {/* ---------------------------- أولياء الأمور ---------------------------- */}
+        {view === 'guardians' && canGuardians && (() => {
+          const q = normalizeName(guardianSearch);
+          const digits = normalizePhone(guardianSearch);
+          const list = data.guardians.filter((g) => {
+            if (!guardianSearch.trim()) return true;
+            if (digits && normalizePhone(g.phone).includes(digits)) return true;
+            if (q && normalizeName(g.name).includes(q)) return true;
+            return studentsOf(data.students, g.id).some((s) => q && normalizeName(s.name).includes(q));
+          }).sort((a, b) => (b.lastSeenAt || b.createdAt || 0) - (a.lastSeenAt || a.createdAt || 0));
+
+          return (
+            <div>
+              <div className="flex items-center justify-between mb-1 gap-3">
+                <h2 className="text-xl font-extrabold text-slate-800">أولياء الأمور</h2>
+                <button className={btnPrimary} onClick={() => { setForm({}); setModal('editGuardian'); }}><Plus size={16} /> ولي أمر</button>
+              </div>
+              <div className="text-sm text-slate-400 mb-4">
+                قاعدة المشتركين وأهاليهم — تعيش عبر المواسم كلها، مو داخل ترم واحد.
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className={cardCls + ' text-center'}>
+                  <div className="text-2xl font-extrabold text-brand-700">{data.guardians.length}</div>
+                  <div className="text-xs text-slate-400 mt-1">ولي أمر</div>
+                </div>
+                <div className={cardCls + ' text-center'}>
+                  <div className="text-2xl font-extrabold text-brand-700">{data.students.length}</div>
+                  <div className="text-xs text-slate-400 mt-1">طالب</div>
+                </div>
+              </div>
+
+              {duplicates.length > 0 && (
+                <button className="w-full text-right bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 mb-4 flex items-start gap-2"
+                  onClick={() => { setForm({}); setModal('duplicates'); }}>
+                  <AlertTriangle size={16} className="shrink-0 mt-0.5 text-amber-600" />
+                  <span className="text-sm text-amber-900">
+                    فيه <b>{duplicates.length}</b> تكرار محتمل — راجعه واختر تدمج ولا لا.
+                  </span>
+                </button>
+              )}
+
+              <div className="relative mb-4">
+                <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input className={inputCls + ' pr-9'} value={guardianSearch} onChange={(e) => setGuardianSearch(e.target.value)}
+                  placeholder="ابحث باسم ولي الأمر أو الطالب أو الجوال" />
+              </div>
+
+              {list.length === 0 ? (
+                <div className={emptyCls}>
+                  {data.guardians.length === 0
+                    ? 'ما فيه أولياء أمور بعد. أضف واحدًا، أو خلّهم يسجّلون بأنفسهم من رابط التسجيل.'
+                    : 'ما فيه نتيجة لهذا البحث.'}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {list.map((g) => {
+                    const { kids, regs } = guardianSummary(g);
+                    return (
+                      <button key={g.id} className="w-full text-right bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3"
+                        onClick={() => { setSelectedGuardianId(g.id); goto('guardianDetail'); }}>
+                        <div className="w-10 h-10 rounded-full bg-brand-100 text-brand-800 font-bold flex items-center justify-center shrink-0">
+                          {(g.name || '؟').slice(0, 1)}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="font-semibold text-slate-800 truncate">{g.name || 'بلا اسم'}</div>
+                          <div className="text-xs text-slate-400" dir="ltr">{formatPhone(g.phone)}</div>
+                          {kids.length > 0 && (
+                            <div className="text-xs text-slate-500 mt-1 truncate">{kids.map((k) => k.name).join(' · ')}</div>
+                          )}
+                        </div>
+                        <div className="shrink-0 text-left">
+                          <Badge tone="slate">{kids.length} طالب</Badge>
+                          {regs.length > 0 && <div className="text-[11px] text-slate-400 mt-1">{regs.length} تسجيل</div>}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {view === 'guardianDetail' && canGuardians && (() => {
+          const g = data.guardians.find((x) => x.id === selectedGuardianId);
+          if (!g) return <div className={emptyCls}>ما لقيت ولي الأمر هذا.</div>;
+          const { kids, regs, paid } = guardianSummary(g);
+          return (
+            <div>
+              <Breadcrumb items={[{ label: 'أولياء الأمور', onClick: () => goto('guardians') }, { label: g.name || 'بلا اسم' }]} />
+
+              <div className={cardCls + ' mb-4'}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-bold text-lg text-slate-800">{g.name || 'بلا اسم'}</div>
+                    <a className="text-sm text-brand-600 block mt-1" dir="ltr" href={`tel:0${normalizePhone(g.phone)}`}>{formatPhone(g.phone)}</a>
+                    {g.altPhone && <div className="text-xs text-slate-400 mt-0.5" dir="ltr">{formatPhone(g.altPhone)}</div>}
+                    {g.notes && <div className="text-sm text-slate-500 mt-2">{g.notes}</div>}
+                  </div>
+                  <div className="flex gap-1 shrink-0">
+                    <button className="text-slate-400 p-1.5" onClick={() => { setForm({ ...g }); setModal('editGuardian'); }}><Pencil size={16} /></button>
+                    <button className="text-red-400 p-1.5"
+                      onClick={() => askConfirm(
+                        regs.length > 0
+                          ? `حذف «${g.name}» وأبناءه من قاعدة أولياء الأمور؟ تسجيلاتهم في البرامج ومبالغها تبقى كما هي.`
+                          : `حذف «${g.name}» وأبناءه؟`,
+                        () => removeGuardian(g.id))}><Trash2 size={16} /></button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2 mt-4 pt-4 border-t border-slate-100 text-center">
+                  <div><div className="font-bold text-slate-800">{kids.length}</div><div className="text-[11px] text-slate-400">طالب</div></div>
+                  <div><div className="font-bold text-slate-800">{regs.length}</div><div className="text-[11px] text-slate-400">تسجيل</div></div>
+                  <div><div className="font-bold text-brand-700">{paid.toLocaleString('ar-SA')}</div><div className="text-[11px] text-slate-400">ريال مدفوع</div></div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between mb-3 gap-3">
+                <h3 className="font-bold text-slate-700">الأبناء</h3>
+                <button className={btnPrimary} onClick={() => { setForm({ guardianId: g.id }); setModal('editStudent'); }}><Plus size={16} /> طالب</button>
+              </div>
+
+              {kids.length === 0 ? (
+                <div className={emptyCls}>ما فيه أبناء مسجّلون تحته.</div>
+              ) : (
+                <div className="space-y-3">
+                  {kids.map((s) => {
+                    const hist = historyOf(s.id);
+                    return (
+                      <div key={s.id} className={cardCls}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="font-semibold text-slate-800">{s.name}</div>
+                            <div className="text-xs text-slate-400 mt-1">
+                              {[s.age && `${s.age} سنة`, s.grade, s.school].filter(Boolean).join(' · ') || 'بلا تفاصيل'}
+                            </div>
+                            {s.health && (
+                              <div className="text-xs text-amber-700 bg-amber-50 rounded-lg px-2 py-1 mt-2 inline-flex items-center gap-1">
+                                <AlertTriangle size={12} /> {s.health}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex gap-1 shrink-0">
+                            <button className="text-slate-400 p-1.5" onClick={() => { setForm({ ...s }); setModal('editStudent'); }}><Pencil size={16} /></button>
+                            <button className="text-red-400 p-1.5"
+                              onClick={() => askConfirm(`حذف «${s.name}» من قاعدة البيانات؟ تسجيلاته في البرامج تبقى كما هي.`, () => removeStudent(s.id))}><Trash2 size={16} /></button>
+                          </div>
+                        </div>
+                        {hist.length > 0 && (
+                          <div className="mt-3 pt-3 border-t border-slate-100 space-y-1.5">
+                            {hist.map(({ program, week, part }, i) => (
+                              <div key={i} className="flex items-center justify-between text-xs gap-2">
+                                <span className="text-slate-600 truncate">{program.name}{week ? ` · ${week.name}` : ''}</span>
+                                <span className="shrink-0 text-slate-400">
+                                  {part.pending ? <Badge tone="amber">يحتاج تأكيد</Badge>
+                                    : part.accountId === 'unpaid' ? <Badge tone="red">ما دفع</Badge>
+                                    : `${Number(part.amount || 0).toLocaleString('ar-SA')} ر.س`}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* ------------------------------- التقارير ------------------------------- */}
         {view === 'reports' && canMoney && (
           <TermReport programs={termPrograms} year={data.currentYear} term={data.currentTerm} balance={balance}
@@ -3025,6 +3317,90 @@ export default function App() {
             }}>حفظ</button>
             <button className={btnGhost} onClick={closeModal}>إلغاء</button>
           </div>
+        </Modal>
+      )}
+
+      {modal === 'editGuardian' && (
+        <Modal title={form.id ? 'تعديل ولي أمر' : 'ولي أمر جديد'} onClose={closeModal}>
+          <Field label="الاسم">
+            <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} placeholder="مثال: محمد العتيبي" />
+          </Field>
+          <Field label="رقم الجوال" hint="هذا اللي يمنع التكرار — لو سجّل مرة ثانية نعرف إنه هو نفسه.">
+            <input className={inputCls} dir="ltr" inputMode="tel" value={form.phone || ''}
+              onChange={(e) => setForm({ ...form, phone: e.target.value, error: '' })} placeholder="0551234567" />
+          </Field>
+          <Field label="ملاحظات (اختياري)">
+            <input className={inputCls} value={form.notes || ''} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+          </Field>
+          {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+          <div className="flex gap-2 mt-5">
+            <button className={btnPrimary + ' flex-1'} onClick={saveGuardian}>{form.id ? 'حفظ' : 'إضافة'}</button>
+            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+          </div>
+        </Modal>
+      )}
+
+      {modal === 'editStudent' && (
+        <Modal title={form.id ? 'تعديل طالب' : 'طالب جديد'} onClose={closeModal}>
+          <Field label="اسم الطالب">
+            <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} placeholder="مثال: سعد" />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="العمر"><input type="number" className={inputCls} value={form.age || ''} onChange={(e) => setForm({ ...form, age: e.target.value })} placeholder="10" /></Field>
+            <Field label="الصف"><input className={inputCls} value={form.grade || ''} onChange={(e) => setForm({ ...form, grade: e.target.value })} placeholder="رابع ابتدائي" /></Field>
+          </div>
+          <Field label="المدرسة"><input className={inputCls} value={form.school || ''} onChange={(e) => setForm({ ...form, school: e.target.value })} placeholder="الرواد" /></Field>
+          <Field label="ملاحظات صحية" hint="حساسية، ربو، دواء... يشوفها المشرف قبل النشاط.">
+            <input className={inputCls} value={form.health || ''} onChange={(e) => setForm({ ...form, health: e.target.value })} />
+          </Field>
+          {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+          <div className="flex gap-2 mt-5">
+            <button className={btnPrimary + ' flex-1'} onClick={saveStudent}>{form.id ? 'حفظ' : 'إضافة'}</button>
+            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+          </div>
+        </Modal>
+      )}
+
+      {modal === 'duplicates' && (
+        <Modal title="تكرار محتمل" onClose={closeModal} wide>
+          <div className="text-sm text-slate-500 mb-4">
+            التطبيق ما يدمج من نفسه — هذولا اشتباهات، وأنت اللي تقرّر.
+            الدمج ينقل الأبناء ويوحّد المكرر منهم، وما يضيع شي.
+          </div>
+          {duplicates.length === 0 ? (
+            <div className={emptyCls}>ما فيه تكرار.</div>
+          ) : (
+            <div className="space-y-3">
+              {duplicates.map(({ a, b, reason }, i) => (
+                <div key={i} className="border border-slate-200 rounded-2xl p-4">
+                  <Badge tone="amber">{reason}</Badge>
+                  <div className="grid grid-cols-2 gap-2 mt-3">
+                    {[a, b].map((g) => {
+                      const kids = studentsOf(data.students, g.id);
+                      return (
+                        <div key={g.id} className="bg-slate-50 rounded-xl p-3">
+                          <div className="font-semibold text-sm text-slate-800 truncate">{g.name || 'بلا اسم'}</div>
+                          <div className="text-[11px] text-slate-400" dir="ltr">{formatPhone(g.phone)}</div>
+                          <div className="text-[11px] text-slate-500 mt-1">{kids.map((k) => k.name).join(' · ') || 'بلا أبناء'}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="flex gap-2 mt-3">
+                    <button className={btnPrimary + ' flex-1 text-xs'}
+                      onClick={() => askConfirm(`ندمجهم ونخلّي «${a.name || 'الأول'}»؟`, () => doMerge(a.id, b.id))}>
+                      ادمج في «{a.name || 'الأول'}»
+                    </button>
+                    <button className={btnPrimary + ' flex-1 text-xs'}
+                      onClick={() => askConfirm(`ندمجهم ونخلّي «${b.name || 'الثاني'}»؟`, () => doMerge(b.id, a.id))}>
+                      ادمج في «{b.name || 'الثاني'}»
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <button className={btnGhost + ' w-full mt-4'} onClick={closeModal}>إغلاق</button>
         </Modal>
       )}
 

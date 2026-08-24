@@ -57,21 +57,45 @@ const userFromToken = (doc, token) => {
 
 /* ------------------------- كلمات المرور تبقى في الخادم ------------------------- */
 
-/** نسخة صالحة للإرسال للمتصفح: بدون كلمات المرور. */
-const strip = (data) => ({
-  ...data,
-  users: (data?.users || []).map(({ password, ...rest }) => rest),
-});
+const isAdmin = (u) => u?.role === 'مدير';
+const allowed = (u, perm) => isAdmin(u) || (u?.permissions || []).includes(perm);
 
-/** المتصفح ما عنده كلمات المرور، فأي مستخدم رجع بدون كلمة مرور يحتفظ بالقديمة. */
-const keepPasswords = (incoming, current) => ({
-  ...incoming,
-  users: (incoming?.users || []).map((u) => {
-    if (u.password) return u;
-    const old = (current?.users || []).find((x) => x.id === u.id);
-    return old?.password ? { ...u, password: old.password } : u;
-  }),
-});
+/**
+ * نسخة صالحة للإرسال لهذا المستخدم بالذات: بدون كلمات المرور أبدًا، وبدون
+ * بيانات الأهالي لمن ما أُعطي صلاحيتها — جوالات وأعمار وملاحظات صحية لأطفال،
+ * ما تنزل جهازًا ما يحتاجها.
+ */
+const strip = (data, me) => {
+  const out = { ...data, users: (data?.users || []).map(({ password, ...rest }) => rest) };
+  if (!allowed(me, 'أولياء الأمور')) { out.guardians = []; out.students = []; }
+  return out;
+};
+
+/**
+ * الحفظ القادم من المتصفح ما يقدر يمس ما لا يملكه صاحبه:
+ * كلمات المرور المخزّنة، وقاعدة الأهالي، وقائمة المستخدمين نفسها —
+ * وإلا صار بإمكان أي موظف يرفّع نفسه مديرًا من جهازه.
+ */
+const guard = (incoming, current, me) => {
+  const out = { ...incoming };
+
+  if (allowed(me, 'المستخدمون والصلاحيات')) {
+    // المتصفح ما عنده كلمات المرور، فأي مستخدم رجع بدونها يحتفظ بالقديمة
+    out.users = (incoming?.users || []).map((u) => {
+      if (u.password) return u;
+      const old = (current?.users || []).find((x) => x.id === u.id);
+      return old?.password ? { ...u, password: old.password } : u;
+    });
+  } else {
+    out.users = current?.users || [];
+  }
+
+  if (!allowed(me, 'أولياء الأمور')) {
+    out.guardians = current?.guardians || [];
+    out.students = current?.students || [];
+  }
+  return out;
+};
 
 /* ---------------------------------- المعالج ---------------------------------- */
 
@@ -101,7 +125,7 @@ export default async (req) => {
     const data = { ...(body.data || {}), users: [u] };
     const next = { rev: 1, updatedAt: new Date().toISOString(), secret, data };
     await writeDoc(next);
-    return json({ ok: true, rev: 1, token: makeToken(secret, u.username), data: strip(data) });
+    return json({ ok: true, rev: 1, token: makeToken(secret, u.username), data: strip(data, u) });
   }
 
   if (op === 'login') {
@@ -110,7 +134,7 @@ export default async (req) => {
     const u = (doc.data.users || []).find((x) => (x.username || '').toLowerCase() === entered);
     if (!u || u.password !== body.password) return json({ error: 'bad_credentials' }, 401);
     if (u.status === 'غير نشط') return json({ error: 'inactive' }, 403);
-    return json({ ok: true, rev: doc.rev, token: makeToken(doc.secret, u.username), data: strip(doc.data) });
+    return json({ ok: true, rev: doc.rev, token: makeToken(doc.secret, u.username), data: strip(doc.data, u) });
   }
 
   // ما بعدها يحتاج توكن سليم.
@@ -120,15 +144,15 @@ export default async (req) => {
   // سحب التحديثات: لو ما تغيّر شي نرجّع ردًّا خفيفًا بدل البيانات كاملة.
   if (op === 'pull') {
     if (Number(body.sinceRev) === doc.rev) return json({ ok: true, rev: doc.rev, unchanged: true });
-    return json({ ok: true, rev: doc.rev, data: strip(doc.data) });
+    return json({ ok: true, rev: doc.rev, data: strip(doc.data, me) });
   }
 
   // حفظ: لازم يكون البانٍ على آخر نسخة، وإلا نرجّع 409 ومعه الحالي عشان الدمج.
   if (op === 'push') {
     if (Number(body.baseRev) !== doc.rev) {
-      return json({ error: 'conflict', rev: doc.rev, data: strip(doc.data) }, 409);
+      return json({ error: 'conflict', rev: doc.rev, data: strip(doc.data, me) }, 409);
     }
-    const data = keepPasswords(body.data, doc.data);
+    const data = guard(body.data, doc.data, me);
     const next = { rev: doc.rev + 1, updatedAt: new Date().toISOString(), secret: doc.secret, data };
     await writeDoc(next);
     return json({ ok: true, rev: next.rev });
