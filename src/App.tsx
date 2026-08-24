@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
+/** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
+const APP_VERSION = 'v1.9 · ٢٤ أغسطس';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -1236,6 +1238,7 @@ export default function App() {
             className="mt-12 bg-white text-brand-900 font-bold text-sm px-10 py-3.5 rounded-2xl">
             ابدأ
           </button>
+          <div className="text-brand-300/70 text-[11px] mt-6">{APP_VERSION}</div>
         </div>
       </Shell>
     );
@@ -2841,6 +2844,7 @@ export default function App() {
               : (currentUser.permissions || []).map((p) => <Badge key={p} tone="slate">{p}</Badge>)}
           </div>
           <button className={btnDanger + ' w-full'} onClick={() => { closeModal(); doLogout(); }}><LogOut size={16} /> تسجيل خروج</button>
+          <div className="text-center text-[11px] text-slate-400 mt-3">نسخة التطبيق: {APP_VERSION}</div>
         </Modal>
       )}
 
