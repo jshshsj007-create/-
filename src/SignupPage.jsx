@@ -5,7 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import { Check, AlertTriangle, Plus, X, Copy, Upload } from 'lucide-react';
 import { api } from './cloud.js';
-import { FaidLogo } from './logo.jsx';
+import { FaydhLogo } from './logo.jsx';
 import { isValidPhone } from './people.js';
 import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, daysAllowed, daysAreFixed, coversAll, RECEIPT_TYPES, RECEIPT_MAX } from './signup.js';
 
@@ -18,7 +18,7 @@ function Shell({ children }) {
     <div dir="rtl" className="min-h-screen bg-slate-50" style={{ fontFamily: "'Tajawal', sans-serif" }}>
       <div className="bg-brand-900 px-5 pt-6 pb-14">
         <div className="max-w-lg mx-auto flex items-center gap-3">
-          <FaidLogo size={44} variant="mark" />
+          <FaydhLogo size={44} variant="mark" />
           <div className="text-white font-extrabold text-xl">فريق فيض</div>
         </div>
       </div>

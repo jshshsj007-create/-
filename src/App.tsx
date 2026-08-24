@@ -13,7 +13,7 @@ import {
 } from './people.js';
 import { makeToken as makeSignupToken } from './signup.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
-import { FaidLogo } from './logo.jsx';
+import { FaydhLogo } from './logo.jsx';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
@@ -1593,8 +1593,8 @@ export default function App() {
   };
 
   /* --------------------------- النسخ الاحتياطي --------------------------- */
-  const backupText = () => JSON.stringify({ app: 'faid', version: 1, savedAt: new Date().toISOString(), data }, null, 2);
-  const backupName = () => `faid-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  const backupText = () => JSON.stringify({ app: 'Faydh', version: 1, savedAt: new Date().toISOString(), data }, null, 2);
+  const backupName = () => `Faydh-backup-${new Date().toISOString().slice(0, 10)}.json`;
 
   const downloadBackup = () => {
     try {
@@ -1621,7 +1621,9 @@ export default function App() {
   const previewRestore = (text) => {
     try {
       const parsed = JSON.parse(text);
-      const d = parsed?.data && parsed?.app === 'faid' ? parsed.data : parsed;
+      // النسخ القديمة مكتوب فيها faid — تبقى مقبولة، ما نخلي أحدًا يفقد نسخته
+      const marker = String(parsed?.app || '').toLowerCase();
+      const d = parsed?.data && (marker === 'faydh' || marker === 'faid') ? parsed.data : parsed;
       if (!d || !Array.isArray(d.programs) || !Array.isArray(d.faidAccounts)) {
         setForm({ ...form, restoreText: text, restore: null, msg: 'هذا الملف ما يشبه نسخة فيض.' });
         return;
@@ -1761,7 +1763,7 @@ export default function App() {
     return (
       <Shell dark>
         <div className="flex-1 flex flex-col items-center justify-center px-8 text-center">
-          <FaidLogo size={116} variant="full" />
+          <FaydhLogo size={116} variant="full" />
           <div className="text-brand-200 text-base font-semibold mt-8">فريق فيض</div>
           <button onClick={() => setStage(mustLogin ? 'login' : 'year')}
             className="mt-12 bg-white text-brand-900 font-bold text-sm px-10 py-3.5 rounded-2xl">
@@ -1779,7 +1781,7 @@ export default function App() {
       <Shell dark>
         <div className="flex-1 flex flex-col justify-center px-6">
           <div className="flex flex-col items-center mb-8">
-            <FaidLogo size={84} variant="full" />
+            <FaydhLogo size={84} variant="full" />
           </div>
           <div className="bg-white rounded-3xl p-6 shadow-xl">
             {needsFirstAdmin ? (
