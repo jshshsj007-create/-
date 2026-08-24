@@ -110,6 +110,13 @@ export const daysAllowed = (view, pkg) =>
 export const daysAreFixed = (pkg) => Boolean(pkg) && !pkg.perDay && Number(pkg.dayCount) > 0;
 
 /**
+ * باقة المدة الكاملة: أيامها معروفة سلفًا، فما نسأل ولي الأمر يختارها —
+ * نعبّيها له ونعرضها عليه.
+ */
+export const coversAll = (view, pkg) =>
+  Boolean(pkg) && !pkg.perDay && !Number(pkg.dayCount) && (view?.days || []).length > 0;
+
+/**
  * يتحقق من مُدخلات ولي الأمر. يرجّع { ok, errors } — errors مفتاحه معرّف الخانة
  * عشان الواجهة تعلّم على الخانة نفسها بدل رسالة عامة.
  */

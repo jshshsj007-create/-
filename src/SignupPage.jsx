@@ -5,8 +5,9 @@
 import React, { useState, useEffect } from 'react';
 import { Check, AlertTriangle, Plus, X, Copy, Upload } from 'lucide-react';
 import { api } from './cloud.js';
+import { FaidLogo } from './logo.jsx';
 import { isValidPhone } from './people.js';
-import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, daysAllowed, daysAreFixed, RECEIPT_TYPES, RECEIPT_MAX } from './signup.js';
+import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, daysAllowed, daysAreFixed, coversAll, RECEIPT_TYPES, RECEIPT_MAX } from './signup.js';
 
 const input = 'w-full border border-slate-200 rounded-xl px-3.5 py-3 text-[15px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent';
 const inputBad = input.replace('border-slate-200', 'border-red-300');
@@ -15,8 +16,11 @@ const fmt = (n) => Number(n || 0).toLocaleString('en-US');
 function Shell({ children }) {
   return (
     <div dir="rtl" className="min-h-screen bg-slate-50" style={{ fontFamily: "'Tajawal', sans-serif" }}>
-      <div className="bg-brand-900 px-6 pt-10 pb-14 text-center">
-        <div className="text-white font-extrabold text-xl">فريق فيض</div>
+      <div className="bg-brand-900 px-5 pt-6 pb-14">
+        <div className="max-w-lg mx-auto flex items-center gap-3">
+          <FaidLogo size={44} variant="mark" />
+          <div className="text-white font-extrabold text-xl">فريق فيض</div>
+        </div>
       </div>
       <div className="px-4 -mt-8 pb-16 max-w-lg mx-auto">{children}</div>
     </div>
@@ -316,7 +320,12 @@ export default function SignupPage({ token }) {
                     const on = kid.packageId === pk.id;
                     return (
                       <button key={pk.id} type="button"
-                        onClick={() => { setKid(i, { packageId: pk.id, days: [] }); setErrors({ ...errors, [`kid${i}.package`]: null, [`kid${i}.days`]: null }); }}
+                        onClick={() => {
+                          // المدة الكاملة تُملأ تلقائيًا، وغيرها يبدأ فاضيًا ليختار
+                          const all = coversAll(view, pk);
+                          setKid(i, { packageId: pk.id, days: all ? view.days.map((d) => d.id) : [] });
+                          setErrors({ ...errors, [`kid${i}.package`]: null, [`kid${i}.days`]: null });
+                        }}
                         className={`w-full text-right px-4 py-3 rounded-xl border flex items-center justify-between ${on ? 'border-brand-600 bg-brand-50' : 'border-slate-200'}`}>
                         <span className="min-w-0">
                           <span className="block font-semibold text-slate-800">{pk.name}</span>
@@ -338,7 +347,20 @@ export default function SignupPage({ token }) {
             </div>
           )}
 
-          {view.days.length > 0 && (!view.usePackages || kid.packageId) && (() => {
+          {/* باقة المدة الكاملة أيامها معروفة سلفًا، فما نسأله عنها */}
+          {view.usePackages && coversAll(view, packageOf(view, kid)) && (
+            <div className="mb-4 bg-brand-50 rounded-xl px-3.5 py-3 text-sm text-brand-900">
+              <div className="font-semibold mb-1">
+                {packageOf(view, kid).name} · {fmt(dueFor(view, kid))} ر.س
+              </div>
+              <div className="text-xs text-brand-700">
+                تشمل كل الأيام ({view.days.length}): {view.days.map((d) => d.name).join(' · ')}
+              </div>
+            </div>
+          )}
+
+          {view.days.length > 0 && (!view.usePackages || kid.packageId)
+            && !(view.usePackages && coversAll(view, packageOf(view, kid))) && (() => {
             const pkg = packageOf(view, kid);
             const allowed = view.usePackages ? daysAllowed(view, pkg) : view.days.length;
             const picked = (kid.days || []).length;

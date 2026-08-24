@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import {
   makeToken, programByToken, publicView, validateSubmission,
-  dueFor, totalDue, applySubmission, rateLimited, daysAllowed, daysAreFixed, isReceipt, RECEIPT_MAX,
+  dueFor, totalDue, applySubmission, rateLimited, daysAllowed, daysAreFixed, coversAll, isReceipt, RECEIPT_MAX,
 } from '../src/signup.js';
 import { studentsOf } from '../src/people.js';
 
@@ -219,6 +219,25 @@ test('اليومي يقبل أي عدد أيام، والباقة بعددها �
   assert.equal(validateSubmission(v, { ...base, kids: [{ name: 'سعد', age: '10', packageId: '__perday', days: [] }] }).errors['kid0.days'], 'اختر أيامك');
   assert.equal(validateSubmission(v, { ...base, kids: [{ name: 'سعد', age: '10', packageId: 'pk_two', days: ['w1'] }] }).errors['kid0.days'],
     'هذي الباقة 2 أيام — اخترت 1');
+});
+
+test('باقة المدة الكاملة تُعرف من غيرها', () => {
+  const d = withPackages();
+  const v = publicView(d, d.programs[0]);
+  const all = v.packages.find((p) => p.id === 'pk_all');
+  const two = v.packages.find((p) => p.id === 'pk_two');
+  assert.equal(coversAll(v, all), true, 'صفر أيام = المدة كاملة');
+  assert.equal(coversAll(v, two), false, 'الباقة بعدد محدد يختار أيامها');
+  assert.equal(coversAll(v, null), false);
+});
+
+test('المدة الكاملة تُقبل بكل الأيام، وترفض الناقص', () => {
+  const d = withPackages();
+  const v = publicView(d, d.programs[0]);
+  const base = { answers: goodBody.answers, accountId: 'rajhi' };
+  const withDays = (days) => ({ ...base, kids: [{ name: 'سعد', age: '10', packageId: 'pk_all', days }] });
+  assert.equal(validateSubmission(v, withDays(['w1', 'w2', 'w3'])).ok, true);
+  assert.equal(validateSubmission(v, withDays([])).errors['kid0.days'], 'اختر أيامك');
 });
 
 test('اليومي بلا سعر ما يُعرض', () => {
