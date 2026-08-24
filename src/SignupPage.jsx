@@ -3,10 +3,10 @@
  * وما تعرف شيئًا عن بقية البيانات — تستقبل فقط.
  */
 import React, { useState, useEffect } from 'react';
-import { Check, AlertTriangle, Plus, X, Copy } from 'lucide-react';
+import { Check, AlertTriangle, Plus, X, Copy, Upload } from 'lucide-react';
 import { api } from './cloud.js';
 import { isValidPhone } from './people.js';
-import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, daysAllowed } from './signup.js';
+import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, daysAllowed, RECEIPT_TYPES, RECEIPT_MAX } from './signup.js';
 
 const input = 'w-full border border-slate-200 rounded-xl px-3.5 py-3 text-[15px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent';
 const inputBad = input.replace('border-slate-200', 'border-red-300');
@@ -70,6 +70,47 @@ function FieldInput({ field, value, onChange, bad }) {
   );
 }
 
+/**
+ * صور الجوال تجي بأحجام ضخمة، فنصغّرها في المتصفح قبل الإرسال.
+ * الـ PDF يُرسل كما هو ما دام ضمن الحد.
+ */
+const readReceipt = (file) => new Promise((resolve, reject) => {
+  if (!RECEIPT_TYPES.includes(file.type)) { reject(new Error('نوع الملف مو مدعوم. أرسل صورة أو PDF.')); return; }
+  const asIs = () => {
+    const fr = new FileReader();
+    fr.onload = () => {
+      const data = String(fr.result || '');
+      if (data.length > RECEIPT_MAX * 1.4) reject(new Error('الملف كبير. جرّب صورة بدل الـPDF.'));
+      else resolve({ name: file.name, type: file.type, data });
+    };
+    fr.onerror = () => reject(new Error('ما قدرنا نقرأ الملف.'));
+    fr.readAsDataURL(file);
+  };
+  if (file.type === 'application/pdf') { asIs(); return; }
+
+  const fr = new FileReader();
+  fr.onerror = () => reject(new Error('ما قدرنا نقرأ الصورة.'));
+  fr.onload = () => {
+    const img = new Image();
+    img.onerror = () => reject(new Error('الصورة مو سليمة.'));
+    img.onload = () => {
+      const max = 1400;
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * scale);
+      c.height = Math.round(img.height * scale);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      let q = 0.75;
+      let data = c.toDataURL('image/jpeg', q);
+      while (data.length > RECEIPT_MAX && q > 0.35) { q -= 0.12; data = c.toDataURL('image/jpeg', q); }
+      if (data.length > RECEIPT_MAX * 1.4) { reject(new Error('الصورة كبيرة جدًا. جرّب صورة أوضح وأصغر.')); return; }
+      resolve({ name: file.name, type: 'image/jpeg', data });
+    };
+    img.src = String(fr.result || '');
+  };
+  fr.readAsDataURL(file);
+});
+
 export default function SignupPage({ token }) {
   const [view, setView] = useState(null);
   const [state, setState] = useState('loading'); // loading | closed | form | sending | done | error
@@ -78,12 +119,16 @@ export default function SignupPage({ token }) {
   const [accountId, setAccountId] = useState('');
   const [errors, setErrors] = useState({});
   const [result, setResult] = useState(null);
+  const [receipt, setReceipt] = useState(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     (async () => {
       const r = await api('signup_info', { token });
       if (r.status === 200 && r.body?.view) {
         setView(r.body.view);
+        // ما فيه أيام مفتوحة (أو باقات): التسجيل ما ينفع يستقر في مكان
+        if (r.body.view.blocked) { setState('blocked'); return; }
         // اليوم الوحيد يُختار تلقائيًا — ما فيه داعي نخليه يضغط
         const d = r.body.view.days;
         if (d.length === 1 && !r.body.view.usePackages) setKids([{ name: '', days: [d[0].id] }]);
@@ -96,6 +141,20 @@ export default function SignupPage({ token }) {
 
   if (state === 'loading') {
     return <Shell><div className="bg-white rounded-2xl p-10 text-center text-slate-400">جاري التحميل...</div></Shell>;
+  }
+
+  if (state === 'blocked') {
+    return (
+      <Shell>
+        <div className="bg-white rounded-2xl p-8 text-center">
+          <div className="text-4xl mb-3">⏳</div>
+          <div className="font-bold text-lg text-slate-800 mb-1">التسجيل مو متاح حاليًا</div>
+          <div className="text-sm text-slate-500">
+            {view?.programName ? `«${view.programName}» ` : ''}ما فتح للتسجيل بعد. تواصل مع الفريق.
+          </div>
+        </div>
+      </Shell>
+    );
   }
 
   if (state === 'closed') {
@@ -142,7 +201,7 @@ export default function SignupPage({ token }) {
             <Note tone="amber">
               حوّل <b>{fmt(totalDue(view, kids))} ر.س</b> على <b>{acc.name}</b>:
               <div className="font-mono text-[13px] mt-1.5 select-all" dir="ltr">{acc.transferInfo}</div>
-              <div className="mt-2 text-xs">وبعد التحويل أرسل صورة الإيصال للفريق.</div>
+              {!receipt && <div className="mt-2 text-xs">وبعد التحويل أرسل صورة الإيصال للفريق.</div>}
             </Note>
           ) : (
             <Note>المبلغ <b>{fmt(totalDue(view, kids))} ر.س</b> يُدفع عند الحضور.</Note>
@@ -159,7 +218,7 @@ export default function SignupPage({ token }) {
   const kidFields = fields.filter((f) => f.id !== 'name' && !isGuardianField(f));
   // شبكة أمان: أي خطأ ما لقى خانة يعرضها ما ينفع يختفي بصمت
   const shownKeys = new Set([
-    ...guardianFields.map((f) => f.id), 'accountId', 'kids', '_',
+    ...guardianFields.map((f) => f.id), 'accountId', 'kids', '_', 'receipt',
     ...kids.flatMap((_, i) => [`kid${i}.name`, `kid${i}.days`, `kid${i}.package`, ...kidFields.map((f) => `kid${i}.${f.id}`)]),
   ]);
   const orphanErrors = Object.entries(errors).filter(([k, v]) => v && !shownKeys.has(k));
@@ -172,7 +231,7 @@ export default function SignupPage({ token }) {
   };
 
   const submit = async () => {
-    const body = { token, answers, kids, accountId };
+    const body = { token, answers, kids, accountId, receipt };
     const check = validateSubmission(view, body);
     if (!check.ok) {
       setErrors(check.errors);
@@ -343,6 +402,49 @@ export default function SignupPage({ token }) {
             })}
           </div>
           {errors.accountId && <div className="text-red-500 text-xs mt-2">{errors.accountId}</div>}
+
+          {(() => {
+            const acc = view.accounts.find((a) => a.id === accountId);
+            if (!acc?.needsReceipt) return null;
+            return (
+              <div className="mt-4 pt-4 border-t border-slate-100" data-bad={errors.receipt ? '1' : undefined}>
+                <div className="font-semibold text-slate-700 text-sm mb-1">صورة الإيصال <span className="text-red-500">*</span></div>
+                <div className="text-xs text-slate-500 mb-3">
+                  بعد ما تحوّل، أرفق صورة الإيصال أو لقطة من التحويل. بدونها ما يكتمل التسجيل.
+                </div>
+                {receipt ? (
+                  <div className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-xl p-3">
+                    {receipt.type === 'application/pdf'
+                      ? <div className="w-14 h-14 rounded-lg bg-white border border-green-200 flex items-center justify-center text-xs text-slate-500 shrink-0">PDF</div>
+                      : <img src={receipt.data} alt="الإيصال" className="w-14 h-14 rounded-lg object-cover shrink-0" />}
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-semibold text-green-800">تم إرفاق الإيصال</div>
+                      <div className="text-[11px] text-slate-500 truncate">{receipt.name}</div>
+                    </div>
+                    <button type="button" className="text-slate-400 p-1 shrink-0" onClick={() => setReceipt(null)}><X size={18} /></button>
+                  </div>
+                ) : (
+                  <label className={`block text-center border border-dashed rounded-xl py-6 cursor-pointer ${errors.receipt ? 'border-red-300 bg-red-50' : 'border-slate-300'}`}>
+                    <Upload size={22} className="mx-auto text-slate-400 mb-2" />
+                    <span className="text-sm font-semibold text-brand-700">{busy ? 'جاري التجهيز...' : 'اختر صورة أو ملف'}</span>
+                    <span className="block text-[11px] text-slate-400 mt-1">صورة أو PDF</span>
+                    <input type="file" className="hidden" accept="image/*,application/pdf"
+                      onChange={async (e) => {
+                        const f = e.target.files?.[0];
+                        e.target.value = '';
+                        if (!f) return;
+                        setBusy(true);
+                        setErrors({ ...errors, receipt: null });
+                        try { setReceipt(await readReceipt(f)); }
+                        catch (err) { setErrors({ ...errors, receipt: err.message }); }
+                        finally { setBusy(false); }
+                      }} />
+                  </label>
+                )}
+                {errors.receipt && <div className="text-red-500 text-xs mt-2">{errors.receipt}</div>}
+              </div>
+            );
+          })()}
         </div>
       )}
 

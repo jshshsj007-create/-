@@ -14,7 +14,7 @@ import { makeToken as makeSignupToken } from './signup.js';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
-const APP_VERSION = 'v4.1 · الباقات';
+const APP_VERSION = 'v4.2 · الإيصالات';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -202,7 +202,7 @@ export function migrate(loaded) {
   for (const f of defaultSignupFields()) {
     if (LOCKED_FIELDS.includes(f.id) && !d.signupFields.some((x) => x.id === f.id)) d.signupFields.push(f);
   }
-  d.faidAccounts = d.faidAccounts.map((a) => ({ transferInfo: '', publicName: '', ...a }));
+  d.faidAccounts = d.faidAccounts.map((a) => ({ transferInfo: '', publicName: '', needsReceipt: false, ...a }));
   return d;
 }
 
@@ -2174,6 +2174,24 @@ export default function App() {
                     </div>
                   </div>
 
+                  {s.enabled && (() => {
+                    // نفس الفحص اللي يوقف الرابط، معروضًا لك قبل ما ترسله لأحد
+                    const noDays = (program.weeks || []).length > 0 && !(s.openWeeks || []).length;
+                    const noPkgs = isGrouped && s.mode === 'packages' && !(s.packages || []).length;
+                    if (!noDays && !noPkgs) return null;
+                    return (
+                      <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-start gap-2">
+                        <AlertTriangle size={16} className="shrink-0 mt-0.5 text-amber-600" />
+                        <span className="text-sm text-amber-900">
+                          <b>الرابط ما راح يقبل تسجيلات.</b>{' '}
+                          {noDays
+                            ? 'ما اخترت ولا يوم متاح للتسجيل تحت. اختر الأيام اللي تبي الأهالي يسجّلون فيها.'
+                            : 'ما أضفت ولا باقة. أضف باقة وحدة على الأقل، أو حوّل التسعير لـ«سعر لكل يوم».'}
+                        </span>
+                      </div>
+                    );
+                  })()}
+
                   {s.enabled && (
                     <>
                       <div className={cardCls}>
@@ -2284,7 +2302,7 @@ export default function App() {
                                     )}
                                   </span>
                                   <span className="text-xs text-slate-400">
-                                    {a.transferInfo ? 'فيه تفاصيل تحويل' : 'بلا تفاصيل — يُدفع عند الحضور'}
+                                    {a.needsReceipt ? 'يطلب إيصال' : a.transferInfo ? 'فيه تفاصيل تحويل' : 'بلا تفاصيل — يُدفع عند الحضور'}
                                   </span>
                                 </button>
                               );
@@ -2337,10 +2355,18 @@ export default function App() {
                                   {where} · {fmt(part.amount)} ر.س · {(data.faidAccounts.find((a) => a.id === part.accountId) || {}).name || 'بلا حساب'}
                                 </div>
                               </div>
-                              <button className="shrink-0 bg-green-600 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1"
-                                onClick={() => confirmPending(part.id, weekId)}>
-                                <Check size={14} /> تأكيد
-                              </button>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {part.receipt && (
+                                  <button className="bg-white border border-slate-200 text-slate-600 text-xs font-semibold px-2.5 py-2 rounded-lg flex items-center gap-1"
+                                    onClick={() => { setForm({ receipt: part.receipt, who: part.name }); setModal('viewReceipt'); }}>
+                                    <FileText size={14} /> الإيصال
+                                  </button>
+                                )}
+                                <button className="bg-green-600 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1"
+                                  onClick={() => confirmPending(part.id, weekId)}>
+                                  <Check size={14} /> تأكيد
+                                </button>
+                              </div>
                             </div>
                           </div>
                         ))}
@@ -2579,7 +2605,7 @@ export default function App() {
                   <div className="text-[11px] text-slate-400 mt-1">وارد {fmt(a.revenue)} · صادر {fmt(a.expenses)}</div>
                   {isAdmin && (
                     <button className="text-[11px] text-brand-600 mt-2 block"
-                      onClick={() => { setForm({ id: a.id, transferInfo: a.transferInfo || '', publicName: a.publicName || '', name: a.name }); setModal('transferInfo'); }}>
+                      onClick={() => { setForm({ id: a.id, transferInfo: a.transferInfo || '', publicName: a.publicName || '', needsReceipt: !!a.needsReceipt, name: a.name }); setModal('transferInfo'); }}>
                       {a.transferInfo ? 'تفاصيل التحويل ✓' : '+ تفاصيل التحويل'}
                     </button>
                   )}
@@ -3812,16 +3838,46 @@ export default function App() {
               onChange={(e) => setForm({ ...form, transferInfo: e.target.value })}
               placeholder="SA00 0000 0000 0000 0000 0000" />
           </Field>
+          <label className="flex items-start gap-2 mb-4 text-sm text-slate-700">
+            <input type="checkbox" className="mt-1" checked={!!form.needsReceipt}
+              onChange={(e) => setForm({ ...form, needsReceipt: e.target.checked })} />
+            <span>
+              يطلب إيصال
+              <span className="block text-xs text-slate-400 mt-0.5">
+                ما يكمل التسجيل إلا لو أرفق صورة التحويل. علّمها للراجحي و STC، واتركها للكاش.
+              </span>
+            </span>
+          </label>
           <div className="flex gap-2 mt-2">
             <button className={btnPrimary + ' flex-1'}
               onClick={() => {
                 save({ ...data, faidAccounts: data.faidAccounts.map((a) => (a.id === form.id ? {
                   ...a, transferInfo: (form.transferInfo || '').trim(), publicName: (form.publicName || '').trim(),
+                  needsReceipt: !!form.needsReceipt,
                 } : a)) });
                 closeModal();
               }}>حفظ</button>
             <button className={btnGhost} onClick={closeModal}>إلغاء</button>
           </div>
+        </Modal>
+      )}
+
+      {modal === 'viewReceipt' && form.receipt && (
+        <Modal title={`إيصال ${form.who || ''}`} onClose={closeModal} wide>
+          {form.receipt.type === 'application/pdf' ? (
+            <div className="text-center py-6">
+              <FileText size={36} className="mx-auto text-slate-300 mb-3" />
+              <div className="text-sm text-slate-500 mb-4">{form.receipt.name}</div>
+              <a className={btnPrimary + ' w-full'} href={form.receipt.data} target="_blank" rel="noreferrer">فتح الملف</a>
+            </div>
+          ) : (
+            <>
+              <img src={form.receipt.data} alt="الإيصال" className="w-full rounded-xl border border-slate-100" />
+              <a className={btnGhost + ' w-full mt-3 block text-center'} href={form.receipt.data} target="_blank" rel="noreferrer">
+                فتحها بحجم كامل
+              </a>
+            </>
+          )}
         </Modal>
       )}
 

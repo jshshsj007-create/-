@@ -48,11 +48,22 @@ export const publicView = (data, program) => {
     dayCount: Math.min(Number(p.dayCount || 0), days.length),
   }));
 
+  /**
+   * البرنامج اللي له أيام ولا يوم منها مفتوح ما ينفع يستقبل تسجيلًا: المشترك
+   * ينزل بلا أيام فيختفي من كل قوائم الحضور. نقفل الرابط بدل ما نقبل تسجيلًا
+   * يضيع، ونقول لصاحب التطبيق السبب.
+   */
+  const hasWeeks = (program.weeks || []).length > 0;
+  const blocked = hasWeeks && days.length === 0 ? 'no_days'
+    : usePackages && packages.length === 0 ? 'no_packages'
+    : '';
+
   return {
     programId: program.id,
     programName: program.name,
     type: program.type || 'منفصل',
     price: Number(s.price || 0),
+    blocked,
     usePackages,
     packages,
     // المجمّع يختار ولي الأمر أيامه؛ المنفصل يختار أي أسابيع يبي
@@ -64,6 +75,8 @@ export const publicView = (data, program) => {
         // اسم يفهمه ولي الأمر؛ اسم الحساب عندك يبقى لك
         name: (a.publicName || '').trim() || a.name,
         transferInfo: a.transferInfo || '',
+        // التحويل يحتاج إثباتًا؛ الكاش يُدفع عند الحضور فما فيه إيصال
+        needsReceipt: !!a.needsReceipt,
       })),
     fields: fieldsFor(data, program),
   };
@@ -88,6 +101,9 @@ export const isGuardianField = (f) => GUARDIAN_FIELDS.includes(f.id);
 export const validateSubmission = (view, body) => {
   const errors = {};
   const kids = Array.isArray(body?.kids) ? body.kids : [];
+
+  // ما ينفع نقبل تسجيلًا ما له مكان يستقر فيه
+  if (view.blocked) return { ok: false, errors: { _: 'التسجيل مو متاح حاليًا في هذا البرنامج.' } };
 
   for (const f of view.fields) {
     if (!isGuardianField(f)) continue;
@@ -123,10 +139,25 @@ export const validateSubmission = (view, body) => {
     }
   });
 
-  if (view.accounts.length && !view.accounts.some((a) => a.id === body?.accountId)) {
+  const acc = view.accounts.find((a) => a.id === body?.accountId);
+  if (view.accounts.length && !acc) {
     errors.accountId = 'اختر طريقة الدفع';
+  } else if (acc?.needsReceipt && !isReceipt(body?.receipt)) {
+    errors.receipt = 'أرفق صورة الإيصال أو المستند';
   }
   return { ok: Object.keys(errors).length === 0, errors };
+};
+
+/** أنواع الإيصال المقبولة وحجمه الأقصى بعد الضغط. */
+export const RECEIPT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+export const RECEIPT_MAX = 900 * 1024;
+
+/** إيصال سليم: نوع مسموح وحجم معقول، ومخزّن كنص data URL. */
+export const isReceipt = (r) => {
+  if (!r || typeof r.data !== 'string') return false;
+  if (!RECEIPT_TYPES.includes(r.type)) return false;
+  if (!r.data.startsWith(`data:${r.type};base64,`)) return false;
+  return r.data.length > 64 && r.data.length <= RECEIPT_MAX * 1.4;
 };
 
 /** المبلغ المستحق: سعر الاشتراك × عدد الأيام المختارة (أو مرة وحدة لو ما فيه أيام). */
@@ -178,6 +209,8 @@ export const applySubmission = (data, program, view, body, { newId, now = Date.n
       source: 'link',
       submittedAt: now,
       ...(view.usePackages && packageOf(view, kid) ? { packageName: packageOf(view, kid).name } : {}),
+      // الإيصال يُحفظ مع أول ابن فقط — تحويل واحد للطلب كله
+      ...(i === 0 && isReceipt(body.receipt) ? { receipt: body.receipt } : {}),
       ...(Object.keys({ ...extras, ...kidExtras }).length ? { answers: { ...extras, ...kidExtras } } : {}),
       ...(grouped ? { days: kid.days || [] } : {}),
     };

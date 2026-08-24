@@ -132,6 +132,7 @@ export default async (req) => {
     if (!program) return json({ error: 'closed' }, 404);
 
     const view = publicView(doc.data, program);
+    if (view.blocked) return json({ error: 'blocked' }, 409);
     // نتحقق هنا من جديد: ما يجي من الشبكة لا يُوثق به مهما فحصه المتصفح
     const { ok, errors } = validateSubmission(view, body);
     if (!ok) return json({ error: 'invalid', errors }, 400);

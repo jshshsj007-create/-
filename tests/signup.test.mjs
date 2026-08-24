@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import {
   makeToken, programByToken, publicView, validateSubmission,
-  dueFor, totalDue, applySubmission, rateLimited, daysAllowed,
+  dueFor, totalDue, applySubmission, rateLimited, daysAllowed, isReceipt, RECEIPT_MAX,
 } from '../src/signup.js';
 import { studentsOf } from '../src/people.js';
 
@@ -390,6 +390,77 @@ test('أجوبة الأسئلة الخاصة تُحفظ مع التسجيل', ()
     ...goodBody, answers: { ...goodBody.answers, transport: 'نعم' },
   }, { newId, now: 1000 });
   assert.equal(r.data.programs[0].weeks[0].participants.find((p) => p.name === 'سعد').answers.transport, 'نعم');
+});
+
+/* ------------------------- الأيام المقفلة كليًا ------------------------- */
+
+test('برنامج له أيام وما فُتح منها شي: الرابط ما يقبل تسجيلًا يضيع', () => {
+  // كان المشترك ينزل بلا أيام فيختفي من كل قوائم الحضور
+  const d = baseData();
+  d.programs[0].signup.openWeeks = [];
+  const v = publicView(d, d.programs[0]);
+  assert.equal(v.blocked, 'no_days');
+  const r = validateSubmission(v, { ...goodBody, kids: [{ name: 'سعد', age: '10' }] });
+  assert.equal(r.ok, false);
+  assert.match(r.errors._, /مو متاح/);
+});
+
+test('باقات بلا ولا باقة: مقفول كذلك', () => {
+  const d = baseData();
+  d.programs[0].type = 'مجمع';
+  d.programs[0].signup.mode = 'packages';
+  d.programs[0].signup.packages = [];
+  assert.equal(publicView(d, d.programs[0]).blocked, 'no_packages');
+});
+
+test('البرنامج اللي ما له أيام أصلًا يبقى مفتوحًا', () => {
+  const d = baseData();
+  d.programs[0].weeks = [];
+  d.programs[0].signup.openWeeks = [];
+  assert.equal(publicView(d, d.programs[0]).blocked, '');
+});
+
+/* -------------------------------- الإيصال -------------------------------- */
+
+const img = (n = 200) => ({ name: 'r.jpg', type: 'image/jpeg', data: 'data:image/jpeg;base64,' + 'A'.repeat(n) });
+
+test('الحساب اللي يطلب إيصالًا ما يمر بدونه', () => {
+  const d = baseData();
+  d.faidAccounts[0].needsReceipt = true;   // الراجحي
+  const v = publicView(d, d.programs[0]);
+  assert.equal(v.accounts[0].needsReceipt, true);
+  assert.equal(validateSubmission(v, goodBody).errors.receipt, 'أرفق صورة الإيصال أو المستند');
+  assert.equal(validateSubmission(v, { ...goodBody, receipt: img() }).ok, true);
+});
+
+test('الكاش ما يطلب إيصالًا', () => {
+  const d = baseData();
+  d.faidAccounts[0].needsReceipt = true;
+  const v = publicView(d, d.programs[0]);
+  assert.equal(validateSubmission(v, { ...goodBody, accountId: 'cash' }).ok, true, 'يمر بلا إيصال');
+});
+
+test('الإيصال الملفّق يُرفض', () => {
+  assert.equal(isReceipt(img()), true);
+  assert.equal(isReceipt(null), false);
+  assert.equal(isReceipt({ type: 'text/html', data: 'data:text/html;base64,AAAA' }), false, 'نوع مرفوض');
+  assert.equal(isReceipt({ type: 'image/jpeg', data: '<script>' }), false, 'مو data URL');
+  assert.equal(isReceipt({ type: 'image/jpeg', data: 'data:image/png;base64,' + 'A'.repeat(200) }), false, 'النوع ما يطابق المحتوى');
+  assert.equal(isReceipt({ type: 'image/jpeg', data: 'data:image/jpeg;base64,AA' }), false, 'فاضي');
+  assert.equal(isReceipt({ type: 'image/jpeg', data: 'data:image/jpeg;base64,' + 'A'.repeat(RECEIPT_MAX * 2) }), false, 'كبير');
+});
+
+test('الإيصال ينحفظ مع التسجيل مرة وحدة للطلب كله', () => {
+  const d = baseData();
+  d.faidAccounts[0].needsReceipt = true;
+  const v = publicView(d, d.programs[0]);
+  const r = applySubmission(d, d.programs[0], v, {
+    ...goodBody, receipt: img(),
+    kids: [{ name: 'سعد', age: '10', days: ['w1'] }, { name: 'عمر', age: '8', days: ['w1'] }],
+  }, { newId, now: 1000 });
+  const parts = r.data.programs[0].weeks[0].participants.filter((p) => p.pending);
+  assert.equal(parts.length, 2);
+  assert.equal(parts.filter((p) => p.receipt).length, 1, 'تحويل واحد = إيصال واحد');
 });
 
 /* ------------------------------ الحماية ------------------------------ */
