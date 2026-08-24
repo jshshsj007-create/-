@@ -53,8 +53,9 @@ export const publicView = (data, program) => {
    * ينزل بلا أيام فيختفي من كل قوائم الحضور. نقفل الرابط بدل ما نقبل تسجيلًا
    * يضيع، ونقول لصاحب التطبيق السبب.
    */
-  const hasWeeks = (program.weeks || []).length > 0;
-  const blocked = hasWeeks && days.length === 0 ? 'no_days'
+  // ما فيه يوم مفتوح = ما فيه مكان يستقر فيه التسجيل، سواء البرنامج بلا أيام
+  // أصلًا أو أيامه كلها مقفلة. الحالتان تنتهيان بمشترك بلا أيام.
+  const blocked = days.length === 0 ? 'no_days'
     : usePackages && packages.length === 0 ? 'no_packages'
     : '';
 

@@ -14,7 +14,7 @@ import { makeToken as makeSignupToken } from './signup.js';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
-const APP_VERSION = 'v4.2 · الإيصالات';
+const APP_VERSION = 'v4.3 · وصول التسجيلات';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -1910,6 +1910,36 @@ export default function App() {
                 ? <MiniStat label="رصيد فيض" value={fmt(balance)} icon={Wallet} tone={balance >= 0 ? 'green' : 'red'} />
                 : <MiniStat label="أيام مفتوحة" value={termPrograms.flatMap((p) => p.weeks).filter((w) => w.status === 'مفتوح').length} icon={Calendar} />}
             </div>
+            {/* تسجيلات الرابط ما تنفع تنتظر بصمت داخل برنامج ما فتحته */}
+            {canSignup && (() => {
+              const waiting = termPrograms
+                .map((p) => ({ p, n: signupPending(p).length }))
+                .filter((x) => x.n > 0);
+              if (!waiting.length) return null;
+              const total = waiting.reduce((s, x) => s + x.n, 0);
+              return (
+                <div className="mb-5">
+                  <div className="text-sm font-bold text-slate-700 mb-2">
+                    تسجيلات جديدة تنتظر تأكيدك ({total})
+                  </div>
+                  <div className="space-y-2.5">
+                    {waiting.map(({ p, n }) => (
+                      <button key={p.id}
+                        onClick={() => { setSelectedProgramId(p.id); setProgramTab('signup'); goto('programDetail'); }}
+                        className="w-full bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center gap-3 text-right">
+                        <span className="w-11 h-11 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0"><Send size={20} /></span>
+                        <span className="flex-1 min-w-0">
+                          <span className="block font-bold text-slate-800">{p.name}</span>
+                          <span className="block text-xs text-amber-700 mt-0.5">{n} تسجيل من الرابط</span>
+                        </span>
+                        <ChevronLeft size={18} className="text-amber-300 shrink-0" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
             {limitedScope && myWeeks.length > 0 && (
               <div className="mb-5">
                 <div className="text-sm font-bold text-slate-700 mb-2">أيامك</div>
@@ -2176,7 +2206,7 @@ export default function App() {
 
                   {s.enabled && (() => {
                     // نفس الفحص اللي يوقف الرابط، معروضًا لك قبل ما ترسله لأحد
-                    const noDays = (program.weeks || []).length > 0 && !(s.openWeeks || []).length;
+                    const noDays = !(s.openWeeks || []).length;
                     const noPkgs = isGrouped && s.mode === 'packages' && !(s.packages || []).length;
                     if (!noDays && !noPkgs) return null;
                     return (
@@ -2185,7 +2215,9 @@ export default function App() {
                         <span className="text-sm text-amber-900">
                           <b>الرابط ما راح يقبل تسجيلات.</b>{' '}
                           {noDays
-                            ? 'ما اخترت ولا يوم متاح للتسجيل تحت. اختر الأيام اللي تبي الأهالي يسجّلون فيها.'
+                            ? ((program.weeks || []).length
+                              ? 'ما اخترت ولا يوم متاح للتسجيل تحت. اختر الأيام اللي تبي الأهالي يسجّلون فيها.'
+                              : 'البرنامج ما فيه أيام بعد. أضف يومًا واحدًا على الأقل من تبويب الأيام، وبعدها اختره هنا.')
                             : 'ما أضفت ولا باقة. أضف باقة وحدة على الأقل، أو حوّل التسعير لـ«سعر لكل يوم».'}
                         </span>
                       </div>
@@ -2904,6 +2936,7 @@ export default function App() {
               { id: 'users', label: 'المستخدمون والصلاحيات' },
               { id: 'terms', label: 'السنوات والفصول' },
               { id: 'signup', label: 'نموذج التسجيل' },
+              { id: 'pay', label: 'طرق الدفع' },
               { id: 'backup', label: 'النسخ الاحتياطي' },
             ]} />
 
@@ -3043,6 +3076,45 @@ export default function App() {
                 <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-xs text-slate-500">
                   رابط كل برنامج تفتحه من داخله: <b>البرامج ← افتح البرنامج ← تبويب «رابط التسجيل»</b>.
                   وهناك تحدد سعره وأيامه وطرق الدفع، وتقدر تضيف أسئلة تخصّه وحده.
+                </div>
+              </div>
+            )}
+
+            {settingsTab === 'pay' && (
+              <div className="space-y-4">
+                <div className="text-sm text-slate-500">
+                  هذي حساباتك. اللي تعطيه تفاصيل تحويل يقدر يظهر لولي الأمر في روابط التسجيل،
+                  وتقدر تعدّله وقت ما تبي.
+                </div>
+                {data.faidAccounts.map((a) => (
+                  <div key={a.id} className={cardCls}>
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="min-w-0">
+                        <div className="font-bold text-slate-800">{a.name}</div>
+                        {a.publicName && a.publicName !== a.name && (
+                          <div className="text-xs text-slate-400 mt-0.5">ولي الأمر يشوفه «{a.publicName}»</div>
+                        )}
+                      </div>
+                      {a.needsReceipt && <Badge tone="amber">يطلب إيصال</Badge>}
+                    </div>
+                    <div className="bg-slate-50 rounded-xl px-3 py-2.5 mb-3">
+                      <div className="text-[11px] text-slate-400 mb-0.5">الآيبان أو رقم الجوال</div>
+                      <div className="text-sm text-slate-800 break-all font-mono" dir="ltr">
+                        {a.transferInfo || '—'}
+                      </div>
+                    </div>
+                    <button className={btnGhost + ' w-full border border-slate-200'}
+                      onClick={() => { setForm({ id: a.id, transferInfo: a.transferInfo || '', publicName: a.publicName || '', needsReceipt: !!a.needsReceipt, name: a.name }); setModal('transferInfo'); }}>
+                      <Pencil size={15} /> تعديل
+                    </button>
+                  </div>
+                ))}
+                <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-xs text-slate-500 flex items-start gap-2">
+                  <ShieldCheck size={15} className="shrink-0 mt-0.5 text-slate-400" />
+                  <span>
+                    تفاصيل التحويل تظهر لولي الأمر فقط لما تختار الحساب في «طرق الدفع المعروضة»
+                    داخل رابط البرنامج. الحساب اللي ما تختاره ما تخرج بياناته أبدًا.
+                  </span>
                 </div>
               </div>
             )}

@@ -413,11 +413,22 @@ test('باقات بلا ولا باقة: مقفول كذلك', () => {
   assert.equal(publicView(d, d.programs[0]).blocked, 'no_packages');
 });
 
-test('البرنامج اللي ما له أيام أصلًا يبقى مفتوحًا', () => {
+test('البرنامج اللي ما له أيام أصلًا مقفول كذلك', () => {
+  // بلا أيام ما فيه مكان يستقر فيه التسجيل، فينتهي بمشترك يختفي من الحضور
   const d = baseData();
   d.programs[0].weeks = [];
   d.programs[0].signup.openWeeks = [];
-  assert.equal(publicView(d, d.programs[0]).blocked, '');
+  const v = publicView(d, d.programs[0]);
+  assert.equal(v.blocked, 'no_days');
+  assert.equal(validateSubmission(v, goodBody).ok, false);
+});
+
+test('المجمّع بلا أيام مقفول كذلك', () => {
+  const d = baseData();
+  d.programs[0].type = 'مجمع';
+  d.programs[0].weeks = [];
+  d.programs[0].signup.openWeeks = [];
+  assert.equal(publicView(d, d.programs[0]).blocked, 'no_days');
 });
 
 /* -------------------------------- الإيصال -------------------------------- */
