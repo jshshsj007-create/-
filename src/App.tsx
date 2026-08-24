@@ -8,14 +8,14 @@ import {
 import { api, clone, merge3, readSession, writeSession, clearSession, readPending, writePending, clearPending } from './cloud.js';
 import {
   normalizePhone, isValidPhone, formatPhone, normalizeName, sameName,
-  studentsOf, upsertRegistration, findDuplicates, mergeGuardians,
+  studentsOf, upsertRegistration, findDuplicates, mergeGuardians, mergeStudents,
 } from './people.js';
 import { makeToken as makeSignupToken } from './signup.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
-const APP_VERSION = 'v4.5 · الاستثمار';
+const APP_VERSION = 'v4.6 · توحيد المشتركين';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -1551,6 +1551,19 @@ export default function App() {
   };
 
   /** الدمج ينقل الأبناء، والتسجيلات القديمة تتبع الطالب الباقي. */
+  /** دمج ابنين تحت نفس ولي الأمر: تسجيلات المحذوف تتبع الباقي. */
+  const doMergeStudents = (keepId, dropId) => {
+    const { students, remap } = mergeStudents(data, keepId, dropId);
+    const fixPart = (part) => (remap[part.studentId] ? { ...part, studentId: remap[part.studentId] } : part);
+    const programs = data.programs.map((p) => ({
+      ...p,
+      participants: (p.participants || []).map(fixPart),
+      weeks: (p.weeks || []).map((w) => ({ ...w, participants: (w.participants || []).map(fixPart) })),
+    }));
+    save({ ...data, students, programs });
+    closeModal();
+  };
+
   const doMerge = (keepId, dropId) => {
     const { guardians, students, remap } = mergeGuardians(data, keepId, dropId);
     const fixPart = (part) => (remap[part.studentId] ? { ...part, studentId: remap[part.studentId] } : part);
@@ -4240,39 +4253,60 @@ export default function App() {
         <Modal title="تكرار محتمل" onClose={closeModal} wide>
           <div className="text-sm text-slate-500 mb-4">
             التطبيق ما يدمج من نفسه — هذولا اشتباهات، وأنت اللي تقرّر.
-            الدمج ينقل الأبناء ويوحّد المكرر منهم، وما يضيع شي.
+            الدمج يوحّدهم في سجل واحد، والتسجيلات والمبالغ تنتقل معه — ما يضيع شي.
           </div>
           {duplicates.length === 0 ? (
             <div className={emptyCls}>ما فيه تكرار.</div>
           ) : (
             <div className="space-y-3">
-              {duplicates.map(({ a, b, reason }, i) => (
-                <div key={i} className="border border-slate-200 rounded-2xl p-4">
-                  <Badge tone="amber">{reason}</Badge>
-                  <div className="grid grid-cols-2 gap-2 mt-3">
-                    {[a, b].map((g) => {
-                      const kids = studentsOf(data.students, g.id);
-                      return (
-                        <div key={g.id} className="bg-slate-50 rounded-xl p-3">
-                          <div className="font-semibold text-sm text-slate-800 truncate">{g.name || 'بلا اسم'}</div>
-                          <div className="text-[11px] text-slate-400" dir="ltr">{formatPhone(g.phone)}</div>
-                          <div className="text-[11px] text-slate-500 mt-1">{kids.map((k) => k.name).join(' · ') || 'بلا أبناء'}</div>
+              {duplicates.map((d, i) => {
+                const { a, b, reason } = d;
+                const isStudent = d.kind === 'student';
+                const merge = isStudent ? doMergeStudents : doMerge;
+                const label = (x) => x.name || (isStudent ? 'بلا اسم' : 'بلا اسم');
+                return (
+                  <div key={i} className="border border-slate-200 rounded-2xl p-4">
+                    <Badge tone="amber">{reason}</Badge>
+                    {isStudent && (
+                      <div className="text-xs text-slate-500 mt-2">ولي الأمر: {d.guardian?.name || 'بلا اسم'}</div>
+                    )}
+                    <div className="grid grid-cols-2 gap-2 mt-3">
+                      {[a, b].map((x) => (
+                        <div key={x.id} className="bg-slate-50 rounded-xl p-3">
+                          <div className="font-semibold text-sm text-slate-800 truncate">{label(x)}</div>
+                          {isStudent ? (
+                            <>
+                              <div className="text-[11px] text-slate-400 mt-0.5">
+                                {[x.age && `${x.age} سنة`, x.grade, x.school].filter(Boolean).join(' · ') || 'بلا تفاصيل'}
+                              </div>
+                              <div className="text-[11px] text-slate-500 mt-1">{historyOf(x.id).length} تسجيل</div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="text-[11px] text-slate-400" dir="ltr">{formatPhone(x.phone)}</div>
+                              <div className="text-[11px] text-slate-500 mt-1">
+                                {studentsOf(data.students, x.id).map((k) => k.name).join(' · ') || 'بلا أبناء'}
+                              </div>
+                            </>
+                          )}
                         </div>
-                      );
-                    })}
+                      ))}
+                    </div>
+                    <div className="flex gap-2 mt-3">
+                      {[[a, b], [b, a]].map(([keep, drop]) => (
+                        <button key={keep.id} className={btnPrimary + ' flex-1 text-xs'}
+                          onClick={() => askConfirm(
+                            isStudent
+                              ? `نخلّيهم واحدًا باسم «${label(keep)}»؟ تسجيلات «${label(drop)}» تنتقل له.`
+                              : `ندمجهم ونخلّي «${label(keep)}»؟`,
+                            () => merge(keep.id, drop.id), 'نعم، ادمج')}>
+                          خلّه «{label(keep)}»
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <div className="flex gap-2 mt-3">
-                    <button className={btnPrimary + ' flex-1 text-xs'}
-                      onClick={() => askConfirm(`ندمجهم ونخلّي «${a.name || 'الأول'}»؟`, () => doMerge(a.id, b.id), 'نعم، ادمج')}>
-                      ادمج في «{a.name || 'الأول'}»
-                    </button>
-                    <button className={btnPrimary + ' flex-1 text-xs'}
-                      onClick={() => askConfirm(`ندمجهم ونخلّي «${b.name || 'الثاني'}»؟`, () => doMerge(b.id, a.id), 'نعم، ادمج')}>
-                      ادمج في «{b.name || 'الثاني'}»
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
           <button className={btnGhost + ' w-full mt-4'} onClick={closeModal}>إغلاق</button>

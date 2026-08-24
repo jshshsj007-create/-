@@ -55,13 +55,24 @@ const nameTokens = (raw) => normalizeName(raw)
 /** الاسم الأول — نستخدمه لما يكتب ولي الأمر اسم ابنه مختصرًا مرة وكاملًا مرة. */
 export const firstName = (raw) => nameTokens(raw)[0] || '';
 
-/** هل الاسمان لنفس الشخص على الأرجح؟ أحدهما بداية الآخر يكفي («سعد» و«سعد محمد»). */
+/**
+ * هل الاسمان لنفس الشخص على الأرجح؟
+ *
+ * الاسم العربي يُكتب ناقصًا بأي موضع: «سعد» و«محمد سعد» لنفس الولد، وكذلك
+ * «محمد» و«محمد سعد». فنقبل الأقصر لو كانت كلماته موجودة في الأطول بنفس
+ * ترتيبها — مو بدايته وحدها. والترتيب مهم: «سعد محمد» غير «محمد سعد».
+ */
 export const sameName = (a, b) => {
   const x = nameTokens(a);
   const y = nameTokens(b);
   if (!x.length || !y.length) return false;
   const [short, long] = x.length <= y.length ? [x, y] : [y, x];
-  return short.every((t, i) => long[i] === t);
+  let i = 0;
+  for (const t of long) {
+    if (t === short[i]) i++;
+    if (i === short.length) return true;
+  }
+  return false;
 };
 
 /* ------------------------------ البحث والربط ------------------------------ */
@@ -154,23 +165,58 @@ export const upsertRegistration = (db, { guardian, kids }, now = Date.now()) => 
 export const findDuplicates = (guardians, students) => {
   const list = guardians || [];
   const out = [];
+
+  // أول شي: ابنان تحت نفس ولي الأمر باسمين أحدهما ناقص — غالبًا هو نفسه،
+  // سُجّل مرة باسم مختصر ومرة كاملًا.
+  for (const g of list) {
+    const kids = studentsOf(students, g.id);
+    for (let i = 0; i < kids.length; i++) {
+      for (let j = i + 1; j < kids.length; j++) {
+        if (sameName(kids[i].name, kids[j].name)) {
+          out.push({ kind: 'student', guardian: g, a: kids[i], b: kids[j], reason: 'نفس ولي الأمر واسمان متطابقان' });
+        }
+      }
+    }
+  }
+
   for (let i = 0; i < list.length; i++) {
     for (let j = i + 1; j < list.length; j++) {
       const a = list[i];
       const b = list[j];
       if (normalizePhone(a.phone) && normalizePhone(a.phone) === normalizePhone(b.phone)) {
-        out.push({ a, b, reason: 'نفس رقم الجوال' });
+        out.push({ kind: 'guardian', a, b, reason: 'نفس رقم الجوال' });
         continue;
       }
       const kidsA = studentsOf(students, a.id);
       const kidsB = studentsOf(students, b.id);
       const shared = kidsA.find((x) => kidsB.some((y) => sameName(x.name, y.name)
         && (!x.school || !y.school || normalizeName(x.school) === normalizeName(y.school))));
-      if (shared) { out.push({ a, b, reason: `ابن بنفس الاسم: ${shared.name}` }); continue; }
-      if (a.name && b.name && sameName(a.name, b.name)) out.push({ a, b, reason: 'نفس الاسم' });
+      if (shared) { out.push({ kind: 'guardian', a, b, reason: `ابن بنفس الاسم: ${shared.name}` }); continue; }
+      if (a.name && b.name && sameName(a.name, b.name)) out.push({ kind: 'guardian', a, b, reason: 'نفس الاسم' });
     }
   }
   return out;
+};
+
+/**
+ * يدمج طالبًا في آخر تحت نفس ولي الأمر: المعلومة الناقصة تُكمَّل من الاثنين،
+ * والاسم الأطول يفوز. يرجّع القاعدة بعد الدمج + خريطة عشان تسجيلات المحذوف
+ * القديمة تتبع الباقي.
+ */
+export const mergeStudents = (db, keepId, dropId) => {
+  const students = [...(db.students || [])];
+  const keep = students.find((s) => s.id === keepId);
+  const drop = students.find((s) => s.id === dropId);
+  if (!keep || !drop || keepId === dropId) return { students: db.students, remap: {} };
+
+  const merged = { ...keep };
+  for (const k of ['age', 'grade', 'school', 'health']) if (!merged[k] && drop[k]) merged[k] = drop[k];
+  if (String(drop.name).trim().length > String(merged.name).trim().length) merged.name = String(drop.name).trim();
+
+  return {
+    students: students.filter((s) => s.id !== dropId).map((s) => (s.id === keepId ? merged : s)),
+    remap: { [dropId]: keepId },
+  };
 };
 
 /**

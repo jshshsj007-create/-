@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import {
   normalizePhone, isValidPhone, formatPhone, normalizeName, sameName, firstName,
-  findGuardianByPhone, studentsOf, findStudent, upsertRegistration, findDuplicates, mergeGuardians,
+  findGuardianByPhone, studentsOf, findStudent, upsertRegistration, findDuplicates, mergeGuardians, mergeStudents,
 } from '../src/people.js';
 
 let passed = 0;
@@ -56,6 +56,15 @@ test('الاسم المختصر يطابق الكامل، والمختلف لا'
   assert.equal(sameName('سعد', 'سعود'), false);
   assert.equal(sameName('سعد محمد', 'محمد سعد'), false);   // الترتيب مهم
   assert.equal(sameName('', 'سعد'), false);
+});
+
+test('الاسم الناقص يطابق الكامل مهما كان موضعه', () => {
+  // «سعد» و«محمد سعد» طلعوا سجلّين مختلفين، والاثنان لنفس الولد
+  assert.equal(sameName('سعد', 'محمد سعد'), true, 'الناقص في الآخر');
+  assert.equal(sameName('محمد', 'محمد سعد'), true, 'الناقص في الأول');
+  assert.equal(sameName('محمد القاسم', 'محمد فهد القاسم'), true, 'ناقص من الوسط');
+  assert.equal(sameName('سعد محمد', 'محمد سعد'), false, 'الترتيب يفرّق');
+  assert.equal(sameName('عمر', 'محمد سعد'), false);
 });
 
 test('الاسم الأول', () => {
@@ -160,6 +169,69 @@ test('أولياء أمور مختلفون فعلًا ما يظهرون كتكر
   const a = upsertRegistration(db0, { guardian: { name: 'محمد', phone: '0551111111' }, kids: [{ name: 'سعد', school: 'الرواد' }] });
   const b = upsertRegistration({ ...a, newId: db0.newId }, { guardian: { name: 'خالد', phone: '0552222222' }, kids: [{ name: 'عمر', school: 'التربية' }] });
   assert.deepEqual(findDuplicates(b.guardians, b.students), []);
+});
+
+/* ---------------- ابنان تحت نفس ولي الأمر وهما واحد ---------------- */
+
+test('سجّل «سعد» ثم «محمد سعد» بنفس الجوال → ابن واحد', () => {
+  const a = upsertRegistration(db0, {
+    guardian: { name: 'سعد', phone: '0557821586' }, kids: [{ name: 'سعد', age: 10 }],
+  });
+  const b = upsertRegistration({ ...a, newId: db0.newId }, {
+    guardian: { name: 'سعد', phone: '0557821586' }, kids: [{ name: 'محمد سعد', age: 10 }],
+  });
+  assert.equal(b.guardians.length, 1);
+  assert.equal(b.students.length, 1, 'ما ينضاف ابن ثاني');
+  assert.equal(b.students[0].name, 'محمد سعد', 'والاسم الكامل يفوز');
+});
+
+test('الأخوان الحقيقيان ما ينخلطان', () => {
+  const a = upsertRegistration(db0, {
+    guardian: { name: 'سعد', phone: '0557821586' }, kids: [{ name: 'محمد سعد' }, { name: 'عبدالله سعد' }],
+  });
+  assert.equal(a.students.length, 2, 'اسمان مختلفان = ابنان');
+});
+
+test('المكرر الموجود من قبل يظهر كاشتباه تحت نفس ولي الأمر', () => {
+  // البيانات القديمة اللي انسجّلت قبل الإصلاح
+  const db = {
+    guardians: [{ id: 'g1', name: 'سعد', phone: '557821586' }],
+    students: [
+      { id: 's1', guardianId: 'g1', name: 'سعد', age: 10 },
+      { id: 's2', guardianId: 'g1', name: 'محمد سعد', age: 10, school: 'الرواد' },
+    ],
+  };
+  const dups = findDuplicates(db.guardians, db.students);
+  assert.equal(dups.length, 1);
+  assert.equal(dups[0].kind, 'student');
+  assert.equal(dups[0].guardian.id, 'g1');
+});
+
+test('دمج الابنين يوحّدهما ويكمّل الناقص', () => {
+  const db = {
+    guardians: [{ id: 'g1', name: 'سعد', phone: '557821586' }],
+    students: [
+      { id: 's1', guardianId: 'g1', name: 'سعد', age: 10 },
+      { id: 's2', guardianId: 'g1', name: 'محمد سعد', age: '', school: 'الرواد', health: 'حساسية' },
+    ],
+  };
+  const m = mergeStudents(db, 's1', 's2');
+  assert.equal(m.students.length, 1);
+  const kid = m.students[0];
+  assert.equal(kid.id, 's1', 'الباقي هو اللي اخترته');
+  assert.equal(kid.name, 'محمد سعد', 'والاسم الأطول');
+  assert.equal(kid.age, 10, 'معلومة الأول باقية');
+  assert.equal(kid.school, 'الرواد', 'ومعلومة الثاني انضافت');
+  assert.equal(kid.health, 'حساسية');
+  assert.equal(m.remap.s2, 's1', 'وتسجيلاته القديمة تتبعه');
+  assert.deepEqual(findDuplicates(db.guardians, m.students), [], 'وما عاد فيه اشتباه');
+});
+
+test('دمج طالب في نفسه ما يغيّر شيئًا', () => {
+  const db = { students: [{ id: 's1', guardianId: 'g1', name: 'سعد' }] };
+  const m = mergeStudents(db, 's1', 's1');
+  assert.equal(m.students.length, 1);
+  assert.deepEqual(m.remap, {});
 });
 
 /* --------------------------------- الدمج --------------------------------- */
