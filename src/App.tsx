@@ -15,7 +15,7 @@ import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.j
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
-const APP_VERSION = 'v4.4 · التحديث التلقائي';
+const APP_VERSION = 'v4.5 · الاستثمار';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -681,7 +681,6 @@ export default function App() {
   const [programTab, setProgramTab] = useState('days');
   const [settingsTab, setSettingsTab] = useState('users');
   const [setupLevel, setSetupLevel] = useState('الكل');
-  const [clubTab, setClubTab] = useState('competitions');
   const [payFilter, setPayFilter] = useState('all');   // فلترة الطلاب حسب طريقة الدفع
   const [faidFilter, setFaidFilter] = useState('الكل'); // فلترة عمليات فيض حسب النوع
   const [faidTab, setFaidTab] = useState('txns');        // العمليات أو التحليل
@@ -872,16 +871,29 @@ export default function App() {
   const ledgerLocked = (isGrouped ? program?.status : week?.status) === 'مغلق';
 
   /* ------------------------------ حسابات فيض ------------------------------ */
+  /**
+   * التحويل للاستثمار حركة داخلية: الفلوس تطلع من الحساب فينقص رصيده، لكنها
+   * ما هي مصروفًا ولا إيرادًا — فما تدخل «إجمالي المصروفات» ولا التقارير،
+   * وإلا صار الادخار يبان كأنه صرف.
+   */
+  const isInvestmentMove = (a) => a.kind === 'investment';
+
   const accountStats = data.faidAccounts.map((acc) => {
-    let rev = 0, exp = 0;
+    let rev = 0, exp = 0, moved = 0;
     data.faidAdjustments.filter((a) => a.accountId === acc.id).forEach((a) => {
-      if (a.type === 'إيراد') rev += Number(a.amount || 0); else exp += Number(a.amount || 0);
+      const amt = Number(a.amount || 0);
+      if (isInvestmentMove(a)) { moved += a.type === 'إيراد' ? -amt : amt; return; }
+      if (a.type === 'إيراد') rev += amt; else exp += amt;
     });
-    return { ...acc, revenue: rev, expenses: exp, balance: rev - exp };
+    // `moved` موجب = طلع للاستثمار، وسالب = رجع منه
+    return { ...acc, revenue: rev, expenses: exp, invested: moved, balance: rev - exp - moved };
   });
   const totalRevenue = accountStats.reduce((s, a) => s + a.revenue, 0);
   const totalExpenses = accountStats.reduce((s, a) => s + a.expenses, 0);
-  const balance = totalRevenue - totalExpenses;
+  /** رصيد الفريق المتاح — ما يشمل المحوَّل للاستثمار، لأنه خرج من الحسابات. */
+  const balance = accountStats.reduce((s, a) => s + a.balance, 0);
+  /** رصيد الاستثمار: مجموع اللي دخله ناقص اللي رجع منه. */
+  const investmentBalance = accountStats.reduce((s, a) => s + a.invested, 0);
 
   // العمليات المقسّمة على أكثر من حساب تُعرض بسطر واحد، ورصيد كل حساب يبقى محسوبًا من العمليات الأصلية.
   const faidTransactions = (() => {
@@ -938,7 +950,9 @@ export default function App() {
   const patchLedger = (ref, updater) => save(withLedger(data, ref, updater));
 
   const addLedgerItem = (key) => {
-    if (!form.amount || !form.accountId) return;
+    // كان الزر ما يسوي شيئًا بصمت لو نسي يختار الحساب
+    if (!form.accountId) { setForm({ ...form, error: 'اختر الحساب' }); return; }
+    if (!(Number(form.amount) > 0)) { setForm({ ...form, error: 'اكتب المبلغ' }); return; }
     patchLedger(activeRef, (l) => ({ [key]: [...(l[key] || []), { id: uid(), accountId: form.accountId, amount: Number(form.amount), note: form.note || '' }] }));
     closeModal();
   };
@@ -1097,15 +1111,51 @@ export default function App() {
     const tags = { project: (form.project || '').trim(), payee: (form.payee || '').trim() };
     if (form.splitMode) {
       const rows = (form.splitRows || []).filter((r) => r.accountId && Number(r.amount) > 0);
-      if (!rows.length) return;
+      if (!rows.length) { setForm({ ...form, error: 'اكتب حسابًا ومبلغًا في سطر واحد على الأقل' }); return; }
       const batchId = uid();
       const txns = rows.map((r) => ({ id: uid(), batchId, accountId: r.accountId, date: form.date || '', type: form.type || 'إيراد', amount: Number(r.amount), note: form.note || '', ...tags }));
       save({ ...data, faidAdjustments: [...data.faidAdjustments, ...txns] });
       closeModal();
       return;
     }
-    if (!form.amount || !form.accountId) return;
+    // كان الزر ما يسوي شيئًا بصمت لو نسي يختار الحساب
+    if (!form.accountId) { setForm({ ...form, error: 'اختر الحساب' }); return; }
+    if (!(Number(form.amount) > 0)) { setForm({ ...form, error: 'اكتب المبلغ' }); return; }
     save({ ...data, faidAdjustments: [...data.faidAdjustments, { id: uid(), accountId: form.accountId, date: form.date || '', type: form.type || 'إيراد', amount: Number(form.amount), note: form.note || '', ...tags }] });
+    closeModal();
+  };
+
+  /**
+   * تحويل بين حساب والاستثمار. نسجّله كعملية على الحساب عشان رصيده ينقص
+   * (أو يزيد) طبيعيًا ويظهر في سجلّه، ومعلَّمة `investment` عشان ما تُحسب
+   * صرفًا ولا دخلًا في التقارير.
+   */
+  const moveInvestment = () => {
+    const amount = Number(form.amount || 0);
+    const dir = form.dir || 'in';
+    if (!(amount > 0)) { setForm({ ...form, error: 'اكتب المبلغ' }); return; }
+    if (!form.accountId) { setForm({ ...form, error: 'اختر الحساب' }); return; }
+
+    const acc = accountStats.find((a) => a.id === form.accountId);
+    if (dir === 'in' && amount > acc.balance) {
+      setForm({ ...form, error: `رصيد «${acc.name}» ${fmt(acc.balance)} ر.س فقط` });
+      return;
+    }
+    if (dir === 'out' && amount > investmentBalance) {
+      setForm({ ...form, error: `رصيد الاستثمار ${fmt(investmentBalance)} ر.س فقط` });
+      return;
+    }
+
+    save({
+      ...data,
+      faidAdjustments: [...data.faidAdjustments, {
+        id: uid(), accountId: form.accountId, date: form.date || '',
+        // «مصروف» على الحساب = طلعت منه للاستثمار، و«إيراد» = رجعت له
+        type: dir === 'in' ? 'مصروف' : 'إيراد',
+        amount, kind: 'investment',
+        note: (form.note || '').trim() || (dir === 'in' ? 'تحويل للاستثمار' : 'سحب من الاستثمار'),
+      }],
+    });
     closeModal();
   };
 
@@ -1315,7 +1365,7 @@ export default function App() {
     closeModal();
   };
   const removeTripItem = (key, itemId) => patchTrip({ [key]: (trip[key] || []).filter((x) => x.id !== itemId) });
-  const removeTrip = (tid) => { save({ ...data, trips: data.trips.filter((t) => t.id !== tid) }); goto('club'); };
+  const removeTrip = (tid) => { save({ ...data, trips: data.trips.filter((t) => t.id !== tid) }); goto('trips'); };
 
   /* --------------------------- رابط التسجيل --------------------------- */
 
@@ -1821,12 +1871,11 @@ export default function App() {
     );
   }
 
-  // «النادي» يجمع المسابقات والسفرات في قسم واحد مثل التصميم
-  const canClub = can('الإعداد (المسابقات)') || can('السفرات');
   const sections = [
     { id: 'programs', label: 'البرامج', desc: 'عرض وإدارة البرامج', icon: BookOpen, show: canAttend },
     { id: 'faid', label: 'فيض', desc: 'حسابات فيض والأرصدة', icon: Wallet, show: can('فيض - الإيرادات والمصروفات') },
-    { id: 'club', label: 'النادي', desc: 'المسابقات والسفرات', icon: Trophy, show: canClub },
+    { id: 'competitions', label: 'المسابقات', desc: 'بنك الأفكار والأدوات', icon: Trophy, show: can('الإعداد (المسابقات)') },
+    { id: 'trips', label: 'السفرات', desc: 'الرحلات وحساباتها', icon: Plane, show: can('السفرات') },
     { id: 'guardians', label: 'المشتركين', desc: 'الطلاب وأولياء أمورهم', icon: UsersIcon, show: canGuardians },
     { id: 'reports', label: 'التقارير', desc: 'التقارير والإحصائيات', icon: FileText, show: canMoney },
     { id: 'settings', label: 'الإعدادات', desc: 'المستخدمون والصلاحيات', icon: Settings, show: isAdmin },
@@ -1842,9 +1891,8 @@ export default function App() {
   const isNavActive = (id) =>
     view === id ||
     (id === 'programs' && (view === 'programDetail' || view === 'weekDetail')) ||
-    (id === 'reports' && view === 'club') ||
-    (id === 'home' && (view === 'club' || view === 'tripDetail' || view === 'competitionDetail'
-      || view === 'guardians' || view === 'guardianDetail'));
+    (id === 'home' && (view === 'competitions' || view === 'trips' || view === 'tripDetail'
+      || view === 'competitionDetail' || view === 'guardians' || view === 'guardianDetail'));
 
   /** فلترة حسب طريقة الدفع: حساب معيّن، أو «ما دفع»، أو الكل. */
   const byPay = (p) => payFilter === 'all' || p.accountId === payFilter;
@@ -2656,6 +2704,46 @@ export default function App() {
               <StatCard label="إجمالي المصروفات" value={fmt(totalExpenses) + ' ر.س'} icon={TrendingDown} tone="red" />
             </div>
 
+            {/* الاستثمار محجوز على أمد بعيد، فيُعرض على حدة وما يُجمع مع الرصيد */}
+            <div className={cardCls + ' mb-6'}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm text-slate-500 mb-1 flex items-center gap-1.5">
+                    <Layers size={15} className="text-brand-500" /> الاستثمار
+                  </div>
+                  <div className="text-2xl font-extrabold text-brand-700">{fmt(investmentBalance)} ر.س</div>
+                  <div className="text-[11px] text-slate-400 mt-1">محجوز على أمد بعيد — ما يُحسب ضمن رصيد الفريق.</div>
+                </div>
+                {canTransfer && (
+                  <div className="flex flex-col gap-1.5 shrink-0">
+                    <button className="bg-brand-600 text-white text-xs font-semibold px-3 py-2 rounded-lg whitespace-nowrap"
+                      onClick={() => { setForm({ dir: 'in', accountId: data.faidAccounts[0]?.id }); setModal('investment'); }}>
+                      تحويل للاستثمار
+                    </button>
+                    {investmentBalance > 0 && (
+                      <button className="bg-slate-100 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg whitespace-nowrap"
+                        onClick={() => { setForm({ dir: 'out', accountId: data.faidAccounts[0]?.id }); setModal('investment'); }}>
+                        سحب منه
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+              {investmentBalance > 0 && (
+                <div className="mt-4 pt-4 border-t border-slate-100">
+                  <div className="text-[11px] text-slate-400 mb-2">مصدره</div>
+                  <div className="space-y-1.5">
+                    {accountStats.filter((a) => a.invested !== 0).map((a) => (
+                      <div key={a.id} className="flex items-center justify-between text-xs">
+                        <span className="text-slate-600">{a.name}</span>
+                        <span className="text-slate-800 font-semibold">{fmt(a.invested)} ر.س</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-bold text-slate-700">الحسابات</h3>
               <button onClick={() => { setForm({ value: '' }); setModal('addFaidAccount'); }} className="text-xs text-brand-600 flex items-center gap-1"><Plus size={14} /> حساب جديد</button>
@@ -2775,18 +2863,7 @@ export default function App() {
         )}
 
         {/* -------------------------------- النادي -------------------------------- */}
-        {view === 'club' && (
-          <div className="mb-4">
-            <h2 className="text-xl font-extrabold text-slate-800 mb-1">النادي</h2>
-            <div className="text-sm text-slate-400 mb-4">المسابقات والسفرات</div>
-            <Tabs value={clubTab} onChange={setClubTab} tabs={[
-              ...(can('الإعداد (المسابقات)') ? [{ id: 'competitions', label: 'المسابقات' }] : []),
-              ...(can('السفرات') ? [{ id: 'trips', label: 'السفرات' }] : []),
-            ]} />
-          </div>
-        )}
-
-        {view === 'club' && clubTab === 'competitions' && can('الإعداد (المسابقات)') && (
+        {view === 'competitions' && can('الإعداد (المسابقات)') && (
           <div>
             <div className="flex items-center justify-between mb-3 gap-3">
               <h3 className="font-bold text-slate-700">بنك المسابقات</h3>
@@ -2832,7 +2909,7 @@ export default function App() {
         {/* بطاقة المسابقة: الفكرة والأدوات والصور */}
         {view === 'competitionDetail' && competition && (
           <div>
-            <Breadcrumb items={[{ label: 'النادي', onClick: () => { setClubTab('competitions'); goto('club'); } }, { label: competition.name }]} />
+            <Breadcrumb items={[{ label: 'النادي', onClick: () => goto('competitions') }, { label: competition.name }]} />
             <div className="flex items-center justify-between gap-2 mb-4 mt-2">
               <div className="flex items-center gap-2 min-w-0">
                 <h2 className="text-lg font-bold text-slate-800 truncate">{competition.name}</h2>
@@ -2841,7 +2918,7 @@ export default function App() {
               <div className="flex items-center gap-1 shrink-0">
                 <button onClick={() => { setForm({ ...competition, tools: competition.tools || [], photos: competition.photos || [] }); setModal('editCompetition'); }}
                   className="text-slate-400 hover:text-brand-700"><Pencil size={16} /></button>
-                <button onClick={() => askConfirm(`حذف مسابقة «${competition.name}»؟`, () => { removeCompetition(competition.id); setClubTab('competitions'); goto('club'); })}
+                <button onClick={() => askConfirm(`حذف مسابقة «${competition.name}»؟`, () => { removeCompetition(competition.id); goto('competitions'); })}
                   className="text-slate-300 hover:text-red-500"><Trash2 size={16} /></button>
               </div>
             </div>
@@ -2887,7 +2964,7 @@ export default function App() {
           </div>
         )}
 
-        {view === 'club' && clubTab === 'trips' && can('السفرات') && (
+        {view === 'trips' && can('السفرات') && (
           <div>
             <div className="flex items-center justify-between mb-1 gap-3">
               <h3 className="font-bold text-slate-700">السفرات</h3>
@@ -2927,7 +3004,7 @@ export default function App() {
 
         {view === 'tripDetail' && trip && (
           <div>
-            <Breadcrumb items={[{ label: 'السفرات', onClick: () => { setClubTab('trips'); goto('club'); } }, { label: trip.name }]} />
+            <Breadcrumb items={[{ label: 'السفرات', onClick: () => goto('trips') }, { label: trip.name }]} />
             <div className="flex items-center gap-2 mb-5 mt-2">
               <h2 className="text-lg sm:text-xl font-bold text-slate-800">{trip.name}</h2>
               <button onClick={() => askConfirm(`حذف سفرة «${trip.name}»؟`, () => removeTrip(trip.id))} className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>
@@ -3683,12 +3760,12 @@ export default function App() {
           {!form.splitMode && (
             <>
               <Field label="الحساب">
-                <select className={inputCls} value={form.accountId || ''} onChange={(e) => setForm({ ...form, accountId: e.target.value })}>
+                <select className={inputCls} value={form.accountId || ''} onChange={(e) => setForm({ ...form, accountId: e.target.value, error: '' })}>
                   <option value="">اختر الحساب</option>
                   {data.faidAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select>
               </Field>
-              <Field label="المبلغ (ر.س)"><input type="number" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value })} /></Field>
+              <Field label="المبلغ (ر.س)"><input type="number" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value, error: '' })} /></Field>
             </>
           )}
 
@@ -3721,6 +3798,7 @@ export default function App() {
           </Field>
           <Field label="البيان"><input className={inputCls} value={form.note || ''} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="مثال: راتب الترم الأول" /></Field>
           <Field label="التاريخ (هـ)"><input className={inputCls} value={form.date || ''} onChange={(e) => setForm({ ...form, date: e.target.value })} placeholder="1448/02/01" /></Field>
+          {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
           <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={addFaidAdjustment}>إضافة</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
         </Modal>
       )}
@@ -3964,6 +4042,44 @@ export default function App() {
           </div>
         </Modal>
       )}
+
+      {modal === 'investment' && (() => {
+        const dirIn = (form.dir || 'in') === 'in';
+        const acc = accountStats.find((a) => a.id === form.accountId);
+        const cap = dirIn ? (acc?.balance ?? 0) : investmentBalance;
+        return (
+          <Modal title={dirIn ? 'تحويل للاستثمار' : 'سحب من الاستثمار'} onClose={closeModal}>
+            <div className="text-sm text-slate-500 mb-4">
+              {dirIn
+                ? 'المبلغ يطلع من الحساب ويُحجز في الاستثمار، فينقص رصيد الفريق بقدره. وما يُحسب مصروفًا في التقارير.'
+                : 'المبلغ يرجع من الاستثمار للحساب، فيزيد رصيد الفريق بقدره.'}
+            </div>
+            <Field label={dirIn ? 'من حساب' : 'إلى حساب'}>
+              <select className={inputCls} value={form.accountId || ''}
+                onChange={(e) => setForm({ ...form, accountId: e.target.value, error: '' })}>
+                {accountStats.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name} — {fmt(a.balance)} ر.س</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="المبلغ (ر.س)" hint={`المتاح: ${fmt(cap)} ر.س`}>
+              <input type="number" className={inputCls} value={form.amount ?? ''}
+                onChange={(e) => setForm({ ...form, amount: e.target.value, error: '' })} placeholder="100" />
+            </Field>
+            <Field label="التاريخ (هـ)">
+              <input className={inputCls} value={form.date || ''} onChange={(e) => setForm({ ...form, date: e.target.value })} placeholder="1448/02/01" />
+            </Field>
+            <Field label="ملاحظة (اختياري)">
+              <input className={inputCls} value={form.note || ''} onChange={(e) => setForm({ ...form, note: e.target.value })} />
+            </Field>
+            {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+            <div className="flex gap-2 mt-2">
+              <button className={btnPrimary + ' flex-1'} onClick={moveInvestment}>{dirIn ? 'حوّل' : 'اسحب'}</button>
+              <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {modal === 'viewReceipt' && form.receipt && (
         <Modal title={`إيصال ${form.who || ''}`} onClose={closeModal} wide>
