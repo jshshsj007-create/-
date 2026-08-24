@@ -8,7 +8,7 @@ import {
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
-const APP_VERSION = 'v1.9 · ٢٤ أغسطس';
+const APP_VERSION = 'v2.0 · ٢٤ أغسطس';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -1198,11 +1198,18 @@ export default function App() {
   const canSeeWeek = (programId, weekId) => isAdmin || effectiveUser?.accessScope === 'all' || (effectiveUser?.allowedWeeks || []).some((a) => a.programId === programId && a.weekId === weekId);
   const canMoney = can('المصروفات والتقارير');
   /**
+   * إسناد أيام لمستخدم يعني ضمنًا أنه مكلّف بها: يحضّر ويسجّل فيها،
+   * حتى لو المدير نسي يعلّم صلاحية «الأسابيع والحضور».
+   */
+  const hasAssignedWeeks = !isAdmin && effectiveUser?.accessScope === 'limited'
+    && (effectiveUser?.allowedWeeks || []).length > 0;
+  const canAttend = can('الأسابيع والحضور') || can('البرامج') || hasAssignedWeeks;
+  /**
    * التسجيل مسموح لمسجّل الحضور كمان: يقدر يضيف طالب بمبلغه وطريقة دفعه.
    * لكن يبقى ما يشوف مبالغ اللي سجّلهم غيره — الإدخال مسموح والقراءة لا.
    * التعديل والحذف يظلان للماليين، لأن نافذة التعديل تعرض المبلغ المسجّل أصلًا.
    */
-  const canEnroll = canMoney || can('البرامج') || can('الأسابيع والحضور');
+  const canEnroll = canMoney || canAttend;
   const limitedScope = !isAdmin && effectiveUser?.accessScope === 'limited';
   /** البرنامج يظهر فقط لو فيه يوم واحد على الأقل يقدر يشوفه المستخدم. */
   const termPrograms = !limitedScope ? allTermPrograms
@@ -1356,7 +1363,7 @@ export default function App() {
   // «النادي» يجمع المسابقات والسفرات في قسم واحد مثل التصميم
   const canClub = can('الإعداد (المسابقات)') || can('السفرات');
   const sections = [
-    { id: 'programs', label: 'البرامج', desc: 'عرض وإدارة البرامج', icon: BookOpen, show: can('البرامج') || can('الأسابيع والحضور') },
+    { id: 'programs', label: 'البرامج', desc: 'عرض وإدارة البرامج', icon: BookOpen, show: canAttend },
     { id: 'faid', label: 'فيض', desc: 'حسابات فيض والأرصدة', icon: Wallet, show: can('فيض - الإيرادات والمصروفات') },
     { id: 'club', label: 'النادي', desc: 'المسابقات والسفرات', icon: Trophy, show: canClub },
     { id: 'reports', label: 'التقارير', desc: 'التقارير والإحصائيات', icon: FileText, show: canMoney },
@@ -1365,7 +1372,7 @@ export default function App() {
 
   const navItems = [
     { id: 'home', label: 'الرئيسية', icon: Home, show: true },
-    { id: 'programs', label: 'البرامج', icon: BookOpen, show: can('البرامج') || can('الأسابيع والحضور') },
+    { id: 'programs', label: 'البرامج', icon: BookOpen, show: canAttend },
     { id: 'faid', label: 'فيض', icon: Wallet, show: can('فيض - الإيرادات والمصروفات') },
     { id: 'reports', label: 'التقارير', icon: FileText, show: canMoney },
     { id: 'settings', label: 'الإعدادات', icon: Settings, show: isAdmin },
@@ -2678,6 +2685,11 @@ export default function App() {
                   className={`flex-1 py-2 rounded-lg text-sm font-medium border ${(form.accessScope || 'all') === o.v ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`}>{o.l}</button>
               ))}
             </div>
+            {form.accessScope === 'limited' && (
+              <div className="text-xs text-brand-800 bg-brand-50 border border-brand-100 rounded-lg px-3 py-2 mb-2">
+                الأيام اللي تحددها له يقدر يحضّرها ويسجّل فيها، حتى لو ما علّمت له صلاحية «الأسابيع والحضور».
+              </div>
+            )}
             {form.accessScope === 'limited' && (
               <div className="max-h-40 overflow-y-auto border border-slate-100 rounded-lg p-2 space-y-1">
                 {data.programs.length === 0 && <div className="text-xs text-slate-400 p-2">لا توجد برامج/أيام بعد</div>}
