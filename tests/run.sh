@@ -17,10 +17,11 @@ const noop = () => {};
 export const useState = (v) => [v, noop];
 export const useEffect = noop;
 export const useCallback = (f) => f;
+export const useRef = (v) => ({ current: v });
 export const Fragment = 'Fragment';
 export const jsx = () => null;
 export const jsxs = () => null;
-export default { useState, useEffect, useCallback, Fragment };
+export default { useState, useEffect, useCallback, useRef, Fragment };
 JS
 cat > "$STUB/lucide-react/package.json" <<'JSON'
 {"name":"lucide-react","version":"0.0.0-stub","type":"module","main":"index.mjs","exports":{".":"./index.mjs"}}
@@ -46,4 +47,5 @@ node tests/auth.test.mjs
 node tests/quick.test.mjs
 node tests/club.test.mjs
 node tests/faid.test.mjs
+node tests/merge.test.mjs
 rm -rf "$STUB" tests/build

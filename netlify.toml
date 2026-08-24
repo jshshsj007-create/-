@@ -6,6 +6,17 @@
 [build.environment]
   NODE_VERSION = "20"
 
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# مخزن البيانات المشترك — لازم قبل قاعدة الصفحة الواحدة تحت
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/state"
+  status = 200
+  force = true
+
 # التطبيق صفحة واحدة: أي مسار يرجع لنفس الصفحة
 [[redirects]]
   from = "/*"

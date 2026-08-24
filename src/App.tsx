@@ -1,14 +1,15 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Home, BookOpen, Wallet, Settings, Plus, X, Check, ChevronLeft, Trash2, Pencil,
   Users as UsersIcon, Calendar, TrendingUp, TrendingDown, Layers, ShieldCheck,
   Lock, Unlock, Trophy, LogOut, KeyRound, Plane, Search, AlertTriangle, Send,
   RotateCcw, Wand2, CalendarDays, FileText,
 } from 'lucide-react';
+import { api, clone, merge3, readSession, writeSession, clearSession, readPending, writePending, clearPending } from './cloud.js';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
-const APP_VERSION = 'v2.1 · ٢٤ أغسطس';
+const APP_VERSION = 'v3.0 · بيانات مشتركة';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -652,24 +653,139 @@ export default function App() {
     return () => clearTimeout(t);
   }, [savedAt]);
 
+  /* ------------------------------- المزامنة ------------------------------- */
+  /**
+   * وضعان: `cloud` — البيانات على الخادم ويتشاركها الفريق كله؛ و`local` — احتياطي
+   * لما يكون الخادم غير متاح، فالتطبيق يظل يشتغل على هذا الجهاز وحده.
+   */
+  const [cloudMode, setCloudMode] = useState('checking'); // checking | cloud | local
+  const [cloudInit, setCloudInit] = useState(false);      // هل أُنشئ حساب المدير الأول؟
+  const [syncState, setSyncState] = useState('idle');     // idle | saving | offline
+  const sess = useRef({ token: null, username: '' });
+  const revRef = useRef(0);
+  const baseRef = useRef(null);   // آخر نسخة متفق عليها مع الخادم — مرجع الدمج
+  const queueRef = useRef(null);  // آخر حالة تنتظر الحفظ
+  const busyRef = useRef(false);
+  const cloudOn = cloudMode === 'cloud';
+
+  /** تبنّي نسخة جاية من الخادم كما هي. */
+  const adopt = useCallback((serverData, rev) => {
+    revRef.current = Number(rev) || 0;
+    baseRef.current = clone(serverData);
+    setData(migrate(clone(serverData)));
+  }, []);
+
+  /**
+   * تعديل انقطع عنه النت وأُقفلت الصفحة قبل ما يُحفظ: ندمجه فوق نسخة الخادم
+   * ونرسله. لصاحبه فقط — ما ننقل تعديل مستخدم لحساب مستخدم ثاني.
+   */
+  const resumePending = useCallback((serverData, username) => {
+    const pend = readPending();
+    if (!pend?.local || pend.username !== username) { clearPending(); return null; }
+    const merged = merge3(pend.base, pend.local, serverData);
+    queueRef.current = merged;
+    return merged;
+  }, []);
+
   useEffect(() => {
     (async () => {
-      const raw = await storage.get(STORAGE_KEY);
-      try {
-        setData(migrate(raw ? JSON.parse(raw) : defaultData()));
-      } catch {
-        setData(defaultData());
+      const st = await api('status');
+      if (!st.ok) {
+        // ما فيه خادم (تشغيل محلي أو انقطاع): نرجع للتخزين في المتصفح
+        setCloudMode('local');
+        const raw = await storage.get(STORAGE_KEY);
+        try { setData(migrate(raw ? JSON.parse(raw) : defaultData())); } catch { setData(defaultData()); }
+        setLoading(false);
+        return;
       }
+      setCloudMode('cloud');
+      setCloudInit(Boolean(st.body?.initialized));
+
+      const saved = readSession();
+      if (st.body?.initialized && saved?.token) {
+        const r = await api('pull', { token: saved.token, sinceRev: -1 });
+        if (r.status === 200 && r.body?.data) {
+          sess.current = { token: saved.token, username: saved.username };
+          adopt(r.body.data, r.body.rev);
+          const pending = resumePending(r.body.data, saved.username);
+          if (pending) setData(migrate(clone(pending)));
+          const me = ((pending || r.body.data).users || []).find((u) => (u.username || '').toLowerCase() === String(saved.username).toLowerCase());
+          if (me) setCurrentUser(me);
+          setLoading(false);
+          return;
+        }
+        clearSession(); // التوكن انتهى أو الحساب عُطّل
+      }
+      // قبل الدخول ما عندنا بيانات — نبدأ بهيكل فاضي عشان تطلع شاشة الدخول
+      setData(defaultData());
       setLoading(false);
     })();
+  }, [adopt]);
+
+  /** يدفع آخر حالة للخادم، ويدمج لو أحد ثاني سبقنا. */
+  const flush = useCallback(async () => {
+    if (busyRef.current || !queueRef.current || !sess.current.token) return;
+    busyRef.current = true;
+    let payload = queueRef.current;
+    queueRef.current = null;
+    setSyncState('saving');
+    try {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const r = await api('push', { token: sess.current.token, baseRev: revRef.current, data: payload });
+        if (r.status === 200) {
+          revRef.current = r.body.rev;
+          baseRef.current = clone(payload);
+          clearPending();
+          setData(payload);
+          setSavedAt(Date.now());
+          setSyncState('idle');
+          break;
+        }
+        if (r.status === 409 && r.body?.data) {
+          // أحد حفظ قبلي: أدمج شغلي فوق نسخته بدل ما أطمسها
+          payload = merge3(baseRef.current, payload, r.body.data);
+          revRef.current = r.body.rev;
+          baseRef.current = clone(r.body.data);
+          continue;
+        }
+        if (r.status === 401) { clearSession(); sess.current = { token: null, username: '' }; setCurrentUser(null); setSyncState('idle'); break; }
+        throw new Error('push_failed');
+      }
+    } catch {
+      // ما وصل: نحتفظ بالتعديل في الجهاز ونعيد المحاولة — حتى لو أُقفلت الصفحة
+      queueRef.current = queueRef.current || payload;
+      writePending(sess.current.username, baseRef.current, queueRef.current);
+      setSyncState('offline');
+    } finally {
+      busyRef.current = false;
+    }
   }, []);
+
+  // إعادة محاولة دورية للحفظ المعلّق + سحب تعديلات الزملاء
+  useEffect(() => {
+    if (!cloudOn || !sess.current.token) return;
+    const t = setInterval(async () => {
+      if (queueRef.current) { flush(); return; }
+      if (busyRef.current) return;
+      const r = await api('pull', { token: sess.current.token, sinceRev: revRef.current });
+      if (r.status === 200 && r.body?.data) { adopt(r.body.data, r.body.rev); setSyncState('idle'); }
+      else if (r.status === 200) setSyncState('idle');
+      else if (r.status === 0) setSyncState('offline');
+    }, 7000);
+    return () => clearInterval(t);
+  }, [cloudOn, currentUser, flush, adopt]);
 
   /** حفظ تلقائي: كل تعديل ينحفظ فورًا، ما فيه زر حفظ. */
   const save = useCallback(async (next) => {
     setData(next);
-    await storage.set(STORAGE_KEY, JSON.stringify(next));
-    setSavedAt(Date.now());
-  }, []);
+    if (!cloudOn) {
+      await storage.set(STORAGE_KEY, JSON.stringify(next));
+      setSavedAt(Date.now());
+      return;
+    }
+    queueRef.current = next;
+    flush();
+  }, [cloudOn, flush]);
 
   if (loading || !data) {
     return <div dir="rtl" className="min-h-screen flex items-center justify-center text-slate-400" style={{ fontFamily: "'Tajawal', sans-serif" }}>جاري التحميل...</div>;
@@ -1004,7 +1120,7 @@ export default function App() {
   };
 
   /* --------------------------- بقية الكيانات --------------------------- */
-  const saveUser = () => {
+  const saveUser = async () => {
     const username = (form.username || '').trim().toLowerCase();
     if (!form.name || !username) { setForm({ ...form, error: 'الاسم واسم المستخدم مطلوبين' }); return; }
     if (!/^[a-z0-9._-]{3,}$/.test(username)) { setForm({ ...form, error: 'اسم المستخدم: حروف إنجليزية وأرقام، ٣ خانات على الأقل' }); return; }
@@ -1023,6 +1139,25 @@ export default function App() {
     } else {
       const created = { id: uid(), ...fields, password: form.password, status: 'نشط' };
       if (modal === 'rescueAdmin') created.role = 'مدير';
+
+      // أول حساب على الخادم: ينشئ المخزن المشترك ويفتح الجلسة مباشرة
+      if (needsFirstAdmin) {
+        created.role = 'مدير';
+        const r = await api('init', { user: created, data: { ...defaultData(), users: [] } });
+        if (r.status !== 200 || !r.body?.data) {
+          setForm({ ...form, error: r.status === 409 ? 'فيه حساب مُنشأ من قبل — سجّل دخولك.' : 'ما قدرت أوصل للخادم. تأكد من الإنترنت.' });
+          return;
+        }
+        sess.current = { token: r.body.token, username };
+        writeSession(sess.current);
+        setCloudInit(true);
+        adopt(r.body.data, r.body.rev);
+        setCurrentUser((r.body.data.users || [])[0] || null);
+        setStage('app');
+        closeModal();
+        return;
+      }
+
       save({ ...data, users: [...data.users, created] });
       // أول حساب (أو حساب الإنقاذ) ندخّله على طول، بدل ما نطرد صاحبه لشاشة الدخول
       if (modal === 'rescueAdmin' || (forceAdmin && !currentUser)) { setCurrentUser(created); setStage('app'); }
@@ -1223,17 +1358,49 @@ export default function App() {
   /** آخر مدير نشط ما ينحذف ولا يتعطّل، وإلا انقفل التطبيق على الجميع. */
   const activeAdmins = data.users.filter((u) => u.role === 'مدير' && u.status === 'نشط');
   const noAdminExists = data.users.length > 0 && activeAdmins.length === 0;
+  /** في الوضع المشترك ما نعرف المستخدمين إلا بعد الدخول، فالشرط على حالة الخادم. */
+  const mustLogin = cloudOn ? !currentUser : (data.users.length > 0 && !currentUser);
+  /** أول مرة يُفتح فيها التطبيق على الخادم: لازم يُنشأ حساب المدير. */
+  const needsFirstAdmin = cloudOn && !cloudInit && !currentUser;
 
-  const doLogin = () => {
+  const doLogin = async () => {
     const entered = (loginForm.username || '').trim().toLowerCase();
-    const u = data.users.find((x) => (x.username || '').toLowerCase() === entered);
-    // رسالة واحدة للحالتين عشان ما نكشف أي أسماء مستخدمين موجودة
-    if (!u || u.password !== loginForm.password) { setLoginError('اسم المستخدم أو كلمة المرور غير صحيحة'); return; }
-    if (u.status !== 'نشط') { setLoginError('هذا الحساب غير مفعّل. راجع المدير.'); return; }
-    setCurrentUser(u); setLoginError(''); setLoginForm({ username: '', password: '' });
+    if (!cloudOn) {
+      const u = data.users.find((x) => (x.username || '').toLowerCase() === entered);
+      // رسالة واحدة للحالتين عشان ما نكشف أي أسماء مستخدمين موجودة
+      if (!u || u.password !== loginForm.password) { setLoginError('اسم المستخدم أو كلمة المرور غير صحيحة'); return; }
+      if (u.status !== 'نشط') { setLoginError('هذا الحساب غير مفعّل. راجع المدير.'); return; }
+      setCurrentUser(u); setLoginError(''); setLoginForm({ username: '', password: '' });
+      setStage('year');
+      return;
+    }
+    // في الوضع المشترك التحقق يصير في الخادم، فكلمات المرور ما تنزل للمتصفح أصلًا
+    setLoginError('...جاري التحقق');
+    const r = await api('login', { username: entered, password: loginForm.password });
+    if (r.status === 401) { setLoginError('اسم المستخدم أو كلمة المرور غير صحيحة'); return; }
+    if (r.status === 403) { setLoginError('هذا الحساب غير مفعّل. راجع المدير.'); return; }
+    if (r.status !== 200 || !r.body?.data) { setLoginError('ما قدرت أوصل للخادم. تأكد من الإنترنت وجرّب مرة ثانية.'); return; }
+    sess.current = { token: r.body.token, username: entered };
+    writeSession(sess.current);
+    adopt(r.body.data, r.body.rev);
+    const pending = resumePending(r.body.data, entered);
+    if (pending) setData(migrate(clone(pending)));
+    const me = ((pending || r.body.data).users || []).find((x) => (x.username || '').toLowerCase() === entered);
+    setCurrentUser(me || null);
+    setLoginError(''); setLoginForm({ username: '', password: '' });
     setStage('year');
   };
-  const doLogout = () => { setCurrentUser(null); setStage('year'); goto('home'); };
+  const doLogout = () => {
+    if (cloudOn) {
+      clearSession();
+      sess.current = { token: null, username: '' };
+      queueRef.current = null;
+      revRef.current = 0;
+      baseRef.current = null;
+      setData(defaultData()); // ما نخلي بيانات الفريق في الجهاز بعد الخروج
+    }
+    setCurrentUser(null); setStage('year'); goto('home');
+  };
 
   /* ------------------------------ الشاشة الأولى ------------------------------ */
   if (stage === 'splash') {
@@ -1242,7 +1409,7 @@ export default function App() {
         <div className="flex-1 flex flex-col items-center justify-center px-8 text-center">
           <FaidLogo size={116} variant="full" />
           <div className="text-brand-200 text-base font-semibold mt-8">فريق فيض</div>
-          <button onClick={() => setStage(data.users.length > 0 && !currentUser ? 'login' : 'year')}
+          <button onClick={() => setStage(mustLogin ? 'login' : 'year')}
             className="mt-12 bg-white text-brand-900 font-bold text-sm px-10 py-3.5 rounded-2xl">
             ابدأ
           </button>
@@ -1253,7 +1420,7 @@ export default function App() {
   }
 
   /* ------------------------------ تسجيل الدخول ------------------------------ */
-  if (data.users.length > 0 && !currentUser) {
+  if (mustLogin) {
     return (
       <Shell dark>
         <div className="flex-1 flex flex-col justify-center px-6">
@@ -1261,6 +1428,21 @@ export default function App() {
             <FaidLogo size={84} variant="full" />
           </div>
           <div className="bg-white rounded-3xl p-6 shadow-xl">
+            {needsFirstAdmin ? (
+              /* أول تشغيل للفريق: ما فيه ولا حساب بعد، فنبدأ بحساب صاحب التطبيق */
+              <>
+                <h2 className="font-bold text-lg text-slate-800 mb-1">أهلًا! نبدأ بحسابك أنت</h2>
+                <div className="text-sm text-slate-400 mb-5">
+                  أنشئ حساب المدير — بصلاحيات كاملة. بعدها تقدر تضيف الموظفين وتحدد صلاحياتهم،
+                  ويشتغلون معك على نفس البيانات من أجهزتهم.
+                </div>
+                <button className={btnPrimary + ' w-full'}
+                  onClick={() => { setForm({ permissions: [], role: 'مدير' }); setModal('rescueAdmin'); }}>
+                  <ShieldCheck size={16} /> إنشاء حساب المدير
+                </button>
+              </>
+            ) : (
+            <>
             <h2 className="font-bold text-lg text-slate-800 mb-1">تسجيل الدخول</h2>
             <div className="text-sm text-slate-400 mb-5">ادخل باسم المستخدم وكلمة المرور</div>
             <Field label="اسم المستخدم">
@@ -1288,6 +1470,8 @@ export default function App() {
                   إنشاء حساب مدير
                 </button>
               </div>
+            )}
+            </>
             )}
           </div>
 
@@ -1437,7 +1621,9 @@ export default function App() {
             <ChevronLeft size={15} className="text-slate-400 -rotate-90" />
           </button>
           <div className="flex items-center gap-3">
-            {savedAt && <span className="text-[11px] text-brand-600 flex items-center gap-1"><Check size={12} /> محفوظ</span>}
+            {syncState === 'offline'
+              ? <span className="text-[11px] text-amber-600 flex items-center gap-1"><AlertTriangle size={12} /> غير متصل — بيحفظ لما يرجع النت</span>
+              : savedAt && <span className="text-[11px] text-brand-600 flex items-center gap-1"><Check size={12} /> {cloudOn ? 'محفوظ للفريق' : 'محفوظ'}</span>}
             {currentUser && (
               <button onClick={() => setModal('account')} className="w-9 h-9 rounded-full bg-brand-100 text-brand-800 text-xs font-bold flex items-center justify-center">
                 {currentUser.name.slice(0, 1)}
