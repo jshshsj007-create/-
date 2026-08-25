@@ -11,6 +11,7 @@ import { getStore } from '@netlify/blobs';
 import crypto from 'node:crypto';
 import { programByToken, publicView, validateSubmission, applySubmission, rateLimited } from '../../src/signup.js';
 import { dedupeByPhone, remapParticipants } from '../../src/people.js';
+import { runBackup, backupStatus, readSnapshot } from '../lib/backup.mjs';
 
 /**
  * القاعدة تُفرض هنا، لا في المتصفح: ولي أمر واحد لكل جوال، وابن واحد لكل اسم
@@ -223,6 +224,31 @@ export default async (req) => {
   // ما بعدها يحتاج توكن سليم.
   const me = userFromToken(doc, body.token);
   if (!me) return json({ error: 'unauthorized' }, 401);
+
+  /* ----------------------------- النسخ الاحتياطي ----------------------------- */
+  // المدير وحده: النسخة فيها كل شي، وإرجاعها يستبدل كل شي
+  if (op === 'backup_now' || op === 'backup_info' || op === 'snapshot_restore') {
+    if (!isAdmin(me)) return json({ error: 'forbidden' }, 403);
+
+    if (op === 'backup_info') return json({ ok: true, status: await backupStatus(store()) });
+
+    if (op === 'backup_now') {
+      const r = await runBackup(store());
+      return r.ok ? json({ ok: true, status: r }) : json({ error: r.error || 'failed' }, 500);
+    }
+
+    // الاسترجاع يكتب اللقطة كنسخة جديدة، فيبقى تاريخ المراجعات متصلًا
+    const data = await readSnapshot(store(), body.stamp);
+    if (!data) return json({ error: 'not_found' }, 404);
+    await writeDoc({
+      rev: doc.rev + 1,
+      updatedAt: new Date().toISOString(),
+      secret: doc.secret,
+      data,
+      signupLog: doc.signupLog || [],
+    });
+    return json({ ok: true, rev: doc.rev + 1, data: strip(data, me) });
+  }
 
   // رفع صورة برنامج: ترجع معرّفًا، وهو وحده اللي ينحفظ في البيانات
   if (op === 'img_put') {

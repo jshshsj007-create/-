@@ -750,6 +750,7 @@ export default function App() {
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [stage, setStage] = useState('splash'); // splash → login → year → term → app
   const [savedAt, setSavedAt] = useState(null); // وقت آخر حفظ تلقائي
+  const [backup, setBackup] = useState({ status: null, busy: false, msg: '' }); // حالة النسخ التلقائي
   const [staleBuild, setStaleBuild] = useState(false); // فيه نسخة أحدث على الخادم
   const [loginError, setLoginError] = useState('');
 
@@ -900,6 +901,15 @@ export default function App() {
   }, [cloudOn, currentUser, flush, adopt]);
 
   /** حفظ تلقائي: كل تعديل ينحفظ فورًا، ما فيه زر حفظ. */
+  // حالة النسخ التلقائي تُجلب أول ما تُفتح شاشتها، لا مع كل تشغيل
+  useEffect(() => {
+    if (settingsTab !== 'backup' || !cloudOn || !sess.current.token) return;
+    (async () => {
+      const r = await api('backup_info', { token: sess.current.token });
+      if (r.status === 200) setBackup((b) => ({ ...b, status: r.body.status }));
+    })();
+  }, [settingsTab, cloudOn]);
+
   const save = useCallback(async (next) => {
     setData(next);
     if (!cloudOn) {
@@ -1702,6 +1712,38 @@ export default function App() {
   };
 
   /* --------------------------- النسخ الاحتياطي --------------------------- */
+
+  /** تاريخ ووقت مختصران للعرض. */
+  const hijriish = (ms) => {
+    const d = new Date(ms);
+    const two = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}/${two(d.getMonth() + 1)}/${two(d.getDate())} · ${two(d.getHours())}:${two(d.getMinutes())}`;
+  };
+
+  const sendBackupNow = async () => {
+    setBackup((b) => ({ ...b, busy: true, msg: '' }));
+    const r = await api('backup_now', { token: sess.current.token });
+    if (r.status === 200) {
+      setBackup({ status: r.body.status, busy: false, msg: 'تمت النسخة.' });
+    } else {
+      setBackup((b) => ({ ...b, busy: false, msg: 'ما نفعت النسخة. جرّب مرة ثانية.' }));
+    }
+  };
+
+  /** الاسترجاع يمر بالخادم، فينزل على كل الأجهزة لا على جهازك وحده. */
+  const restoreSnapshot = async (stamp) => {
+    setBackup((b) => ({ ...b, busy: true, msg: '' }));
+    const r = await api('snapshot_restore', { token: sess.current.token, stamp });
+    if (r.status === 200 && r.body?.data) {
+      revRef.current = r.body.rev;
+      baseRef.current = clone(r.body.data);
+      setData(migrate(clone(r.body.data)));
+      setBackup((b) => ({ ...b, busy: false, msg: `رجّعنا البيانات لحالة ${stamp}.` }));
+    } else {
+      setBackup((b) => ({ ...b, busy: false, msg: 'ما قدرنا نرجّع اللقطة.' }));
+    }
+  };
+
   const backupText = () => JSON.stringify({ app: 'Faydh', version: 1, savedAt: new Date().toISOString(), data }, null, 2);
   const backupName = () => `Faydh-backup-${new Date().toISOString().slice(0, 10)}.json`;
 
@@ -3538,11 +3580,68 @@ export default function App() {
 
             {settingsTab === 'backup' && (
               <div className="space-y-4">
-                <div className="bg-amber-50 border border-amber-100 rounded-2xl px-4 py-3 text-sm text-amber-900 flex items-start gap-2">
-                  <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-                  <span>بياناتك محفوظة داخل هذا المتصفح فقط. لو مسحت بيانات المتصفح أو غيّرت الجهاز، تروح.
-                    خذ نسخة احتياطية كل فترة — خصوصًا بعد ما تسجّل برنامج كامل.</span>
+                {/* النص القديم كان يقول إن البيانات في المتصفح — صار غلط بعد ما صارت عند الفريق */}
+                <div className="bg-brand-50 border border-brand-100 rounded-2xl px-4 py-3 text-sm text-brand-900 flex items-start gap-2">
+                  <ShieldCheck size={16} className="shrink-0 mt-0.5" />
+                  <span>بياناتك محفوظة عند الفريق، وتوصل كل الأجهزة — مو داخل هذا المتصفح.</span>
                 </div>
+
+                {isAdmin && (
+                  <div className={cardCls}>
+                    <div className="font-semibold text-slate-700 mb-1">النسخ التلقائي</div>
+                    <div className="text-xs text-slate-400 mb-4">
+                      كل جمعة: لقطة تُحفظ في الخادم، ونسخة ترحل لمجلدك في درايف.
+                    </div>
+
+                    {backup.status ? (
+                      <div className="bg-slate-50 rounded-xl px-4 py-3 mb-3 text-sm">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-slate-500">آخر نسخة</span>
+                          <b className="text-slate-800">{hijriish(backup.status.at)}</b>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 mt-2">
+                          <span className="text-slate-500">درايف</span>
+                          <span className={backup.status.drive === 'تم' ? 'text-green-600 font-semibold' : 'text-amber-600'}>
+                            {backup.status.drive}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 mt-2">
+                          <span className="text-slate-500">اللقطات المحفوظة</span>
+                          <b className="text-slate-800">{(backup.status.snapshots || []).length}</b>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-xs text-slate-400 mb-3">
+                        ما صارت نسخة تلقائية بعد. اضغط الزر تحت لتجربتها الآن.
+                      </div>
+                    )}
+
+                    <button className={btnPrimary + ' w-full'} disabled={backup.busy} onClick={sendBackupNow}>
+                      <RotateCcw size={16} /> {backup.busy ? 'جاري الإرسال...' : 'أرسل نسخة الآن'}
+                    </button>
+                    {backup.msg && <div className="text-xs text-slate-500 mt-2 text-center">{backup.msg}</div>}
+
+                    {(backup.status?.snapshots || []).length > 0 && (
+                      <div className="mt-4">
+                        <div className="text-xs text-slate-400 mb-2">
+                          استرجاع لقطة — يستبدل كل البيانات الحالية بحالتها في ذاك اليوم.
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {backup.status.snapshots.map((stamp) => (
+                            <button key={stamp} className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-600"
+                              onClick={() => askConfirm(
+                                `ترجيع البيانات لحالة ${stamp}؟ كل ما صار بعدها ينمسح.`,
+                                () => restoreSnapshot(stamp),
+                                'نعم، رجّعها',
+                              )}>
+                              {stamp}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className={cardCls}>
                   <div className="font-semibold text-slate-700 mb-1">أخذ نسخة احتياطية</div>
