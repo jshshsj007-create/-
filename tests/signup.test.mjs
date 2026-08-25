@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
   makeToken, programByToken, publicView, validateSubmission,
   dueFor, totalDue, applySubmission, rateLimited, daysAllowed, daysAreFixed, coversAll, isReceipt, RECEIPT_MAX,
+  waIntl, waLink, fillTemplate, signupVars, txt, TEXTS, varNames, DEFAULT_WA_TEMPLATE,
 } from '../src/signup.js';
 import { studentsOf } from '../src/people.js';
 
@@ -588,6 +589,123 @@ test('طوفان على البرنامج كله يتوقف', () => {
   const now = 100000000;
   const log = Array.from({ length: 40 }, (_, i) => ({ at: now - i * 1000, phone: `55000${String(i).padStart(4, '0')}` }));
   assert.equal(rateLimited(log, '0559999999', now).blocked, true);
+});
+
+/* ------------------------ محتوى الصفحة وواتساب ------------------------ */
+
+test('صور البرنامج ونقاطه ونصوصه تصل لولي الأمر', () => {
+  const d = baseData();
+  Object.assign(d.programs[0].signup, {
+    poster: 'IMG1', gallery: ['A', 'B'], details: 'سطر\nسطر ثاني',
+    notice: 'جهّز الإيصال', texts: { intro: 'سجّل في' },
+  });
+  const v = publicView(d, d.programs[0]);
+  assert.equal(v.poster, 'IMG1');
+  assert.deepEqual(v.gallery, ['A', 'B']);
+  assert.equal(v.details, 'سطر\nسطر ثاني');
+  assert.equal(v.notice, 'جهّز الإيصال');
+  assert.equal(txt(v, 'intro'), 'سجّل في', 'المكتوب يفوز');
+  assert.equal(txt(v, 'guardian'), TEXTS.guardian, 'وغير المكتوب يبقى الافتراضي');
+});
+
+test('النص الفاضي يعني «شِله» لا «رجّع الأصلي»', () => {
+  const d = baseData();
+  d.programs[0].signup.texts = { refLabel: '' };
+  const v = publicView(d, d.programs[0]);
+  assert.equal(txt(v, 'refLabel'), '', 'الفاضي ما ينقلب افتراضيًا');
+});
+
+test('الجوال يتحوّل لصيغة واتساب مهما كُتب', () => {
+  assert.equal(waIntl('0557821586'), '966557821586');
+  assert.equal(waIntl('٠٥٥٧٨٢١٥٨٦'.replace(/[٠-٩]/g, (x) => '٠١٢٣٤٥٦٧٨٩'.indexOf(x))), '966557821586');
+  assert.equal(waIntl('+966 55 782 1586'), '966557821586');
+  assert.equal(waIntl('00966557821586'), '966557821586');
+  assert.equal(waIntl('557821586'), '966557821586');
+  assert.equal(waIntl(''), '', 'وبلا رقم ما فيه رابط');
+  assert.equal(waIntl('123'), '');
+});
+
+test('بلا رقم صالح ما يطلع زر واتساب', () => {
+  assert.equal(waLink('', 'مرحبا'), '');
+  assert.ok(waLink('0557821586', 'مرحبا').startsWith('https://wa.me/966557821586?text='));
+  assert.equal(waLink('0557821586', ''), 'https://wa.me/966557821586', 'بلا نص = محادثة فاضية');
+});
+
+test('المتغيّرات تتعبّى من التسجيل نفسه', () => {
+  const d = baseData();
+  const v = publicView(d, d.programs[0]);
+  const body = {
+    answers: { gPhone: '0551234567', gName: 'سعد' },
+    kids: [{ name: 'محمد سعد القاسم', age: '10', school: 'الرواد', days: ['w1'] }],
+    accountId: 'rajhi',
+  };
+  const vars = signupVars(v, body, { ref: '0361' });
+  assert.equal(vars['الطالب'], 'محمد سعد القاسم');
+  assert.equal(vars['البرنامج'], 'جمعة الرواد');
+  assert.equal(vars['الأيام'], 'الأسبوع الأول');
+  assert.equal(vars['المبلغ'], '50');
+  assert.equal(vars['الرقم المرجعي'], '0361');
+  assert.equal(vars['طريقة الدفع'], 'الراجحي');
+  assert.equal(vars['العمر'], '10', 'وأي خانة بمسمّاها');
+  assert.equal(vars['المدرسة'], 'الرواد');
+});
+
+test('الرسالة تتكوّن من نص صاحب البرنامج وحده', () => {
+  const vars = { 'الطالب': 'محمد', 'الصف': 'رابع' };
+  assert.equal(fillTemplate('{الطالب}\n{الصف}', vars), 'محمد\nرابع');
+  assert.equal(fillTemplate('اسمه {الطالب} فقط', vars), 'اسمه محمد فقط');
+  assert.equal(fillTemplate('{ ألطالب }', vars), '', 'المتغيّر المجهول ينمسح ما ينعرض');
+  assert.equal(fillTemplate('بلا متغيّرات', vars), 'بلا متغيّرات');
+});
+
+test('ابنان في تسجيل واحد يطلعان في رسالة واحدة', () => {
+  const d = baseData();
+  const v = publicView(d, d.programs[0]);
+  const vars = signupVars(v, {
+    answers: { gPhone: '0551234567' },
+    kids: [{ name: 'محمد', age: '10', days: ['w1'] }, { name: 'عبدالله', age: '8', days: ['w2'] }],
+    accountId: 'cash',
+  }, {});
+  assert.equal(vars['الطالب'], 'محمد، عبدالله');
+  assert.equal(vars['العمر'], '10، 8');
+  assert.equal(vars['المبلغ'], '100');
+});
+
+test('نص هذا البرنامج يغلب النص العام', () => {
+  const d = baseData();
+  d.waTemplate = 'عام';
+  let v = publicView(d, d.programs[0]);
+  assert.equal(v.wa.template, 'عام');
+  d.programs[0].signup.waTemplate = 'خاص';
+  v = publicView(d, d.programs[0]);
+  assert.equal(v.wa.template, 'خاص');
+  delete d.waTemplate;
+  delete d.programs[0].signup.waTemplate;
+  v = publicView(d, d.programs[0]);
+  assert.equal(v.wa.template, DEFAULT_WA_TEMPLATE, 'وبلا الاثنين يجي المقترح');
+});
+
+test('المفاتيح تقفل الزرين كلٌّ على حدة', () => {
+  const d = baseData();
+  d.waNumber = '0557821586';
+  let v = publicView(d, d.programs[0]);
+  assert.equal(v.wa.contact, true);
+  assert.equal(v.wa.redirect, true);
+  assert.equal(v.wa.number, '966557821586');
+  d.programs[0].signup.waContact = false;
+  d.programs[0].signup.waRedirect = false;
+  v = publicView(d, d.programs[0]);
+  assert.equal(v.wa.contact, false);
+  assert.equal(v.wa.redirect, false);
+});
+
+test('أسئلة البرنامج تصير متغيّرات جاهزة', () => {
+  const d = baseData();
+  d.programs[0].signup.extraFields = [{ id: 'x1', label: 'هل يحتاج نقل؟', type: 'choice', options: ['نعم', 'لا'] }];
+  const v = publicView(d, d.programs[0]);
+  assert.ok(varNames(v).includes('هل يحتاج نقل؟'));
+  assert.ok(varNames(v).includes('الطالب'));
+  assert.ok(!varNames(v).includes('جوال ولي الأمر'), 'خانات ولي الأمر ما تتكرر لكل ابن');
 });
 
 console.log(`\n${passed} اختبار نجح.`);

@@ -92,8 +92,114 @@ export const publicView = (data, program) => {
         needsReceipt: !!a.needsReceipt,
       })),
     fields: fieldsFor(data, program),
+
+    /* ------- المحتوى اللي يكتبه صاحب البرنامج: صور ونصوص، كلها اختيارية ------- */
+    poster: s.poster || '',
+    gallery: s.gallery || [],
+    details: s.details || '',
+    notice: s.notice || '',
+    texts: s.texts || {},
+    wa: {
+      // رقم واحد للفريق كله، يُكتب مرة وحدة
+      number: waIntl(data.waNumber),
+      contact: s.waContact !== false,
+      redirect: s.waRedirect !== false,
+      // نص هذا البرنامج، وإلا النص العام، وإلا المقترح
+      template: String(s.waTemplate || data.waTemplate || DEFAULT_WA_TEMPLATE),
+    },
   };
 };
+
+/* -------------------------------- نصوص الصفحة -------------------------------- */
+
+/**
+ * النصوص الافتراضية. صاحب البرنامج يقدر يبدّل أيًّا منها، والقاعدة:
+ * ما كتبه يفوز، والفاضي يعني «شِله من الصفحة» — فيقدر يحذف عنصرًا ما يبيه.
+ */
+export const TEXTS = {
+  intro: 'التسجيل في',
+  guardian: 'بيانات ولي الأمر',
+  guardianHint: 'جوالك هو اللي نعرفك فيه لو سجّلت مرة ثانية.',
+  student: 'بيانات الطالب',
+  submit: 'إرسال التسجيل',
+  contact: 'تواصل معنا',
+  successTitle: 'تم تسجيلك',
+  successSub: 'سجّلنا {الطالب} في {البرنامج}.',
+  refLabel: 'الرقم المرجعي',
+  redirectNote: 'نحوّلك الآن لواتساب الفريق…',
+  openWa: 'افتح واتساب',
+};
+
+/** نص الصفحة بعد تبديل المتغيّرات: ما كتبه صاحب البرنامج، وإلا الافتراضي. */
+export const txt = (view, key, vars = {}) =>
+  fillTemplate(view?.texts?.[key] ?? TEXTS[key] ?? '', vars);
+
+/* ------------------------------ رسالة الواتساب ------------------------------ */
+
+/** النص المقترح لأول مرة. صاحب البرنامج يبدّله كله لو حب. */
+export const DEFAULT_WA_TEMPLATE = 'الطالب: {الطالب}\nالبرنامج: {البرنامج}\nالرقم المرجعي: {الرقم المرجعي}';
+
+/**
+ * الجوال بصيغة دولية بلا رموز: واتساب ما يقبل غيرها. نقبل 05… و+966… و00966…
+ * ويرجّع فاضيًا لو ما كان رقمًا سعوديًا معقولًا — فيختفي الزر بدل ما يعطي رابطًا ميتًا.
+ */
+export const waIntl = (raw) => {
+  const d = String(raw || '').replace(/\D/g, '');
+  if (/^05\d{8}$/.test(d)) return '966' + d.slice(1);
+  if (/^5\d{8}$/.test(d)) return '966' + d;
+  if (/^9665\d{8}$/.test(d)) return d;
+  if (/^009665\d{8}$/.test(d)) return d.slice(2);
+  return /^\d{10,15}$/.test(d) ? d : '';
+};
+
+/** يبدّل {المتغيّر} بقيمته. المتغيّر المجهول ينمسح بدل ما يطلع لولي الأمر كما هو. */
+export const fillTemplate = (tpl, vars) =>
+  String(tpl || '').replace(/\{\s*([^}]+?)\s*\}/g, (_, k) => String(vars?.[k] ?? ''));
+
+/**
+ * قيم المتغيّرات من التسجيل نفسه. أسماء الخانات هي أسماء المتغيّرات، فأي سؤال
+ * يضيفه صاحب البرنامج يصير متغيّرًا بلا ما نكتب له سطرًا.
+ */
+export const signupVars = (view, body, extra = {}) => {
+  const kids = Array.isArray(body?.kids) ? body.kids : [];
+  const names = kids.map((k) => String(k?.name || '').trim()).filter(Boolean);
+  const dayNames = [...new Set(kids.flatMap((k) => k?.days || []))]
+    .map((id) => view.days.find((d) => d.id === id)?.name)
+    .filter(Boolean);
+  const acc = (view.accounts || []).find((a) => a.id === body?.accountId);
+
+  const vars = {
+    'الطالب': names.join('، '),
+    'ولي الأمر': String(body?.answers?.gName || '').trim(),
+    'الجوال': String(body?.answers?.gPhone || '').trim(),
+    'البرنامج': view.programName || '',
+    'الأيام': dayNames.join('، '),
+    'المبلغ': String(totalDue(view, kids)),
+    'الرقم المرجعي': String(extra.ref || ''),
+    'طريقة الدفع': acc?.name || '',
+  };
+  // بقية الخانات بمسمياتها: العمر، الصف، المدرسة، وأي سؤال أضافه صاحب البرنامج
+  for (const f of view.fields || []) {
+    if (f.id === 'name' || isGuardianField(f)) continue;
+    const vals = kids.map((k) => String(k?.[f.id] ?? '').trim()).filter(Boolean);
+    vars[f.label] = [...new Set(vals)].join('، ');
+  }
+  return vars;
+};
+
+/** رابط محادثة واتساب جاهزة. يرجّع فاضيًا لو ما فيه رقم صالح. */
+export const waLink = (number, text) => {
+  const n = waIntl(number);
+  if (!n) return '';
+  const t = String(text || '').trim();
+  return `https://wa.me/${n}${t ? `?text=${encodeURIComponent(t)}` : ''}`;
+};
+
+/** أسماء المتغيّرات المتاحة لهذا البرنامج — تُعرض لصاحبه وهو يكتب الرسالة. */
+export const varNames = (view) => [
+  'الطالب', 'البرنامج', 'الأيام', 'المبلغ', 'الرقم المرجعي', 'طريقة الدفع', 'الجوال',
+  ...(view?.fields || []).filter((f) => f.id !== 'name' && !isGuardianField(f)).map((f) => f.label),
+];
 
 /** الباقة المختارة، إن كان البرنامج يُباع باقات. */
 export const packageOf = (view, kid) =>

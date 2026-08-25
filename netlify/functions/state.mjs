@@ -26,6 +26,25 @@ const enforceOnePerPhone = (data) => {
 const KEY = 'state';
 const store = () => getStore({ name: 'faid-team', consistency: 'strong' });
 
+/* --------------------------------- الصور --------------------------------- */
+/**
+ * صور البرامج تعيش خارج ملف البيانات المشترك.
+ *
+ * لو خزّناها داخله، صار كل جهاز في الفريق ينزّل ميغابايتات مع كل مزامنة —
+ * وهو ما يحتاجها أصلًا. فنحفظ كل صورة تحت مفتاحها، وما يبقى في البيانات إلا
+ * معرّفها، وتُقدَّم على مسار ثابت يخزّنه المتصفح للأبد.
+ */
+const IMG_PREFIX = 'img:';
+const IMG_CAP = 1_500_000; // حد أعلى للـ data URI بعد الضغط في المتصفح
+const IMG_MIME = { jpeg: 'image/jpeg', jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+
+/** يفكّ `data:image/jpeg;base64,...` إلى نوع وبايتات، أو null لو مو صورة. */
+const parseDataUrl = (raw) => {
+  const m = /^data:image\/(jpeg|jpg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(raw || ''));
+  if (!m) return null;
+  return { type: IMG_MIME[m[1]], bytes: Buffer.from(m[2], 'base64') };
+};
+
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
@@ -113,6 +132,22 @@ const guard = (incoming, current, me) => {
 /* ---------------------------------- المعالج ---------------------------------- */
 
 export default async (req) => {
+  /**
+   * الصور تُطلب بالمسار مباشرة عشان يقدر المتصفح يخزّنها: المعرّف مشتق من
+   * محتواها، فما تتغيّر أبدًا تحت نفس العنوان — ومعناها تُنزَّل مرة وحدة في العمر.
+   */
+  if (req.method === 'GET') {
+    const id = /\/img\/([A-Za-z0-9_-]{6,64})$/.exec(new URL(req.url).pathname)?.[1];
+    if (!id) return json({ error: 'not_found' }, 404);
+    let raw;
+    try { raw = await store().get(IMG_PREFIX + id); } catch { raw = null; }
+    const img = raw && parseDataUrl(raw);
+    if (!img) return json({ error: 'not_found' }, 404);
+    return new Response(img.bytes, {
+      headers: { 'content-type': img.type, 'cache-control': 'public, max-age=31536000, immutable' },
+    });
+  }
+
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
 
   let body;
@@ -188,6 +223,17 @@ export default async (req) => {
   // ما بعدها يحتاج توكن سليم.
   const me = userFromToken(doc, body.token);
   if (!me) return json({ error: 'unauthorized' }, 401);
+
+  // رفع صورة برنامج: ترجع معرّفًا، وهو وحده اللي ينحفظ في البيانات
+  if (op === 'img_put') {
+    if (!allowed(me, 'البرامج')) return json({ error: 'forbidden' }, 403);
+    const raw = String(body.data || '');
+    if (raw.length > IMG_CAP || !parseDataUrl(raw)) return json({ error: 'bad_image' }, 400);
+    // المعرّف من المحتوى: نفس الصورة ما تتخزّن مرتين، والعنوان يبقى صالحًا للتخزين
+    const id = crypto.createHash('sha256').update(raw).digest('base64url').slice(0, 32);
+    await store().set(IMG_PREFIX + id, raw);
+    return json({ ok: true, id });
+  }
 
   // سحب التحديثات: لو ما تغيّر شي نرجّع ردًّا خفيفًا بدل البيانات كاملة.
   if (op === 'pull') {

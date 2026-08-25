@@ -11,13 +11,15 @@ import {
   studentsOf, upsertRegistration, findDuplicates, mergeGuardians, mergeStudents, guardianNameFrom,
   dedupeByPhone, remapParticipants,
 } from './people.js';
-import { makeToken as makeSignupToken } from './signup.js';
+import { makeToken as makeSignupToken, TEXTS, waIntl, varNames, fieldsFor, DEFAULT_WA_TEMPLATE } from './signup.js';
+import { readImage, POSTER, GALLERY } from './img.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
-import { FaydhLogo } from './logo.jsx';
+import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
-const APP_VERSION = 'v5.1 · قائمة الانتظار';
+/** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
+const APP_VERSION = 'v5.2';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -234,6 +236,9 @@ export const emptySignup = () => ({
   enabled: false, token: '', price: '', openWeeks: [], accounts: [], extraFields: [],
   // البرنامج المجمّع يُباع إما بسعر اليوم أو بباقات يحددها صاحب التطبيق
   allowPerDay: true, packages: [],
+  // محتوى الصفحة اللي يكتبه صاحب البرنامج: صورة إعلان ومعرض ونقاط ونصوص
+  poster: '', gallery: [], details: '', notice: '', texts: {},
+  waContact: true, waRedirect: true, waTemplate: '',
 });
 
 /* ------------------------------ عناصر واجهة عامة ------------------------------ */
@@ -276,6 +281,52 @@ function Field({ label, children, hint }) {
     </div>
   );
 }
+
+/** مفتاح تشغيل/إيقاف بنفس شكل مفتاح «التسجيل الذاتي» اللي فوق. */
+function Toggle({ label, hint, on, onChange }) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-2.5">
+      <div className="min-w-0">
+        <div className="text-sm text-slate-700">{label}</div>
+        {hint && <div className="text-[11px] text-slate-400 mt-0.5 leading-5">{hint}</div>}
+      </div>
+      <button type="button" onClick={() => onChange(!on)}
+        className={`shrink-0 w-12 h-7 rounded-full relative transition-colors ${on ? 'bg-brand-600' : 'bg-slate-200'}`}>
+        <span className={`absolute top-1 w-5 h-5 rounded-full bg-white transition-all ${on ? 'right-1' : 'right-6'}`} />
+      </button>
+    </div>
+  );
+}
+
+/** اختيار صورة من الجوال. الملف ما يُرفع هنا — الرافع هو المستدعي. */
+function ImagePick({ label, onPick, busy, wide, square }) {
+  const base = 'inline-flex items-center justify-center cursor-pointer text-sm font-semibold transition-colors';
+  const shape = square
+    ? 'w-20 h-16 rounded-lg border border-dashed border-slate-300 text-slate-400 text-xl'
+    : `${wide ? 'w-full py-6 border border-dashed border-slate-300 text-slate-500' : 'px-4 py-2.5 bg-brand-600 text-white'} rounded-lg`;
+  return (
+    <label className={`${base} ${shape} ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
+      <input type="file" accept="image/*" className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onPick(f); }} />
+      {busy ? '...' : label}
+    </label>
+  );
+}
+
+/** الكلمات اللي يقدر صاحب البرنامج يغيّرها في صفحة ولي الأمر. */
+const TEXT_LABELS = [
+  ['intro', 'السطر فوق اسم البرنامج'],
+  ['guardian', 'عنوان قسم ولي الأمر'],
+  ['guardianHint', 'الشرح تحته'],
+  ['student', 'عنوان قسم الطالب'],
+  ['contact', 'زر «تواصل معنا»'],
+  ['submit', 'زر الإرسال'],
+  ['successTitle', 'عنوان صفحة النجاح'],
+  ['successSub', 'السطر تحته'],
+  ['refLabel', 'تسمية الرقم المرجعي'],
+  ['redirectNote', 'تنبيه التحويل لواتساب'],
+  ['openWa', 'زر فتح واتساب'],
+];
 
 const inputCls = 'w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent';
 const btnPrimary = 'bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors flex items-center gap-1.5 justify-center disabled:opacity-40 disabled:cursor-not-allowed';
@@ -1396,6 +1447,38 @@ export default function App() {
 
   const regenerateToken = () => { patchSignup({ token: makeSignupToken() }); closeModal(); };
 
+  /** نص من نصوص الصفحة. الفاضي معناه «شِله»، فنفرّق بين المكتوب والمتروك. */
+  const patchText = (key, value) => {
+    const s = { ...emptySignup(), ...(program.signup || {}) };
+    patchSignup({ texts: { ...(s.texts || {}), [key]: value } });
+  };
+  /** الرجوع للنص الافتراضي = حذف ما كُتب، لا كتابته من جديد. */
+  const resetText = (key) => {
+    const s = { ...emptySignup(), ...(program.signup || {}) };
+    const next = { ...(s.texts || {}) };
+    delete next[key];
+    patchSignup({ texts: next });
+  };
+
+  /**
+   * الصورة تروح للخادم أول، وما ينحفظ في البيانات إلا معرّفها — عشان ما تتحمّل
+   * الصور مع كل مزامنة على كل جهاز في الفريق.
+   */
+  const uploadImage = async (file, kind) => {
+    setForm((f) => ({ ...f, imgBusy: true, imgError: '' }));
+    try {
+      const dataUrl = await readImage(file, kind === 'poster' ? POSTER : GALLERY);
+      const r = await api('img_put', { token: sess.current.token, data: dataUrl });
+      if (r.status !== 200 || !r.body?.id) throw new Error('ما قدرنا نرفع الصورة. جرّب مرة ثانية.');
+      const s = { ...emptySignup(), ...(program.signup || {}) };
+      if (kind === 'poster') patchSignup({ poster: r.body.id });
+      else patchSignup({ gallery: [...(s.gallery || []), r.body.id].slice(0, 12) });
+      setForm((f) => ({ ...f, imgBusy: false, imgError: '' }));
+    } catch (e) {
+      setForm((f) => ({ ...f, imgBusy: false, imgError: e.message || 'ما نفعت الصورة.' }));
+    }
+  };
+
   /** التسجيلات اللي تنتظر تأكيد وصول مبلغها، عبر البرنامج وأسابيعه. */
   const signupPending = (p) => {
     const out = [];
@@ -1764,7 +1847,7 @@ export default function App() {
       <Shell dark>
         <div className="flex-1 flex flex-col items-center justify-center px-8 text-center">
           <FaydhLogo size={116} variant="full" />
-          <div className="text-brand-200 text-base font-semibold mt-8">فريق فيض</div>
+          <div className="text-brand-200 text-base font-semibold mt-8">{TEAM_NAME}</div>
           <button onClick={() => setStage(mustLogin ? 'login' : 'year')}
             className="mt-12 bg-white text-brand-900 font-bold text-sm px-10 py-3.5 rounded-2xl">
             ابدأ
@@ -2488,6 +2571,137 @@ export default function App() {
                             <Plus size={15} /> سؤال جديد
                           </button>
                         </Field>
+                      </div>
+
+                      {/* ---------------- محتوى الصفحة: صور ونصوص يكتبها صاحب البرنامج ---------------- */}
+
+                      <div className={cardCls}>
+                        <div className="font-bold text-slate-800 mb-1">صورة الإعلان</div>
+                        <div className="text-xs text-slate-400 mb-3">تطلع فوق صفحة ولي الأمر. تُصغَّر تلقائيًا.</div>
+                        {s.poster ? (
+                          <>
+                            <img src={`/api/img/${s.poster}`} alt="إعلان البرنامج" className="w-full rounded-xl mb-3" />
+                            <div className="flex gap-2">
+                              <ImagePick label="تغيير" busy={form.imgBusy} onPick={(f) => uploadImage(f, 'poster')} />
+                              <button className={btnGhost} onClick={() => patchSignup({ poster: '' })}>حذف</button>
+                            </div>
+                          </>
+                        ) : (
+                          <ImagePick label="اختر صورة" wide busy={form.imgBusy} onPick={(f) => uploadImage(f, 'poster')} />
+                        )}
+                      </div>
+
+                      <div className={cardCls}>
+                        <div className="font-bold text-slate-800 mb-1">معرض الصور</div>
+                        <div className="text-xs text-slate-400 mb-3">صور من الموسم أو الأنشطة، يتصفحها ولي الأمر تحت التفاصيل.</div>
+                        <div className="flex flex-wrap gap-2">
+                          {(s.gallery || []).map((id) => (
+                            <div key={id} className="relative">
+                              <img src={`/api/img/${id}`} alt="" className="w-20 h-16 object-cover rounded-lg" />
+                              <button
+                                onClick={() => patchSignup({ gallery: s.gallery.filter((x) => x !== id) })}
+                                className="absolute -top-1.5 -left-1.5 bg-white border border-slate-200 rounded-full p-0.5 text-red-500 shadow-sm">
+                                <X size={12} />
+                              </button>
+                            </div>
+                          ))}
+                          <ImagePick label="+" square busy={form.imgBusy} onPick={(f) => uploadImage(f, 'gallery')} />
+                        </div>
+                      </div>
+
+                      {form.imgError && <div className="text-red-500 text-xs px-1">{form.imgError}</div>}
+
+                      <div className={cardCls}>
+                        <Field label="تفاصيل البرنامج" hint="كل سطر يطلع نقطة عند ولي الأمر. اتركه فاضيًا فما يظهر شي.">
+                          <textarea className={inputCls + ' h-32 leading-7'} value={s.details || ''}
+                            onChange={(e) => patchSignup({ details: e.target.value })}
+                            placeholder={'من (١/١٣) حتى (٢/١٥) = خمسة أسابيع\nمن الأحد حتى الأربعاء = ٢٠ يوم\nمن ٨ سنوات حتى ١٦ سنة'} />
+                        </Field>
+                        <Field label="تنبيه أعلى الصفحة — اختياري" hint="يطلع في صندوق بارز قبل النموذج.">
+                          <input className={inputCls} value={s.notice || ''}
+                            onChange={(e) => patchSignup({ notice: e.target.value })}
+                            placeholder="مثال: جهّز إيصال التحويل قبل ما تبدأ" />
+                        </Field>
+                      </div>
+
+                      <div className={cardCls}>
+                        <div className="font-bold text-slate-800 mb-1">واتساب</div>
+                        <div className="text-xs text-slate-400 mb-4">رقم واحد للفريق، يُستخدم في كل البرامج.</div>
+                        <Field label="رقم التواصل">
+                          <input className={inputCls} dir="ltr" value={data.waNumber || ''}
+                            onChange={(e) => save({ ...data, waNumber: e.target.value })} placeholder="0557821586" />
+                          {data.waNumber && !waIntl(data.waNumber) && (
+                            <div className="text-red-500 text-xs mt-1.5">الرقم مو واضح. اكتبه كذا: 0557821586</div>
+                          )}
+                        </Field>
+
+                        <Toggle label="زر «تواصل معنا» في صفحة التسجيل" on={s.waContact !== false}
+                          onChange={(v) => patchSignup({ waContact: v })} />
+                        <Toggle label="التحويل لواتساب بعد التسجيل"
+                          hint="يشوف صفحة النجاح ورقمه المرجعي، ثم ينتقل للمحادثة."
+                          on={s.waRedirect !== false} onChange={(v) => patchSignup({ waRedirect: v })} />
+
+                        {s.waRedirect !== false && (
+                          <div className="mt-4">
+                            <Field label="نص الرسالة الجاهزة" hint="اضغط المتغيّر ينضاف للنص. وتقدر تمسحه وتكتب اللي تبي.">
+                              <textarea className={inputCls + ' h-24 leading-7'}
+                                value={s.waTemplate ?? (data.waTemplate || '')}
+                                onChange={(e) => patchSignup({ waTemplate: e.target.value })}
+                                placeholder={DEFAULT_WA_TEMPLATE} />
+                              <div className="flex flex-wrap gap-1.5 mt-2">
+                                {varNames({ fields: fieldsFor(data, program) }).map((v) => (
+                                  <button key={v} type="button"
+                                    onClick={() => patchSignup({ waTemplate: `${s.waTemplate ?? (data.waTemplate || '')}${'{' + v + '}'}` })}
+                                    className="bg-brand-50 text-brand-700 rounded-lg px-2 py-1 text-[11px] font-semibold">
+                                    {'{' + v + '}'}
+                                  </button>
+                                ))}
+                              </div>
+                            </Field>
+                            <button className="text-xs text-brand-600 font-semibold"
+                              onClick={() => save({
+                                ...data,
+                                waTemplate: s.waTemplate ?? (data.waTemplate || ''),
+                                programs: data.programs.map((p) => (p.id !== program.id ? p
+                                  : { ...p, signup: { ...emptySignup(), ...(p.signup || {}), waTemplate: '' } })),
+                              })}>
+                              اجعله النص العام لكل البرامج
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className={cardCls}>
+                        <button className="w-full flex items-center justify-between"
+                          onClick={() => setForm({ ...form, showTexts: !form.showTexts })}>
+                          <span className="font-bold text-slate-800">نصوص الصفحة</span>
+                          <span className="text-xs text-slate-400">{form.showTexts ? 'إخفاء' : 'تعديل الكلمات'}</span>
+                        </button>
+                        {form.showTexts && (
+                          <div className="mt-4">
+                            <div className="text-xs text-slate-400 mb-4">
+                              اكتب ما تبي، أو اتركه فاضيًا فيختفي العنصر من الصفحة.
+                            </div>
+                            {TEXT_LABELS.map(([key, label]) => {
+                              const custom = (s.texts || {})[key] !== undefined;
+                              return (
+                                <div key={key} className="mb-3">
+                                  <div className="flex items-center justify-between mb-1.5">
+                                    <label className="text-sm font-medium text-slate-600">{label}</label>
+                                    {custom && (
+                                      <button className="text-[11px] text-slate-400" onClick={() => resetText(key)}>
+                                        رجّع الأصلي
+                                      </button>
+                                    )}
+                                  </div>
+                                  <input className={inputCls} value={(s.texts || {})[key] ?? ''}
+                                    placeholder={TEXTS[key]}
+                                    onChange={(e) => patchText(key, e.target.value)} />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     </>
                   )}

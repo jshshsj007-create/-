@@ -3,11 +3,11 @@
  * وما تعرف شيئًا عن بقية البيانات — تستقبل فقط.
  */
 import React, { useState, useEffect } from 'react';
-import { Check, AlertTriangle, Plus, X, Copy, Upload } from 'lucide-react';
+import { Check, AlertTriangle, Plus, X, Copy, Upload, MessageCircle } from 'lucide-react';
 import { api } from './cloud.js';
-import { FaydhLogo } from './logo.jsx';
+import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 import { isValidPhone } from './people.js';
-import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, daysAllowed, daysAreFixed, coversAll, RECEIPT_TYPES, RECEIPT_MAX } from './signup.js';
+import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, daysAllowed, daysAreFixed, coversAll, RECEIPT_TYPES, RECEIPT_MAX, txt, waLink, fillTemplate, signupVars } from './signup.js';
 
 const input = 'w-full border border-slate-200 rounded-xl px-3.5 py-3 text-[15px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent';
 const inputBad = input.replace('border-slate-200', 'border-red-300');
@@ -19,11 +19,22 @@ function Shell({ children }) {
       <div className="bg-brand-900 px-5 pt-6 pb-14">
         <div className="max-w-lg mx-auto flex items-center gap-3">
           <FaydhLogo size={44} variant="mark" />
-          <div className="text-white font-extrabold text-xl">فريق فيض</div>
+          <div className="text-white font-extrabold text-xl">{TEAM_NAME}</div>
         </div>
       </div>
       <div className="px-4 -mt-8 pb-16 max-w-lg mx-auto">{children}</div>
     </div>
+  );
+}
+
+/** زر واتساب — نفس شكله في كل مكان، وما يظهر إلا لو فيه رقم صالح. */
+function WaButton({ href, children }) {
+  if (!href) return null;
+  return (
+    <a href={href} target="_blank" rel="noreferrer"
+      className="w-full bg-[#25D366] text-white font-bold rounded-xl py-3.5 flex items-center justify-center gap-2 text-[15px]">
+      <MessageCircle size={19} /> {children}
+    </a>
   );
 }
 
@@ -125,6 +136,18 @@ export default function SignupPage({ token }) {
   const [result, setResult] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [goWa, setGoWa] = useState('');
+
+  /**
+   * بعد التسجيل يشوف رقمه المرجعي أول، ثم يتحوّل للمحادثة. المهلة مقصودة:
+   * لو حوّلناه فورًا ما لحق يقرأ شيئًا. والزر تحت يبقى شبكة أمان لو منع
+   * المتصفح التحويل التلقائي.
+   */
+  useEffect(() => {
+    if (!goWa) return undefined;
+    const t = setTimeout(() => { location.href = goWa; }, 2200);
+    return () => clearTimeout(t);
+  }, [goWa]);
 
   useEffect(() => {
     (async () => {
@@ -187,28 +210,33 @@ export default function SignupPage({ token }) {
   }
 
   if (state === 'done') {
-    const acc = view.accounts.find((a) => a.id === accountId);
+    const vars = signupVars(view, { answers, kids, accountId }, { ref: result?.ref });
+    const href = view.wa.redirect
+      ? waLink(view.wa.number, fillTemplate(view.wa.template, vars))
+      : '';
+    const note = txt(view, 'redirectNote', vars);
     return (
       <Shell>
         <div className="bg-white rounded-2xl p-8 text-center">
           <div className="w-14 h-14 rounded-full bg-green-100 text-green-700 flex items-center justify-center mx-auto mb-4">
             <Check size={28} />
           </div>
-          <div className="font-bold text-xl text-slate-800 mb-1">تم تسجيلك</div>
-          <div className="text-sm text-slate-500 mb-5">
-            سجّلنا {result?.count > 1 ? `${result.count} أبناء` : 'ابنك'} في <b>{view.programName}</b>.
-          </div>
-          <div className="bg-slate-50 rounded-xl px-4 py-3 text-sm text-slate-600 mb-5">
-            الرقم المرجعي: <b dir="ltr">{result?.ref}</b>
-          </div>
-          {acc && acc.transferInfo ? (
-            <Note tone="amber">
-              حوّل <b>{fmt(totalDue(view, kids))} ر.س</b> على <b>{acc.name}</b>:
-              <div className="font-mono text-[13px] mt-1.5 select-all" dir="ltr">{acc.transferInfo}</div>
-              {!receipt && <div className="mt-2 text-xs">وبعد التحويل أرسل صورة الإيصال للفريق.</div>}
-            </Note>
-          ) : (
-            <Note>المبلغ <b>{fmt(totalDue(view, kids))} ر.س</b> يُدفع عند الحضور.</Note>
+          {txt(view, 'successTitle', vars) && (
+            <div className="font-bold text-xl text-slate-800 mb-1">{txt(view, 'successTitle', vars)}</div>
+          )}
+          {txt(view, 'successSub', vars) && (
+            <div className="text-sm text-slate-500 mb-5">{txt(view, 'successSub', vars)}</div>
+          )}
+          {txt(view, 'refLabel', vars) && (
+            <div className="bg-slate-50 rounded-xl px-4 py-3 text-sm text-slate-600 mb-5">
+              {txt(view, 'refLabel', vars)}: <b dir="ltr">{result?.ref}</b>
+            </div>
+          )}
+          {href && (
+            <>
+              {note && <Note tone="amber">{note}</Note>}
+              <div className="mt-3"><WaButton href={href}>{txt(view, 'openWa', vars)}</WaButton></div>
+            </>
           )}
         </div>
       </Shell>
@@ -246,7 +274,15 @@ export default function SignupPage({ token }) {
     setErrors({});
     setState('sending');
     const r = await api('signup_submit', body);
-    if (r.status === 200) { setResult(r.body); setState('done'); return; }
+    if (r.status === 200) {
+      setResult(r.body);
+      if (view.wa.redirect) {
+        const vars = signupVars(view, body, { ref: r.body?.ref });
+        setGoWa(waLink(view.wa.number, fillTemplate(view.wa.template, vars)));
+      }
+      setState('done');
+      return;
+    }
     if (r.status === 400 && r.body?.errors) { setErrors(r.body.errors); setState('form'); return; }
     if (r.status === 429) { setErrors({ _: 'أرسلت محاولات كثيرة. انتظر شوي وجرّب مرة ثانية.' }); setState('form'); return; }
     if (r.status === 404) { setState('closed'); return; }
@@ -255,22 +291,53 @@ export default function SignupPage({ token }) {
   };
 
   const total = totalDue(view, kids);
+  // كل سطر يكتبه صاحب البرنامج يصير نقطة
+  const details = String(view.details || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const contactHref = waLink(view.wa.number, '');
 
   return (
     <Shell>
+      {view.poster && (
+        <div className="bg-white rounded-2xl p-2.5 mb-4">
+          <img src={`/api/img/${view.poster}`} alt={view.programName} className="w-full rounded-xl block" />
+        </div>
+      )}
+
       <div className="bg-white rounded-2xl p-5 mb-4">
-        <div className="text-xs text-slate-400 mb-1">التسجيل في</div>
+        {txt(view, 'intro') && <div className="text-xs text-slate-400 mb-1">{txt(view, 'intro')}</div>}
         <div className="font-extrabold text-xl text-slate-800">{view.programName}</div>
-        {view.price > 0 && (
-          <div className="text-sm text-slate-500 mt-1">
-            {fmt(view.price)} ر.س {view.days.length ? 'لكل يوم' : 'للاشتراك'}
-          </div>
+        {details.length > 0 && (
+          <ul className="mt-3 space-y-2">
+            {details.map((line, i) => (
+              <li key={i} className="flex gap-2.5 text-[13.5px] text-slate-600 leading-6">
+                <span className="w-1.5 h-1.5 rounded-full bg-brand-600 shrink-0 mt-2.5" />
+                <span>{line}</span>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
 
+      {(view.gallery || []).length > 0 && (
+        <div className="bg-white rounded-2xl p-3 mb-4">
+          <div className="flex gap-2 overflow-x-auto">
+            {view.gallery.map((id) => (
+              <img key={id} src={`/api/img/${id}`} alt=""
+                className="w-28 h-20 object-cover rounded-xl shrink-0" />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {view.notice && <div className="mb-4"><Note tone="amber">{view.notice}</Note></div>}
+
+      {view.wa.contact && contactHref && (
+        <div className="mb-4"><WaButton href={contactHref}>{txt(view, 'contact')}</WaButton></div>
+      )}
+
       <div className="bg-white rounded-2xl p-5 mb-4">
-        <div className="font-bold text-slate-800 mb-1">بيانات ولي الأمر</div>
-        <div className="text-xs text-slate-400 mb-4">جوالك هو اللي نعرفك فيه لو سجّلت مرة ثانية.</div>
+        {txt(view, 'guardian') && <div className="font-bold text-slate-800 mb-1">{txt(view, 'guardian')}</div>}
+        {txt(view, 'guardianHint') && <div className="text-xs text-slate-400 mb-4">{txt(view, 'guardianHint')}</div>}
         {guardianFields.map((f) => (
           <div key={f.id} data-bad={errors[f.id] ? '1' : undefined}>
             <Row label={f.label} required={f.required} error={errors[f.id]}>
@@ -287,7 +354,7 @@ export default function SignupPage({ token }) {
       {kids.map((kid, i) => (
         <div key={i} className="bg-white rounded-2xl p-5 mb-4">
           <div className="flex items-center justify-between mb-4">
-            <div className="font-bold text-slate-800">{many ? `الطالب ${i + 1}` : 'بيانات الطالب'}</div>
+            <div className="font-bold text-slate-800">{many ? `${txt(view, 'student')} ${i + 1}` : txt(view, 'student')}</div>
             {many && (
               <button type="button" className="text-red-400 p-1" onClick={() => setKids(kids.filter((_, j) => j !== i))}>
                 <X size={18} />
@@ -490,7 +557,7 @@ export default function SignupPage({ token }) {
 
       <button type="button" disabled={state === 'sending'} onClick={submit}
         className="w-full bg-brand-600 text-white font-bold rounded-2xl py-4 text-[15px] disabled:opacity-50">
-        {state === 'sending' ? 'جاري الإرسال...' : 'إرسال التسجيل'}
+        {state === 'sending' ? 'جاري الإرسال...' : txt(view, 'submit')}
       </button>
       <div className="text-center text-[11px] text-slate-400 mt-3">بياناتك تُستخدم لتنظيم البرنامج فقط.</div>
     </Shell>
