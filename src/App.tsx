@@ -856,7 +856,11 @@ export default function App() {
           revRef.current = r.body.rev;
           baseRef.current = clone(payload);
           clearPending();
-          setData(payload);
+          /**
+           * ما نرجّع النسخة المرسلة على الشاشة إلا إذا ما صار تعديل بعدها.
+           * وإلا، اللي يكتب جملة يشوف حروفه تنمسح: كل حفظ يرجّعه للحظة انطلاقه.
+           */
+          if (!queueRef.current) setData(payload);
           setSavedAt(Date.now());
           setSyncState('idle');
           break;
@@ -905,6 +909,21 @@ export default function App() {
     }
     queueRef.current = next;
     flush();
+  }, [cloudOn, flush]);
+
+  /**
+   * حفظ الكتابة: يظهر على الشاشة فورًا، ويرحل للخادم بعد ما تهدأ اليد.
+   * بدونه نرسل حفظًا كاملًا مع كل حرف — إرهاق للشبكة وللرصيد بلا فائدة.
+   */
+  const typeTimer = useRef(null);
+  const saveTyping = useCallback((next) => {
+    setData(next);
+    clearTimeout(typeTimer.current);
+    typeTimer.current = setTimeout(() => {
+      if (!cloudOn) { storage.set(STORAGE_KEY, JSON.stringify(next)); setSavedAt(Date.now()); return; }
+      queueRef.current = next;
+      flush();
+    }, 700);
   }, [cloudOn, flush]);
 
   if (loading || !data) {
@@ -1004,6 +1023,8 @@ export default function App() {
     }),
   });
   const patchLedger = (ref, updater) => save(withLedger(data, ref, updater));
+  /** نفسه، لكن للخانات اللي تُكتب حرفًا حرفًا (التواريخ مثلًا). */
+  const typeLedger = (ref, updater) => saveTyping(withLedger(data, ref, updater));
 
   const addLedgerItem = (key) => {
     // كان الزر ما يسوي شيئًا بصمت لو نسي يختار الحساب
@@ -1281,6 +1302,7 @@ export default function App() {
     closeModal();
   };
   const patchWeek = (patch) => patchLedger({ kind: 'week', programId: selectedProgramId, weekId: selectedWeekId }, () => patch);
+  const typeWeek = (patch) => typeLedger({ kind: 'week', programId: selectedProgramId, weekId: selectedWeekId }, () => patch);
   const removeWeek = (weekId) => {
     patchLedger({ kind: 'program', programId: selectedProgramId }, (p) => {
       const attendance = { ...(p.attendance || {}) };
@@ -1414,6 +1436,7 @@ export default function App() {
     closeModal();
   };
   const patchTrip = (patch) => save({ ...data, trips: data.trips.map((t) => (t.id !== selectedTripId ? t : { ...t, ...patch })) });
+  const typeTrip = (patch) => saveTyping({ ...data, trips: data.trips.map((t) => (t.id !== selectedTripId ? t : { ...t, ...patch })) });
   /** بنود السفرة: كل بند باسمه ومبلغه، عشان تعرف كل سفرة وين راحت فلوسها. */
   const addTripItem = (key) => {
     if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب اسم البند' }); return; }
@@ -1425,11 +1448,14 @@ export default function App() {
 
   /* --------------------------- رابط التسجيل --------------------------- */
 
-  const patchSignup = (patch) => save({
+  const signupPatched = (patch) => ({
     ...data,
     programs: data.programs.map((p) => (p.id !== program.id ? p
       : { ...p, signup: { ...emptySignup(), ...(p.signup || {}), ...patch } })),
   });
+  const patchSignup = (patch) => save(signupPatched(patch));
+  /** للخانات اللي تُكتب حرفًا حرفًا: نفس الحفظ، بس بعد ما يخلص الكاتب. */
+  const typeSignup = (patch) => saveTyping(signupPatched(patch));
 
   /** أول فتح يولّد الرمز ويقترح إعدادات معقولة بدل ما يبدأ من فراغ. */
   const toggleSignup = () => {
@@ -1450,7 +1476,7 @@ export default function App() {
   /** نص من نصوص الصفحة. الفاضي معناه «شِله»، فنفرّق بين المكتوب والمتروك. */
   const patchText = (key, value) => {
     const s = { ...emptySignup(), ...(program.signup || {}) };
-    patchSignup({ texts: { ...(s.texts || {}), [key]: value } });
+    typeSignup({ texts: { ...(s.texts || {}), [key]: value } });
   };
   /** الرجوع للنص الافتراضي = حذف ما كُتب، لا كتابته من جديد. */
   const resetText = (key) => {
@@ -2464,7 +2490,7 @@ export default function App() {
                               </label>
                               {s.allowPerDay !== false && (
                                 <input type="number" className={inputCls} value={s.price ?? ''}
-                                  onChange={(e) => patchSignup({ price: e.target.value })} placeholder="سعر اليوم — 40" />
+                                  onChange={(e) => typeSignup({ price: e.target.value })} placeholder="سعر اليوم — 40" />
                               )}
                             </Field>
 
@@ -2497,7 +2523,7 @@ export default function App() {
                           <Field label="سعر الاشتراك (ر.س)"
                             hint="لكل أسبوع. يُستخدم في الرابط فقط، وتبقى تكتب المبلغ اللي تبي في تسجيلك اليدوي.">
                             <input type="number" className={inputCls} value={s.price ?? ''}
-                              onChange={(e) => patchSignup({ price: e.target.value })} placeholder="50" />
+                              onChange={(e) => typeSignup({ price: e.target.value })} placeholder="50" />
                           </Field>
                         )}
 
@@ -2614,12 +2640,12 @@ export default function App() {
                       <div className={cardCls}>
                         <Field label="تفاصيل البرنامج" hint="كل سطر يطلع نقطة عند ولي الأمر. اتركه فاضيًا فما يظهر شي.">
                           <textarea className={inputCls + ' h-32 leading-7'} value={s.details || ''}
-                            onChange={(e) => patchSignup({ details: e.target.value })}
+                            onChange={(e) => typeSignup({ details: e.target.value })}
                             placeholder={'من (١/١٣) حتى (٢/١٥) = خمسة أسابيع\nمن الأحد حتى الأربعاء = ٢٠ يوم\nمن ٨ سنوات حتى ١٦ سنة'} />
                         </Field>
                         <Field label="تنبيه أعلى الصفحة — اختياري" hint="يطلع في صندوق بارز قبل النموذج.">
                           <input className={inputCls} value={s.notice || ''}
-                            onChange={(e) => patchSignup({ notice: e.target.value })}
+                            onChange={(e) => typeSignup({ notice: e.target.value })}
                             placeholder="مثال: جهّز إيصال التحويل قبل ما تبدأ" />
                         </Field>
                       </div>
@@ -2629,7 +2655,7 @@ export default function App() {
                         <div className="text-xs text-slate-400 mb-4">رقم واحد للفريق، يُستخدم في كل البرامج.</div>
                         <Field label="رقم التواصل">
                           <input className={inputCls} dir="ltr" value={data.waNumber || ''}
-                            onChange={(e) => save({ ...data, waNumber: e.target.value })} placeholder="0557821586" />
+                            onChange={(e) => saveTyping({ ...data, waNumber: e.target.value })} placeholder="0557821586" />
                           {data.waNumber && !waIntl(data.waNumber) && (
                             <div className="text-red-500 text-xs mt-1.5">الرقم مو واضح. اكتبه كذا: 0557821586</div>
                           )}
@@ -2646,7 +2672,7 @@ export default function App() {
                             <Field label="نص الرسالة الجاهزة" hint="اضغط المتغيّر ينضاف للنص. وتقدر تمسحه وتكتب اللي تبي.">
                               <textarea className={inputCls + ' h-24 leading-7'}
                                 value={s.waTemplate ?? (data.waTemplate || '')}
-                                onChange={(e) => patchSignup({ waTemplate: e.target.value })}
+                                onChange={(e) => typeSignup({ waTemplate: e.target.value })}
                                 placeholder={DEFAULT_WA_TEMPLATE} />
                               <div className="flex flex-wrap gap-1.5 mt-2">
                                 {varNames({ fields: fieldsFor(data, program) }).map((v) => (
@@ -2784,7 +2810,7 @@ export default function App() {
               <div>
                 <div className={cardCls + ' mb-4'}>
                   <div className="text-sm text-slate-500 mb-2">التاريخ (هـ)</div>
-                  <input className={inputCls} value={week.date} onChange={(e) => patchWeek({ date: e.target.value })} placeholder="1447/01/19" />
+                  <input className={inputCls} value={week.date} onChange={(e) => typeWeek({ date: e.target.value })} placeholder="1447/01/19" />
                 </div>
                 <div className="flex items-center gap-2 mb-3">
                   <div className="relative flex-1">
@@ -2888,7 +2914,7 @@ export default function App() {
                   <div className="space-y-4">
                     <div className={cardCls}>
                       <div className="text-sm text-slate-500 mb-2">التاريخ (هـ)</div>
-                      <input className={inputCls} value={week.date} onChange={(e) => patchWeek({ date: e.target.value })} placeholder="1447/01/19" />
+                      <input className={inputCls} value={week.date} onChange={(e) => typeWeek({ date: e.target.value })} placeholder="1447/01/19" />
                     </div>
                     <LedgerFinance
                       ledger={week}
@@ -3294,7 +3320,7 @@ export default function App() {
             </div>
             <div className={cardCls + ' mb-3'}>
               <div className="text-sm text-slate-500 mb-2">التاريخ (هـ)</div>
-              <input className={inputCls} value={trip.date} onChange={(e) => patchTrip({ date: e.target.value })} placeholder="1447/03/01" />
+              <input className={inputCls} value={trip.date} onChange={(e) => typeTrip({ date: e.target.value })} placeholder="1447/03/01" />
             </div>
 
             <div className="grid grid-cols-3 gap-2 mb-4">
