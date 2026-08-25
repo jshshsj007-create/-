@@ -20,6 +20,17 @@ export const backupFile = (data, now) => JSON.stringify(
 const stampOf = (now) => new Date(now).toISOString().slice(0, 10);
 
 /**
+ * اسم الملف في درايف: يبدأ بالاسم عشان يبان قبل ما يُقطع العرض، وبعده التاريخ
+ * والساعة — فالنسخ تترتب من نفسها، ونسختان في يوم واحد ما تلتبسان.
+ * الوقت بتوقيت السعودية، لأن اللي يقرأ الاسم هنا لا في غرينتش.
+ */
+const KSA = 3 * 60 * 60 * 1000;
+const fileNameOf = (now) => {
+  const t = new Date(now + KSA).toISOString();
+  return `فيض ${t.slice(0, 10)} ${t.slice(11, 16).replace(':', '-')}.json`;
+};
+
+/**
  * يرفع النسخة لدرايف عبر السكربت اللي نشره صاحب التطبيق في حسابه.
  * الرابط والكلمة السرية يعيشان في إعدادات Netlify — لا في الكود ولا في المستودع.
  */
@@ -53,7 +64,7 @@ export const runBackup = async (store, { now = Date.now(), env = process.env } =
   if (!doc?.data) return { ok: false, error: 'ما فيه بيانات بعد' };
 
   const stamp = stampOf(now);
-  const name = `Faydh-backup-${stamp}.json`;
+  const name = fileNameOf(now);
   const body = backupFile(doc.data, now);
 
   // لقطة داخل الخادم، مع فهرس يحدد أيها نبقي وأيها ننظّف
