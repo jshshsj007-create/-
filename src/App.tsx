@@ -19,7 +19,7 @@ import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v5.2.1';
+const APP_VERSION = 'v5.3';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -93,6 +93,159 @@ export const weekState = (l) => {
   if (l?.status === 'مغلق') return 'مكتمل';
   const started = headcount(l) > 0 || L.revenue(l) > 0 || L.expenses(l) > 0;
   return started ? 'جاري' : 'لم يبدأ';
+};
+
+/* ---------------------------- مقارنة المواسم ---------------------------- */
+/**
+ * دفاتر البرنامج: المجمّع دفتره واحد على مستواه، والمنفصل دفتر لكل يوم.
+ * كل حساب فوق البرنامج يمرّ من هنا، فما ينسى نوعًا ولا يحسب واحدًا مرتين.
+ */
+export const ledgersOf = (p) => (p?.type === 'مجمع' ? [p] : (p?.weeks || []));
+
+/**
+ * الحضور: المنفصل يخزّنه على المشترك داخل يومه، والمجمّع في خريطة على البرنامج.
+ * اليوم السريع عدد بلا أسماء فما فيه حضور يُحسب — نتركه خارج النسبة كليًا
+ * بدل ما ننزّلها بأيام ما حُضِّرت أصلًا.
+ */
+export const attendanceStats = (p) => {
+  let slots = 0, present = 0;
+  if (p?.type === 'مجمع') {
+    const roster = (p.participants || []).filter((x) => !x.pending);
+    for (const w of p.weeks || []) {
+      const day = roster.filter((x) => isEnrolled(x, w.id));
+      slots += day.length;
+      present += day.filter((x) => p.attendance?.[w.id]?.[x.id] === 'حاضر').length;
+    }
+  } else {
+    for (const w of p?.weeks || []) {
+      if (isQuick(w)) continue;
+      const roster = (w.participants || []).filter((x) => !x.pending);
+      slots += roster.length;
+      present += roster.filter((x) => x.attendance === 'حاضر').length;
+    }
+  }
+  return { slots, present };
+};
+
+/** مفتاح الشخص: رقمه في قاعدة المشتركين، وإلا اسمه بعد التنظيف. */
+const personKey = (x) => x.studentId || normalizeName(x.name || '');
+
+/**
+ * أشخاص البرنامج بلا تكرار: اللي حضر ثمانية أيام في برنامج منفصل شخص واحد،
+ * لا ثمانية. المنتظر تأكيده ما يُعد مشتركًا — مثل الإيراد بالضبط.
+ */
+export const peopleOf = (p, into = new Set()) => {
+  const add = (list) => (list || []).filter((x) => !x.pending).forEach((x) => into.add(personKey(x)));
+  if (p?.type === 'مجمع') add(p.participants);
+  else for (const w of p?.weeks || []) { if (!isQuick(w)) add(w.participants); }
+  return into;
+};
+
+/** الأيام السريعة أعداد بلا أسماء، فما ينفع نميّز مكرّرها — نجمعها كما هي. */
+export const quickHeads = (p) => (p?.type === 'مجمع' ? 0
+  : (p?.weeks || []).filter(isQuick).reduce((s, w) => s + Number(w.quickCount || 0), 0));
+
+/** أرقام برنامج واحد كاملة: مال وحضور وأشخاص. */
+export const programTotals = (p) => {
+  const money = ledgersOf(p).reduce((a, l) => ({
+    revenue: a.revenue + L.revenue(l), expenses: a.expenses + L.expenses(l),
+    net: a.net + L.net(l), school: a.school + L.school(l), faid: a.faid + L.faid(l),
+    transferred: a.transferred + (l.faidTransfer ? Number(l.faidTransfer.amount || 0) : 0),
+  }), { revenue: 0, expenses: 0, net: 0, school: 0, faid: 0, transferred: 0 });
+  return { ...money, ...attendanceStats(p), people: peopleOf(p).size + quickHeads(p) };
+};
+
+export const parseTermKey = (key) => {
+  const s = String(key || '');
+  const i = s.indexOf('-');
+  return i < 0 ? { year: s, term: '' } : { year: s.slice(0, i), term: s.slice(i + 1) };
+};
+
+export const seasonLabel = (key) => {
+  const { year, term } = parseTermKey(key);
+  return term ? `الترم ${term} ${year} هـ` : (year || 'بلا موسم');
+};
+
+/**
+ * صف لكل موسم، من الأحدث للأقدم. الترتيب بالسنة ثم بترتيب الترم كما هو في
+ * الإعدادات — عشان «الثاني» يجي فوق «الأول» مهما كان ترتيب إدخال البرامج.
+ */
+export const seasonRows = (programs, terms = []) => {
+  const groups = new Map();
+  for (const p of programs || []) {
+    const key = p.termKey || '';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(p);
+  }
+  const rows = [...groups.entries()].map(([key, list]) => {
+    const people = new Set();
+    let quick = 0;
+    const t = list.reduce((a, p) => {
+      peopleOf(p, people);
+      quick += quickHeads(p);
+      const x = programTotals(p);
+      return {
+        revenue: a.revenue + x.revenue, expenses: a.expenses + x.expenses, net: a.net + x.net,
+        school: a.school + x.school, faid: a.faid + x.faid,
+        slots: a.slots + x.slots, present: a.present + x.present,
+      };
+    }, { revenue: 0, expenses: 0, net: 0, school: 0, faid: 0, slots: 0, present: 0 });
+    return { key, label: seasonLabel(key), programs: list.length, people: people.size + quick, ...t };
+  });
+  const rank = (key) => {
+    const { year, term } = parseTermKey(key);
+    return [Number(year) || 0, terms.indexOf(term)];
+  };
+  return rows.sort((a, b) => {
+    const x = rank(a.key), y = rank(b.key);
+    return y[0] - x[0] || y[1] - x[1];
+  });
+};
+
+/** أسماء البرامج المتكررة عبر المواسم، مجموعة بالاسم بعد التنظيف. */
+export const programNames = (programs) => {
+  const m = new Map();
+  for (const p of programs || []) {
+    const name = (p.name || '').trim();
+    if (!name) continue;
+    const key = normalizeName(name);
+    const cur = m.get(key) || { key, name, count: 0 };
+    cur.count += 1;
+    m.set(key, cur);
+  }
+  return [...m.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'ar'));
+};
+
+/** «موسمين» لا «2 موسم» — الرقم يُقرأ كلامًا عربيًا مثل بقية الشاشات. */
+export const countSeasons = (n) => {
+  if (n === 1) return 'موسم واحد';
+  if (n === 2) return 'موسمين';
+  if (n >= 3 && n <= 10) return `${n} مواسم`;
+  return `${n} موسمًا`;
+};
+
+/** نسبة مئوية، أو null لو ما فيه قاعدة نقسم عليها. */
+export const pct = (part, whole) => (whole > 0 ? Math.round((part / whole) * 100) : null);
+
+/**
+ * الفرق عن الموسم اللي قبله. الصفر ما ينقسم عليه: لو الموسم السابق صفر
+ * والحالي فيه رقم، فهذا ابتداء لا نمو — نرجّع null ونقول «جديد» في الشاشة.
+ */
+export const changePct = (now, before) => (before > 0 ? Math.round(((now - before) / before) * 100) : null);
+
+/** نص المقارنة للنسخ أو المشاركة — نفس أرقام الجدول بالضبط. */
+export const seasonsReportText = (rows, title) => {
+  const lines = [title];
+  for (const r of rows) {
+    const a = pct(r.present, r.slots);
+    lines.push('', r.label,
+      `  المشتركون: ${r.people}`,
+      `  الإيراد: ${Number(r.revenue).toLocaleString('en-US')} ر.س`,
+      `  المصروفات: ${Number(r.expenses).toLocaleString('en-US')} ر.س`,
+      `  نصيب فيض: ${Number(r.faid).toLocaleString('en-US')} ر.س`,
+      ...(a == null ? [] : [`  الحضور: ${a}%`]));
+  }
+  return lines.join('\n');
 };
 
 const storage = {
@@ -1848,6 +2001,9 @@ export default function App() {
   /** البرنامج يظهر فقط لو فيه يوم واحد على الأقل يقدر يشوفه المستخدم. */
   const termPrograms = !limitedScope ? allTermPrograms
     : allTermPrograms.filter((p) => p.weeks.some((w) => canSeeWeek(p.id, w.id)));
+  /** كل البرامج عبر المواسم — لمقارنة المواسم، بنفس حدود ما يشوفه المستخدم. */
+  const visiblePrograms = !limitedScope ? data.programs
+    : data.programs.filter((p) => (p.weeks || []).some((w) => canSeeWeek(p.id, w.id)));
   /** أيام المستخدم المحدود عبر كل البرامج — عشان يوصل لها من الرئيسية مباشرة. */
   const myWeeks = !limitedScope ? [] : termPrograms.flatMap((p) =>
     p.weeks.filter((w) => canSeeWeek(p.id, w.id)).map((w) => ({ program: p, week: w })));
@@ -2071,6 +2227,7 @@ export default function App() {
   ].filter((n) => n.show);
   const isNavActive = (id) =>
     view === id ||
+    (id === 'reports' && view === 'seasons') ||
     (id === 'programs' && (view === 'programDetail' || view === 'weekDetail')) ||
     (id === 'home' && (view === 'competitions' || view === 'trips' || view === 'tripDetail'
       || view === 'competitionDetail' || view === 'guardians' || view === 'guardianDetail'));
@@ -3876,7 +4033,19 @@ export default function App() {
         {/* ------------------------------- التقارير ------------------------------- */}
         {view === 'reports' && canMoney && (
           <TermReport programs={termPrograms} year={data.currentYear} term={data.currentTerm} balance={balance}
-            onOpenProgram={(p) => { setSelectedProgramId(p.id); setProgramTab('days'); goto('programDetail'); }} />
+            onOpenProgram={(p) => { setSelectedProgramId(p.id); setProgramTab('days'); goto('programDetail'); }}
+            onCompare={() => goto('seasons')} />
+        )}
+
+        {/* ---------------------------- مقارنة المواسم ---------------------------- */}
+        {view === 'seasons' && canMoney && (
+          <SeasonsReport programs={visiblePrograms} terms={data.terms} onBack={() => goto('reports')}
+            onOpenSeason={(key) => {
+              const { year, term } = parseTermKey(key);
+              // فتح الموسم = الوقوف فيه، مثل ما لو اخترته من شاشة البداية
+              save({ ...data, ...(year ? { currentYear: year } : {}), ...(term ? { currentTerm: term } : {}) });
+              goto('reports');
+            }} />
         )}
       </main>
 
@@ -5164,16 +5333,8 @@ function GroupedReport({ program, accounts, canMoney }) {
 }
 
 /** تقرير الترم: كل برامج الترم بسطر واحد + الإجمالي. */
-function TermReport({ programs, year, term, balance, onOpenProgram }) {
-  const row = (p) => {
-    const ledgers = p.type === 'مجمع' ? [p] : p.weeks;
-    return ledgers.reduce((a, l) => ({
-      revenue: a.revenue + L.revenue(l), expenses: a.expenses + L.expenses(l),
-      net: a.net + L.net(l), school: a.school + L.school(l), faid: a.faid + L.faid(l),
-      transferred: a.transferred + (l.faidTransfer ? Number(l.faidTransfer.amount || 0) : 0),
-    }), { revenue: 0, expenses: 0, net: 0, school: 0, faid: 0, transferred: 0 });
-  };
-  const rows = programs.map((p) => ({ p, ...row(p) }));
+function TermReport({ programs, year, term, balance, onOpenProgram, onCompare }) {
+  const rows = programs.map((p) => ({ p, ...programTotals(p) }));
   const t = rows.reduce((a, r) => ({
     revenue: a.revenue + r.revenue, expenses: a.expenses + r.expenses, net: a.net + r.net,
     school: a.school + r.school, faid: a.faid + r.faid, transferred: a.transferred + r.transferred,
@@ -5184,6 +5345,16 @@ function TermReport({ programs, year, term, balance, onOpenProgram }) {
     <div>
       <h2 className="text-xl font-extrabold text-slate-800 mb-1">التقارير</h2>
       <div className="text-sm text-slate-400 mb-4">الترم {term} {year} هـ</div>
+
+      {/* التقرير فوق للموسم الواقف فيه، وهذا الزر للنظرة الأوسع عبر المواسم */}
+      <button className={cardCls + ' w-full flex items-center gap-3 text-right mb-4'} onClick={onCompare}>
+        <span className="w-10 h-10 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center shrink-0"><TrendingUp size={18} /></span>
+        <span className="min-w-0">
+          <span className="block font-bold text-slate-800 text-sm">مقارنة المواسم</span>
+          <span className="block text-xs text-slate-400">كل موسم بسطر، وتقدر تتابع برنامجًا واحدًا عبر المواسم</span>
+        </span>
+        <ChevronLeft size={18} className="text-slate-300 mr-auto shrink-0" />
+      </button>
 
       {!programs.length ? (
         <div className={emptyCls}>ما فيه برامج في هذا الترم بعد.</div>
@@ -5243,6 +5414,146 @@ function TermReport({ programs, year, term, balance, onOpenProgram }) {
         <div className={`text-2xl font-extrabold ${balance >= 0 ? 'text-slate-800' : 'text-red-600'}`}>{fmt(balance)} ر.س</div>
         <div className="text-xs text-slate-400 mt-1">شامل العمليات اليدوية والمُرحّل من البرامج.</div>
       </div>
+    </div>
+  );
+}
+
+/** سهم الفرق عن الموسم الأقدم اللي تحته مباشرة. */
+function Delta({ now, before }) {
+  if (before == null) return null;
+  const c = changePct(now, before);
+  if (c == null) return now > 0 ? <span className="block text-[10px] text-slate-400">جديد</span> : null;
+  if (c === 0) return <span className="block text-[10px] text-slate-400">مثل قبله</span>;
+  const up = c > 0;
+  return (
+    <span className={`block text-[10px] font-semibold ${up ? 'text-green-600' : 'text-red-500'}`}>
+      {up ? '▲' : '▼'} {Math.abs(c)}%
+    </span>
+  );
+}
+
+/**
+ * مقارنة المواسم: صف لكل موسم من الأحدث للأقدم، وسهم يقول وش صار عن اللي قبله.
+ * وفلتر بالاسم عشان يتابع برنامجًا واحدًا — «جمعة الرواد» في مواسمه الثلاثة —
+ * بدل ما يفتح كل موسم على حدة ويجمع الأرقام برأسه.
+ */
+function SeasonsReport({ programs, terms, onBack, onOpenSeason }) {
+  const [pick, setPick] = useState('all');
+  const [copied, setCopied] = useState('');
+  const names = programNames(programs);
+  const picked = names.find((n) => n.key === pick) || null;
+  const scope = picked ? programs.filter((p) => normalizeName(p.name || '') === picked.key) : programs;
+  const rows = seasonRows(scope, terms);
+  const title = picked ? `مقارنة مواسم «${picked.name}»` : 'مقارنة المواسم';
+
+  const t = rows.reduce((a, r) => ({
+    revenue: a.revenue + r.revenue, expenses: a.expenses + r.expenses, net: a.net + r.net,
+    school: a.school + r.school, faid: a.faid + r.faid, people: a.people + r.people,
+    slots: a.slots + r.slots, present: a.present + r.present, programs: a.programs + r.programs,
+  }), { revenue: 0, expenses: 0, net: 0, school: 0, faid: 0, people: 0, slots: 0, present: 0, programs: 0 });
+
+  const share = async () => {
+    const text = seasonsReportText(rows, title);
+    try {
+      if (navigator.share) { await navigator.share({ title, text }); return; }
+      await navigator.clipboard.writeText(text);
+      setCopied('اننسخ التقرير، الصقه وين ما تبي');
+    } catch {
+      setCopied('ما قدر ينسخ. حدّد النص ونسخه يدويًا.');
+    }
+    setTimeout(() => setCopied(''), 3000);
+  };
+
+  const cell = 'px-4 py-3';
+  return (
+    <div>
+      <Breadcrumb items={[{ label: 'التقارير', onClick: onBack }, { label: 'مقارنة المواسم' }]} />
+      <h2 className="text-xl font-extrabold text-slate-800 mt-1 mb-1">مقارنة المواسم</h2>
+      <div className="text-sm text-slate-400 mb-4">
+        {picked ? `«${picked.name}» في ${countSeasons(rows.length)}` : `كل المواسم المسجّلة عندك — ${countSeasons(rows.length)}`}
+      </div>
+
+      {names.length > 0 && (
+        <div className="mb-4">
+          <FilterChips
+            options={[{ id: 'all', label: 'كل البرامج' }, ...names.map((n) => ({ id: n.key, label: n.name, count: n.count }))]}
+            value={pick} onChange={setPick} />
+        </div>
+      )}
+
+      {rows.length === 0 ? (
+        <div className={emptyCls}>ما فيه برامج مسجّلة بعد.</div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <MiniStat label="إجمالي الإيراد" value={fmt(t.revenue)} icon={TrendingUp} tone="green" />
+            <MiniStat label="إجمالي المصروفات" value={fmt(t.expenses)} icon={TrendingDown} tone="red" />
+            <MiniStat label="نصيب فيض" value={fmt(t.faid)} icon={ShieldCheck} />
+            <MiniStat label="مجموع المشتركين" value={fmt(t.people)} icon={UsersIcon} />
+          </div>
+
+          {rows.length === 1 && (
+            <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-xs text-slate-500 mb-4">
+              موسم واحد ما ينقارن. لما يصير عندك موسمان بتبين الأسهم جنب كل رقم.
+            </div>
+          )}
+
+          <div className="bg-white rounded-2xl border border-slate-100 overflow-x-auto mb-3">
+            <table className={`w-full text-sm ${picked ? 'min-w-[540px]' : 'min-w-[620px]'}`}>
+              <thead className="bg-slate-50 text-slate-500 text-xs"><tr>
+                <th className={cell + ' text-right font-medium'}>الموسم</th>
+                {!picked && <th className={cell + ' text-right font-medium'}>البرامج</th>}
+                <th className={cell + ' text-right font-medium'}>المشتركون</th>
+                <th className={cell + ' text-right font-medium'}>الإيراد</th>
+                <th className={cell + ' text-right font-medium'}>المصروفات</th>
+                <th className={cell + ' text-right font-medium'}>فيض</th>
+                <th className={cell + ' text-right font-medium'}>الحضور</th>
+              </tr></thead>
+              <tbody>
+                {rows.map((r, i) => {
+                  const prev = rows[i + 1] || null;
+                  const att = pct(r.present, r.slots);
+                  return (
+                    <tr key={r.key} className="border-t border-slate-50 cursor-pointer hover:bg-slate-50/50"
+                      onClick={() => onOpenSeason(r.key)}>
+                      <td className={cell + ' font-semibold text-slate-800 whitespace-nowrap'}>{r.label}</td>
+                      {!picked && <td className={cell + ' text-slate-600'}>{r.programs}</td>}
+                      <td className={cell + ' text-slate-800'}>
+                        {fmt(r.people)}<Delta now={r.people} before={prev?.people} />
+                      </td>
+                      <td className={cell + ' text-green-600'}>
+                        {fmt(r.revenue)}<Delta now={r.revenue} before={prev?.revenue} />
+                      </td>
+                      <td className={cell + ' text-red-500'}>{fmt(r.expenses)}</td>
+                      <td className={cell + ' text-slate-600'}>
+                        {fmt(r.faid)}<Delta now={r.faid} before={prev?.faid} />
+                      </td>
+                      <td className={cell + ' text-slate-600'}>{att == null ? '—' : `${att}%`}</td>
+                    </tr>
+                  );
+                })}
+                <tr className="border-t-2 border-slate-100 bg-slate-50/60 font-bold text-slate-800">
+                  <td className={cell}>الإجمالي</td>
+                  {!picked && <td className={cell}>{t.programs}</td>}
+                  <td className={cell}>{fmt(t.people)}</td>
+                  <td className={cell + ' text-green-700'}>{fmt(t.revenue)}</td>
+                  <td className={cell + ' text-red-600'}>{fmt(t.expenses)}</td>
+                  <td className={cell}>{fmt(t.faid)}</td>
+                  <td className={cell}>{pct(t.present, t.slots) == null ? '—' : `${pct(t.present, t.slots)}%`}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="text-xs text-slate-400 mb-4 px-1 leading-relaxed">
+            المشترك يُحسب مرة وحدة في الموسم مهما كثرت أيامه. نسبة الحضور من الأيام
+            المحضّرة بالأسماء فقط. اضغط أي موسم عشان تفتحه بتفاصيله.
+          </div>
+
+          <button className={btnPrimary + ' w-full'} onClick={share}><Send size={16} /> مشاركة المقارنة</button>
+          {copied && <div className="text-xs text-center text-slate-500 mt-2">{copied}</div>}
+        </>
+      )}
     </div>
   );
 }

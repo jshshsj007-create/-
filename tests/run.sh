@@ -52,4 +52,5 @@ node tests/people.test.mjs
 node tests/signup.test.mjs
 node tests/freshness.test.mjs
 node tests/investment.test.mjs
+node tests/seasons.test.mjs
 rm -rf "$STUB" tests/build
