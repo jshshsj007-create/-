@@ -26,16 +26,22 @@ const stampOf = (now) => new Date(now).toISOString().slice(0, 10);
 const toDrive = async (name, body, env) => {
   const url = env.DRIVE_HOOK_URL;
   if (!url) return 'مو مفعّل';
+  const secret = env.DRIVE_HOOK_SECRET || '';
   try {
     const r = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ secret: env.DRIVE_HOOK_SECRET || '', name, data: body }),
+      body: JSON.stringify({ secret, name, data: body }),
     });
     const said = (await r.text()).trim();
     if (!r.ok) return `رفض الخادم (${r.status})`;
-    // السكربت يرد «تم» عند النجاح، و«رفض» لو الكلمة السرية غلط
-    return said.includes('تم') ? 'تم' : `رفض السكربت: ${said.slice(0, 60)}`;
+    if (said.includes('تم')) return 'تم';
+    /**
+     * الرفض له سببان لا ثالث لهما: كلمة ما وصلت الخادم أصلًا، أو وصلت ولا
+     * تطابق اللي في السكربت. نقول أيهما بعدد الحروف — بلا كشف الكلمة نفسها.
+     */
+    if (!secret) return 'رفض: الكلمة ما وصلت الخادم (راجع DRIVE_HOOK_SECRET)';
+    return `رفض: الكلمة عندنا ${secret.length} حرفًا وما طابقت السكربت`;
   } catch {
     return 'ما وصل — تأكد من الرابط';
   }
