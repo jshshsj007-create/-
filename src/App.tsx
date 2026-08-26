@@ -14,12 +14,13 @@ import {
 import { makeToken as makeSignupToken, TEXTS, waIntl, varNames, fieldsFor, DEFAULT_WA_TEMPLATE } from './signup.js';
 import { readImage, POSTER, GALLERY } from './img.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
+import { DAY_NAMES, hourLabel, scheduleOf } from './schedule.js';
 import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v5.3';
+const APP_VERSION = 'v5.4';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -202,6 +203,55 @@ export const seasonRows = (programs, terms = []) => {
   });
 };
 
+/**
+ * صف لكل برنامج بعينه، مرتّبًا بموسمه من الأحدث للأقدم.
+ * هنا المسجّلون يُحسبون داخل البرنامج وحده: اللي سجّل في جمعة وربيع ينحسب في
+ * الاثنين، لأن السؤال «كم واحد سجّل في جمعة الرواد؟» لا «كم شخصًا وصلنا؟».
+ */
+export const programRows = (programs, terms = []) => {
+  const rank = (key) => {
+    const { year, term } = parseTermKey(key);
+    return [Number(year) || 0, terms.indexOf(term)];
+  };
+  return (programs || []).map((p) => ({
+    id: p.id, name: p.name, key: p.termKey || '',
+    label: `${p.name} — ${seasonLabel(p.termKey || '')}`,
+    season: seasonLabel(p.termKey || ''),
+    ...programTotals(p),
+  })).sort((a, b) => {
+    const x = rank(a.key), y = rank(b.key);
+    return y[0] - x[0] || y[1] - x[1] || a.name.localeCompare(b.name, 'ar');
+  });
+};
+
+/**
+ * كل تسجيل ما دفع، بسطر فيه صاحبه وبرنامجه ويومه.
+ * المنتظر تأكيده ما هو «ما دفع» — هو ما تأكّد أصلًا، فله مكانه في الانتظار.
+ * واليوم السريع أعداد بلا أسماء، فما فيه أحد نطالبه.
+ */
+/**
+ * المتوقّع على اللي ما دفع. تسجيل «ما دفع» ينحفظ بمبلغ صفر — لأن الصفر هو
+ * اللي وصل فعلًا — فالمبلغ المطلوب يُشتقّ من سعر البرنامج، لا من التسجيل.
+ * وبلا سعر مسجّل نرجّع صفرًا، والشاشة تكتب «—» بدل رقم ما نعرفه.
+ */
+export const dueOf = (program, part) => {
+  const per = Number(program?.dayPrice || program?.signup?.price || 0);
+  if (!per) return 0;
+  return program?.type === 'مجمع' ? per * enrolledDays(part, program.weeks || []).length : per;
+};
+
+export const unpaidRows = (programs) => {
+  const out = [];
+  for (const p of programs || []) {
+    const take = (list, w) => (list || []).forEach((x) => {
+      if (x.accountId === 'unpaid' && !x.pending) out.push({ program: p, week: w, part: x });
+    });
+    if (p.type === 'مجمع') take(p.participants, null);
+    else for (const w of p.weeks || []) { if (!isQuick(w)) take(w.participants, w); }
+  }
+  return out.map((r) => ({ ...r, due: dueOf(r.program, r.part) }));
+};
+
 /** أسماء البرامج المتكررة عبر المواسم، مجموعة بالاسم بعد التنظيف. */
 export const programNames = (programs) => {
   const m = new Map();
@@ -214,6 +264,44 @@ export const programNames = (programs) => {
     m.set(key, cur);
   }
   return [...m.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'ar'));
+};
+
+/* --------------------------- مواسم عمليات فيض --------------------------- */
+/**
+ * التاريخ يُكتب بحرية («1448/2/1» أو «1448-02-01»)، فنحوّله لمفتاح موحّد
+ * يُقارن نصًّا. اللي ما هو تاريخ يرجع فاضيًا، فلا يُخمَّن له موسم أصلًا.
+ */
+export const dateKey = (raw) => {
+  const m = String(raw || '').trim().match(/^(\d{4})\s*[/\-]\s*(\d{1,2})\s*[/\-]\s*(\d{1,2})$/);
+  return m ? `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}` : '';
+};
+
+/** مدى تواريخ كل موسم، مأخوذًا من تواريخ أيام برامجه — ما فيه تاريخ محفوظ للترم نفسه. */
+export const termRanges = (programs) => {
+  const m = new Map();
+  for (const p of programs || []) {
+    const key = p.termKey || '';
+    if (!key) continue;
+    for (const w of p.weeks || []) {
+      const d = dateKey(w.date);
+      if (!d) continue;
+      const cur = m.get(key);
+      if (!cur) m.set(key, { from: d, to: d });
+      else m.set(key, { from: d < cur.from ? d : cur.from, to: d > cur.to ? d : cur.to });
+    }
+  }
+  return m;
+};
+
+/**
+ * موسم هذي العملية من تاريخها. لو وقع التاريخ في موسمين (مواسم متداخلة)
+ * أو ما وقع في ولا واحد، نرجّع فاضيًا — التخمين المشكوك فيه أسوأ من لا شيء.
+ */
+export const guessTerm = (date, ranges) => {
+  const d = dateKey(date);
+  if (!d) return '';
+  const hits = [...(ranges || new Map()).entries()].filter(([, r]) => d >= r.from && d <= r.to);
+  return hits.length === 1 ? hits[0][0] : '';
 };
 
 /** «موسمين» لا «2 موسم» — الرقم يُقرأ كلامًا عربيًا مثل بقية الشاشات. */
@@ -334,7 +422,16 @@ export function migrate(loaded) {
     if (!d.years.length) d.years = ['1448'];
     if (d.currentYear === '1447') d.currentYear = d.years[0];
   }
-  d.faidAdjustments = (d.faidAdjustments || []).map((a) => ({ ...a }));
+  /**
+   * عمليات فيض كانت بلا موسم، فكان إيراد الترم الأول يبان في الثاني وفي السنة
+   * الجاية. المُرحّل من برنامج نعرف موسمه يقينًا من البرنامج نفسه، فنرجّعه له
+   * بأثر رجعي. واليدوي يبقى بلا موسم حتى يحدّده صاحبه — التخمين هنا يكذب.
+   */
+  d.faidAdjustments = (d.faidAdjustments || []).map((a) => {
+    if (a.termKey || !a.source?.programId) return { ...a };
+    const src = d.programs.find((p) => p.id === a.source.programId);
+    return src?.termKey ? { ...a, termKey: src.termKey } : { ...a };
+  });
   d.competitions = (d.competitions || []).map((c) => ({ idea: '', tools: [], photos: [], ...c }));
   d.trips = (d.trips || []).map((t) => {
     const trip = { incomeItems: [], expenseItems: [], ...t };
@@ -892,6 +989,11 @@ export default function App() {
   const [setupLevel, setSetupLevel] = useState('الكل');
   const [payFilter, setPayFilter] = useState('all');   // فلترة الطلاب حسب طريقة الدفع
   const [faidFilter, setFaidFilter] = useState('الكل'); // فلترة عمليات فيض حسب النوع
+  const [faidScope, setFaidScope] = useState('term');    // موسمك، كل المواسم، أو بلا موسم
+  const [unpaidScope, setUnpaidScope] = useState('term'); // «ما دفع»: هذا الموسم أو كلها
+  const [scopeOpen, setScopeOpen] = useState([]);        // البرامج المفتوحة في قائمة أيام الموظف
+  const [scopeQuery, setScopeQuery] = useState('');
+  const [scopeOld, setScopeOld] = useState(false);       // يعرض مواسم سابقة كذلك
   const [faidTab, setFaidTab] = useState('txns');        // العمليات أو التحليل
   const [faidProject, setFaidProject] = useState('');    // فلترة ببند معيّن
   const [faidPayee, setFaidPayee] = useState('');        // فلترة بمستفيد معيّن
@@ -926,6 +1028,9 @@ export default function App() {
     const t = setTimeout(() => setSavedAt(null), 2000);
     return () => clearTimeout(t);
   }, [savedAt]);
+
+  /** تبديل الموسم يرجّع شاشة فيض لموسمها: تدخل الترم فتشوف إيراده هو. */
+  useEffect(() => { setFaidScope('term'); }, [data?.currentYear, data?.currentTerm]);
 
   /* ------------------------------- المزامنة ------------------------------- */
   /**
@@ -1094,6 +1199,16 @@ export default function App() {
   }
 
   const termKey = `${data.currentYear}-${data.currentTerm}`;
+  /** كل المواسم الممكنة من الأحدث للأقدم، وفيها أي موسم قديم لسه له برامج. */
+  const seasonKeys = (() => {
+    const all = new Set(data.programs.map((p) => p.termKey).filter(Boolean));
+    for (const y of data.years) for (const t of data.terms) all.add(`${y}-${t}`);
+    return [...all].sort((a, b) => {
+      const x = parseTermKey(a), y = parseTermKey(b);
+      return (Number(y.year) || 0) - (Number(x.year) || 0)
+        || data.terms.indexOf(y.term) - data.terms.indexOf(x.term);
+    });
+  })();
   const allTermPrograms = data.programs.filter((p) => p.termKey === termKey);
   const program = data.programs.find((p) => p.id === selectedProgramId);
   const week = program?.weeks.find((w) => w.id === selectedWeekId);
@@ -1116,9 +1231,14 @@ export default function App() {
    */
   const isInvestmentMove = (a) => a.kind === 'investment';
 
-  const accountStats = data.faidAccounts.map((acc) => {
+  /**
+   * الرصيد لا موسم له: الفلوس اللي في الحساب موجودة مهما بدّلت الترم، فيُحسب
+   * من العمليات كلها. أما الإيراد والمصروف فسؤالهما «كم دخل وكم صرف في هذا
+   * الموسم؟» — فيُحسبان من عمليات الموسم وحده.
+   */
+  const statsOf = (list) => data.faidAccounts.map((acc) => {
     let rev = 0, exp = 0, moved = 0;
-    data.faidAdjustments.filter((a) => a.accountId === acc.id).forEach((a) => {
+    list.filter((a) => a.accountId === acc.id).forEach((a) => {
       const amt = Number(a.amount || 0);
       if (isInvestmentMove(a)) { moved += a.type === 'إيراد' ? -amt : amt; return; }
       if (a.type === 'إيراد') rev += amt; else exp += amt;
@@ -1126,16 +1246,48 @@ export default function App() {
     // `moved` موجب = طلع للاستثمار، وسالب = رجع منه
     return { ...acc, revenue: rev, expenses: exp, invested: moved, balance: rev - exp - moved };
   });
-  const totalRevenue = accountStats.reduce((s, a) => s + a.revenue, 0);
-  const totalExpenses = accountStats.reduce((s, a) => s + a.expenses, 0);
+
+  /** عمليات بلا موسم: قديمة أُدخلت قبل ما يصير للعملية موسم. */
+  const unTermed = data.faidAdjustments.filter((a) => !a.termKey);
+  /** نطاق الشاشة: موسمك، أو كل المواسم، أو اللي بلا موسم عشان تحدّده. */
+  const faidInScope = (a) => (faidScope === 'all' ? true
+    : faidScope === 'none' ? !a.termKey : a.termKey === termKey);
+  const scopedAdjustments = data.faidAdjustments.filter(faidInScope);
+  const scopeName = faidScope === 'all' ? 'كل المواسم'
+    : faidScope === 'none' ? 'بلا موسم' : `الترم ${data.currentTerm} ${data.currentYear} هـ`;
+
+  const accountStats = statsOf(data.faidAdjustments);
+  const scopedStats = statsOf(scopedAdjustments);
+  const totalRevenue = scopedStats.reduce((s, a) => s + a.revenue, 0);
+  const totalExpenses = scopedStats.reduce((s, a) => s + a.expenses, 0);
   /** رصيد الفريق المتاح — ما يشمل المحوَّل للاستثمار، لأنه خرج من الحسابات. */
   const balance = accountStats.reduce((s, a) => s + a.balance, 0);
   /** رصيد الاستثمار: مجموع اللي دخله ناقص اللي رجع منه. */
   const investmentBalance = accountStats.reduce((s, a) => s + a.invested, 0);
 
+  /** العمليات اللي نقدر نرجّعها لموسمها من تاريخها، بلا تخمين مشكوك فيه. */
+  const guessableFaid = (() => {
+    if (!unTermed.length) return [];
+    const ranges = termRanges(data.programs);
+    return unTermed.map((a) => ({ a, key: guessTerm(a.date, ranges) })).filter((x) => x.key);
+  })();
+  const applyGuessedTerms = () => {
+    const map = new Map(guessableFaid.map((x) => [x.a.id, x.key]));
+    save({
+      ...data,
+      faidAdjustments: data.faidAdjustments.map((a) => (map.has(a.id) ? { ...a, termKey: map.get(a.id) } : a)),
+    });
+  };
+  /** يحط عملية (أو دفعة مقسّمة) في موسم بعينه. */
+  const setTxnTerm = (t, key) => save({
+    ...data,
+    faidAdjustments: data.faidAdjustments.map((a) => (
+      (t.batchId ? a.batchId === t.batchId : a.id === t.id) ? { ...a, termKey: key } : a)),
+  });
+
   // العمليات المقسّمة على أكثر من حساب تُعرض بسطر واحد، ورصيد كل حساب يبقى محسوبًا من العمليات الأصلية.
   const faidTransactions = (() => {
-    const withNames = data.faidAdjustments.map((a) => ({ ...a, accountName: data.faidAccounts.find((acc) => acc.id === a.accountId)?.name || '-' }));
+    const withNames = scopedAdjustments.map((a) => ({ ...a, accountName: data.faidAccounts.find((acc) => acc.id === a.accountId)?.name || '-' }));
     const grouped = [];
     const seenBatches = new Set();
     withNames.forEach((a) => {
@@ -1145,7 +1297,7 @@ export default function App() {
         const parts = withNames.filter((x) => x.batchId === a.batchId);
         grouped.push({
           id: a.batchId, batchId: a.batchId, date: a.date, type: a.type, note: a.note, source: a.source,
-          project: a.project, payee: a.payee,
+          project: a.project, payee: a.payee, termKey: a.termKey,
           amount: sumAmt(parts),
           accountName: parts.map((x) => `${x.accountName} ${fmt(x.amount)}`).join(' + '),
         });
@@ -1321,6 +1473,8 @@ export default function App() {
     const txns = rows.map((r) => ({
       id: uid(), batchId, source, accountId: r.accountId, project: program.name,
       date: form.date || (isGrouped ? '' : week?.date) || '',
+      // موسم البرنامج لا الموسم اللي واقف فيه: الترحيل يتبع مصدره
+      termKey: program.termKey || '',
       type: 'إيراد', amount: Number(r.amount),
       note: form.note || `نصيب فيض - ${label}`,
     }));
@@ -1349,11 +1503,13 @@ export default function App() {
   const addFaidAdjustment = () => {
     // البند = على وش صُرف (برنامج خيركم، رواتب…)، المستفيد = لمين راح (فهد، عبدالعزيز)
     const tags = { project: (form.project || '').trim(), payee: (form.payee || '').trim() };
+    // الموسم يُختار في النافذة، ومبدئيًا اللي أنت واقف فيه
+    const season = form.termKey === undefined ? termKey : form.termKey;
     if (form.splitMode) {
       const rows = (form.splitRows || []).filter((r) => r.accountId && Number(r.amount) > 0);
       if (!rows.length) { setForm({ ...form, error: 'اكتب حسابًا ومبلغًا في سطر واحد على الأقل' }); return; }
       const batchId = uid();
-      const txns = rows.map((r) => ({ id: uid(), batchId, accountId: r.accountId, date: form.date || '', type: form.type || 'إيراد', amount: Number(r.amount), note: form.note || '', ...tags }));
+      const txns = rows.map((r) => ({ id: uid(), batchId, accountId: r.accountId, date: form.date || '', termKey: season, type: form.type || 'إيراد', amount: Number(r.amount), note: form.note || '', ...tags }));
       save({ ...data, faidAdjustments: [...data.faidAdjustments, ...txns] });
       closeModal();
       return;
@@ -1361,7 +1517,7 @@ export default function App() {
     // كان الزر ما يسوي شيئًا بصمت لو نسي يختار الحساب
     if (!form.accountId) { setForm({ ...form, error: 'اختر الحساب' }); return; }
     if (!(Number(form.amount) > 0)) { setForm({ ...form, error: 'اكتب المبلغ' }); return; }
-    save({ ...data, faidAdjustments: [...data.faidAdjustments, { id: uid(), accountId: form.accountId, date: form.date || '', type: form.type || 'إيراد', amount: Number(form.amount), note: form.note || '', ...tags }] });
+    save({ ...data, faidAdjustments: [...data.faidAdjustments, { id: uid(), accountId: form.accountId, date: form.date || '', termKey: season, type: form.type || 'إيراد', amount: Number(form.amount), note: form.note || '', ...tags }] });
     closeModal();
   };
 
@@ -1389,7 +1545,7 @@ export default function App() {
     save({
       ...data,
       faidAdjustments: [...data.faidAdjustments, {
-        id: uid(), accountId: form.accountId, date: form.date || '',
+        id: uid(), accountId: form.accountId, date: form.date || '', termKey,
         // «مصروف» على الحساب = طلعت منه للاستثمار، و«إيراد» = رجعت له
         type: dir === 'in' ? 'مصروف' : 'إيراد',
         amount, kind: 'investment',
@@ -1402,14 +1558,14 @@ export default function App() {
   /** القيم المستخدمة سابقًا تُقترح عند الكتابة عشان الأسماء تتوحّد. */
   const faidValues = (key) => [...new Set(data.faidAdjustments.map((a) => (a[key] || '').trim()).filter(Boolean))].sort();
 
-  /** تجميع المصروفات أو الإيرادات حسب البند أو المستفيد. */
+  /** تجميع المصروفات أو الإيرادات حسب البند أو المستفيد — داخل الموسم المعروض. */
   const faidBreakdown = (key, type) => {
     const totals = new Map();
-    data.faidAdjustments.filter((a) => a.type === type && (a[key] || '').trim()).forEach((a) => {
+    scopedAdjustments.filter((a) => a.type === type && (a[key] || '').trim()).forEach((a) => {
       const k = a[key].trim();
       totals.set(k, (totals.get(k) || 0) + Number(a.amount || 0));
     });
-    const untagged = data.faidAdjustments.filter((a) => a.type === type && !(a[key] || '').trim())
+    const untagged = scopedAdjustments.filter((a) => a.type === type && !(a[key] || '').trim())
       .reduce((sy, a) => sy + Number(a.amount || 0), 0);
     const rows = [...totals.entries()].map(([name, amount]) => ({ name, amount })).sort((x, y) => y.amount - x.amount);
     return { rows, untagged, total: rows.reduce((sy, r) => sy + r.amount, 0) + untagged };
@@ -1737,6 +1893,16 @@ export default function App() {
     closeModal();
   };
 
+  /** يحرّك خانة في النموذج فوق أو تحت — والترتيب هنا هو ترتيب صفحة التسجيل. */
+  const moveSignupField = (id, dir) => {
+    const list = [...data.signupFields];
+    const i = list.findIndex((f) => f.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    save({ ...data, signupFields: list });
+  };
+
   /* --------------------------- أولياء الأمور --------------------------- */
 
   /** كل تسجيلات طالب عبر المواسم كلها — من البرنامج المجمّع أو من أسابيع المنفصل. */
@@ -2004,6 +2170,10 @@ export default function App() {
   /** كل البرامج عبر المواسم — لمقارنة المواسم، بنفس حدود ما يشوفه المستخدم. */
   const visiblePrograms = !limitedScope ? data.programs
     : data.programs.filter((p) => (p.weeks || []).some((w) => canSeeWeek(p.id, w.id)));
+  const backupPlan = scheduleOf(data);
+  /** اللي ما دفعوا: في برامج الموسم، وعبر المواسم كلها لو طلبها. */
+  const termUnpaid = unpaidRows(termPrograms);
+  const allUnpaid = unpaidRows(visiblePrograms);
   /** أيام المستخدم المحدود عبر كل البرامج — عشان يوصل لها من الرئيسية مباشرة. */
   const myWeeks = !limitedScope ? [] : termPrograms.flatMap((p) =>
     p.weeks.filter((w) => canSeeWeek(p.id, w.id)).map((w) => ({ program: p, week: w })));
@@ -2228,7 +2398,7 @@ export default function App() {
   const isNavActive = (id) =>
     view === id ||
     (id === 'reports' && view === 'seasons') ||
-    (id === 'programs' && (view === 'programDetail' || view === 'weekDetail')) ||
+    (id === 'programs' && (view === 'programDetail' || view === 'weekDetail' || view === 'unpaid')) ||
     (id === 'home' && (view === 'competitions' || view === 'trips' || view === 'tripDetail'
       || view === 'competitionDetail' || view === 'guardians' || view === 'guardianDetail'));
 
@@ -2400,6 +2570,24 @@ export default function App() {
               <h2 className="text-xl font-extrabold text-slate-800">البرامج</h2>
               {can('البرامج') && <button className={btnPrimary} onClick={() => { setForm({}); setModal('pickProgramType'); }}><Plus size={16} /> برنامج جديد</button>}
             </div>
+
+            {/* المتبقّي متفرّق في الأيام، فتجميعه هنا يوفّر لفّة على كل برنامج */}
+            {canMoney && termUnpaid.length > 0 && (
+              <button className="w-full bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3 text-right mb-5"
+                onClick={() => goto('unpaid')}>
+                <span className="w-10 h-10 rounded-xl bg-red-50 text-red-600 flex items-center justify-center shrink-0"><Wallet size={18} /></span>
+                <span className="min-w-0">
+                  <span className="block font-bold text-slate-800 text-sm">ما دفع — {termUnpaid.length}</span>
+                  <span className="block text-xs text-slate-400">
+                    {(() => {
+                      const due = termUnpaid.reduce((s, r) => s + r.due, 0);
+                      return due > 0 ? `المتوقّع ${fmt(due)} ر.س عبر برامج الموسم كلها` : 'عبر برامج الموسم كلها';
+                    })()}
+                  </span>
+                </span>
+                <ChevronLeft size={18} className="text-slate-300 mr-auto shrink-0" />
+              </button>
+            )}
             {termPrograms.length === 0 ? (
               <div className="bg-white rounded-2xl border border-dashed border-slate-200 p-10 text-center">
                 <div className="w-14 h-14 rounded-2xl bg-brand-50 text-brand-700 flex items-center justify-center mx-auto mb-4"><BookOpen size={26} /></div>
@@ -2450,6 +2638,80 @@ export default function App() {
             )}
           </div>
         )}
+
+        {/* -------------------------------- ما دفع -------------------------------- */}
+        {view === 'unpaid' && canMoney && (() => {
+          const list = unpaidScope === 'all' ? allUnpaid : termUnpaid;
+          const shown = search ? list.filter((r) => r.part.name.includes(search)) : list;
+          const total = shown.reduce((s, r) => s + r.due, 0);
+          const anyDue = shown.some((r) => r.due > 0);
+          return (
+            <div>
+              <Breadcrumb items={[{ label: 'البرامج', onClick: () => goto('programs') }, { label: 'ما دفع' }]} />
+              <h2 className="text-xl font-extrabold text-slate-800 mt-1 mb-4">ما دفع</h2>
+
+              <div className="mb-4">
+                <FilterChips
+                  options={[
+                    { id: 'term', label: `الترم ${data.currentTerm} ${data.currentYear} هـ`, count: termUnpaid.length },
+                    { id: 'all', label: 'كل المواسم', count: allUnpaid.length },
+                  ]}
+                  value={unpaidScope} onChange={setUnpaidScope} />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <MiniStat label="عددهم" value={shown.length} icon={UsersIcon} />
+                <MiniStat label="المتوقّع (ر.س)" value={anyDue ? fmt(total) : '—'} icon={Wallet} tone="red" />
+              </div>
+              {shown.length > 0 && !anyDue && (
+                <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-xs text-slate-500 mb-3">
+                  ما فيه سعر مسجّل لهذي البرامج، فما نقدر نقول كم المطلوب. حدّد السعر من
+                  تبويب «رابط التسجيل» في البرنامج ويبان هنا.
+                </div>
+              )}
+
+              {list.length > 3 && (
+                <div className="relative mb-3">
+                  <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" />
+                  <input className={inputCls + ' pr-9'} placeholder="ابحث باسم المشترك" value={search} onChange={(e) => setSearch(e.target.value)} />
+                </div>
+              )}
+
+              {shown.length === 0 ? (
+                <div className={emptyCls}>
+                  {list.length === 0 ? 'ما فيه أحد عليه متبقّي. كل المسجّلين دافعين.' : 'ما فيه أحد بهذا الاسم.'}
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {shown.map((r) => (
+                    <div key={`${r.program.id}-${r.week?.id || 'p'}-${r.part.id}`} className={cardCls + ' flex items-center gap-3'}>
+                      <div className="min-w-0 flex-1">
+                        <div className="font-semibold text-slate-800 truncate">{r.part.name}</div>
+                        <div className="text-xs text-slate-400 truncate mt-0.5">
+                          {r.program.name}{r.week ? ` · ${r.week.name}` : ''}
+                          {unpaidScope === 'all' && ` · ${seasonLabel(r.program.termKey || '')}`}
+                        </div>
+                      </div>
+                      <div className="text-sm font-bold text-red-600 shrink-0">{r.due > 0 ? `${fmt(r.due)} ر.س` : '—'}</div>
+                      {/* التسجيل يُفتح مباشرة عشان يحدّد طريقة الدفع بلا ما يلف على البرنامج */}
+                      <button className="bg-brand-600 text-white text-xs font-semibold px-3 py-2 rounded-lg shrink-0"
+                        onClick={() => {
+                          setSelectedProgramId(r.program.id);
+                          setSelectedWeekId(r.week?.id || null);
+                          setForm({
+                            ...r.part,
+                            days: enrolledDays(r.part, r.program.weeks).map((w) => w.id),
+                            amountTouched: true,
+                          });
+                          setModal('editParticipant');
+                        }}>سجّل الدفع</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ------------------------------ تفاصيل البرنامج ------------------------------ */}
         {view === 'programDetail' && program && (
@@ -3205,12 +3467,53 @@ export default function App() {
         {view === 'faid' && (
           <div>
             <h2 className="text-lg sm:text-xl font-bold text-slate-800 mb-1">فيض</h2>
-            <div className="text-sm text-slate-400 mb-5">رصيد الفريق — يتغيّر فقط بالعمليات اليدوية أو بترحيل نصيب فيض من البرامج.</div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-              <StatCard label="الرصيد الحالي (الإجمالي)" value={fmt(balance) + ' ر.س'} icon={Wallet} tone={balance >= 0 ? 'green' : 'red'} />
-              <StatCard label="إجمالي الإيرادات" value={fmt(totalRevenue) + ' ر.س'} icon={TrendingUp} tone="brand" />
-              <StatCard label="إجمالي المصروفات" value={fmt(totalExpenses) + ' ر.س'} icon={TrendingDown} tone="red" />
+            <div className="text-sm text-slate-400 mb-4">رصيد الفريق — يتغيّر فقط بالعمليات اليدوية أو بترحيل نصيب فيض من البرامج.</div>
+
+            {/* الرصيد والاستثمار ما لهما موسم، والإيراد والمصروف يتبعان هذا الاختيار */}
+            <div className="mb-4">
+              <FilterChips
+                options={[
+                  { id: 'term', label: `الترم ${data.currentTerm} ${data.currentYear} هـ` },
+                  { id: 'all', label: 'كل المواسم' },
+                  ...(unTermed.length ? [{ id: 'none', label: 'بلا موسم', count: unTermed.length }] : []),
+                ]}
+                value={faidScope} onChange={setFaidScope} />
             </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+              <StatCard label="الرصيد الحالي — كل المواسم" value={fmt(balance) + ' ر.س'} icon={Wallet} tone={balance >= 0 ? 'green' : 'red'} />
+              <StatCard label={`إيراد ${scopeName}`} value={fmt(totalRevenue) + ' ر.س'} icon={TrendingUp} tone="brand" />
+              <StatCard label={`مصروفات ${scopeName}`} value={fmt(totalExpenses) + ' ر.س'} icon={TrendingDown} tone="red" />
+            </div>
+
+            {/*
+              العمليات القديمة انحفظت قبل ما يصير للعملية موسم. المُرحّل من برنامج
+              رجع لموسمه من نفسه، واليدوي نعرضه ونقترح موسمه من تاريخه — ما ندسّه.
+            */}
+            {faidScope !== 'none' && unTermed.length > 0 && (
+              <div className="bg-amber-50 border border-amber-100 rounded-2xl px-4 py-3 mb-6 text-sm text-amber-900 flex items-start gap-2 flex-wrap">
+                <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                <span className="min-w-0 flex-1">
+                  فيه <b>{unTermed.length}</b> عملية يدوية بلا موسم — ما تدخل حساب أي ترم.
+                  {guessableFaid.length > 0 && <> نقدر نرجّع <b>{guessableFaid.length}</b> منها لمواسمها حسب تواريخها.</>}
+                </span>
+                <span className="flex gap-2 shrink-0">
+                  {guessableFaid.length > 0 && canTransfer && (
+                    <button className="bg-amber-600 text-white text-xs font-semibold px-3 py-2 rounded-lg"
+                      onClick={() => askConfirm(`نرجّع ${guessableFaid.length} عملية لمواسمها حسب تواريخها؟ تقدر تغيّر أي وحدة بعدين.`, applyGuessedTerms)}>
+                      رجّعها
+                    </button>
+                  )}
+                  <button className="bg-white border border-amber-200 text-amber-800 text-xs font-semibold px-3 py-2 rounded-lg"
+                    onClick={() => setFaidScope('none')}>أشوفها</button>
+                </span>
+              </div>
+            )}
+            {faidScope === 'none' && (
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 mb-6 text-xs text-slate-500">
+                هذي عمليات ما لها موسم، فما تدخل حساب أي ترم. حدّد موسم كل وحدة من زر «الموسم» في سطرها.
+              </div>
+            )}
 
             {/* الاستثمار محجوز على أمد بعيد، فيُعرض على حدة وما يُجمع مع الرصيد */}
             <div className={cardCls + ' mb-6'}>
@@ -3257,11 +3560,14 @@ export default function App() {
               <button onClick={() => { setForm({ value: '' }); setModal('addFaidAccount'); }} className="text-xs text-brand-600 flex items-center gap-1"><Plus size={14} /> حساب جديد</button>
             </div>
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-              {accountStats.map((a) => (
+              {accountStats.map((a) => {
+                // الرصيد من العمليات كلها، والوارد والصادر من الموسم المعروض
+                const s = scopedStats.find((x) => x.id === a.id) || a;
+                return (
                 <div key={a.id} className={cardCls + ' relative group'}>
                   <div className="text-sm text-slate-500 mb-1">{a.name}</div>
                   <div className={`text-lg sm:text-xl font-bold ${a.balance >= 0 ? 'text-slate-800' : 'text-red-600'}`}>{fmt(a.balance)} ر.س</div>
-                  <div className="text-[11px] text-slate-400 mt-1">وارد {fmt(a.revenue)} · صادر {fmt(a.expenses)}</div>
+                  <div className="text-[11px] text-slate-400 mt-1">وارد {fmt(s.revenue)} · صادر {fmt(s.expenses)}</div>
                   {isAdmin && (
                     <button className="text-[11px] text-brand-600 mt-2 block"
                       onClick={() => { setForm({ id: a.id, transferInfo: a.transferInfo || '', publicName: a.publicName || '', needsReceipt: !!a.needsReceipt, name: a.name }); setModal('transferInfo'); }}>
@@ -3273,11 +3579,12 @@ export default function App() {
                       className="absolute top-3 left-3 text-slate-200 hover:text-red-500"><Trash2 size={14} /></button>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             <div className="flex items-center justify-between mb-3">
-              <h3 className="font-bold text-slate-700">الحركة المالية</h3>
+              <h3 className="font-bold text-slate-700">الحركة المالية — {scopeName}</h3>
               <button className={btnPrimary} onClick={() => { setForm({}); setModal('addFaid'); }}><Plus size={16} /> عملية يدوية</button>
             </div>
 
@@ -3330,13 +3637,14 @@ export default function App() {
               </div>
             ) : (
               <div className="bg-white rounded-2xl border border-slate-100 overflow-x-auto">
-                <table className="w-full text-sm min-w-[620px]">
+                <table className="w-full text-sm min-w-[760px]">
                   <thead className="bg-slate-50 text-slate-500 text-xs"><tr>
                     <th className="text-right px-4 py-3 font-medium">البيان</th>
                     <th className="text-right px-4 py-3 font-medium">البند / المستفيد</th>
                     <th className="text-right px-4 py-3 font-medium">الحساب</th>
                     <th className="text-right px-4 py-3 font-medium">النوع</th>
                     <th className="text-right px-4 py-3 font-medium">التاريخ</th>
+                    <th className="text-right px-4 py-3 font-medium">الموسم</th>
                     <th className="text-right px-4 py-3 font-medium">المبلغ</th>
                     <th className="text-right px-4 py-3 font-medium"></th>
                   </tr></thead>
@@ -3355,6 +3663,18 @@ export default function App() {
                         <td className="px-4 py-3"><Badge tone="slate">{t.accountName}</Badge></td>
                         <td className="px-4 py-3"><Badge tone={t.type === 'إيراد' ? 'green' : 'red'}>{t.type}</Badge></td>
                         <td className="px-4 py-3 text-slate-500">{t.date || '-'}</td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          {/* الموسم يُغيَّر من هنا مباشرة: العملية القديمة تلقى مكانها بضغطة */}
+                          {canTransfer ? (
+                            <select className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 max-w-[9rem]"
+                              value={t.termKey || ''} onChange={(e) => setTxnTerm(t, e.target.value)}>
+                              <option value="">بلا موسم</option>
+                              {seasonKeys.map((k) => <option key={k} value={k}>{seasonLabel(k)}</option>)}
+                            </select>
+                          ) : (
+                            <span className="text-xs text-slate-500">{t.termKey ? seasonLabel(t.termKey) : 'بلا موسم'}</span>
+                          )}
+                        </td>
                         <td className="px-4 py-3 font-semibold text-slate-800">{fmt(t.amount)} ر.س</td>
                         <td className="px-4 py-3 text-left">
                           <button onClick={() => askConfirm(t.source ? 'هذي عملية مُرحّلة من برنامج. حذفها يرجّع البرنامج لحالة «غير مُرحّل». تأكد؟' : 'حذف هذه العملية؟', () => deleteFaidTxn(t))}
@@ -3639,7 +3959,7 @@ export default function App() {
                 </div>
                 <div className={cardCls}>
                   <div className="space-y-2">
-                    {data.signupFields.map((f) => {
+                    {data.signupFields.map((f, i) => {
                       const locked = LOCKED_FIELDS.includes(f.id);
                       return (
                         <div key={f.id} className="flex items-center justify-between gap-2 bg-slate-50 rounded-xl px-3 py-2.5">
@@ -3653,6 +3973,14 @@ export default function App() {
                             </div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
+                            {/* الترتيب هنا هو الترتيب اللي يشوفه ولي الأمر. القفل يمنع
+                                الحذف لا التحريك، فيقدر يحط اسم الطالب فوق أو الجوال. */}
+                            <div className="flex flex-col">
+                              <button className="text-slate-400 disabled:opacity-25 leading-none px-1" disabled={i === 0}
+                                title="فوق" onClick={() => moveSignupField(f.id, -1)}>▲</button>
+                              <button className="text-slate-400 disabled:opacity-25 leading-none px-1" disabled={i === data.signupFields.length - 1}
+                                title="تحت" onClick={() => moveSignupField(f.id, 1)}>▼</button>
+                            </div>
                             <select className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 disabled:opacity-50"
                               disabled={locked} value={f.required ? 'req' : 'opt'}
                               onChange={(e) => save({
@@ -3747,7 +4075,26 @@ export default function App() {
                   <div className={cardCls}>
                     <div className="font-semibold text-slate-700 mb-1">النسخ التلقائي</div>
                     <div className="text-xs text-slate-400 mb-4">
-                      كل جمعة: لقطة تُحفظ في الخادم، ونسخة ترحل لمجلدك في درايف.
+                      كل {DAY_NAMES[backupPlan.day]} {hourLabel(backupPlan.hour)}: لقطة تُحفظ في الخادم،
+                      ونسخة ترحل لمجلدك في درايف.
+                    </div>
+
+                    {/* الموعد يعيش مع البيانات لا مع الكود، فيتغيّر من هنا بلا نشرة */}
+                    <div className="flex gap-2 mb-4">
+                      <label className="flex-1 min-w-0">
+                        <span className="block text-[11px] text-slate-400 mb-1">اليوم</span>
+                        <select className={inputCls} value={backupPlan.day}
+                          onChange={(e) => save({ ...data, backupSchedule: { ...backupPlan, day: Number(e.target.value) } })}>
+                          {DAY_NAMES.map((n, i) => <option key={n} value={i}>{n}</option>)}
+                        </select>
+                      </label>
+                      <label className="flex-1 min-w-0">
+                        <span className="block text-[11px] text-slate-400 mb-1">الساعة</span>
+                        <select className={inputCls} value={backupPlan.hour}
+                          onChange={(e) => save({ ...data, backupSchedule: { ...backupPlan, hour: Number(e.target.value) } })}>
+                          {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{hourLabel(h)}</option>)}
+                        </select>
+                      </label>
                     </div>
 
                     {backup.status ? (
@@ -4040,6 +4387,12 @@ export default function App() {
         {/* ---------------------------- مقارنة المواسم ---------------------------- */}
         {view === 'seasons' && canMoney && (
           <SeasonsReport programs={visiblePrograms} terms={data.terms} onBack={() => goto('reports')}
+            onOpenProgram={(r) => {
+              // البرنامج قد يكون من موسم ثانٍ، فنوقف في موسمه أول عشان ما تختلط عليه الشاشة
+              const { year, term } = parseTermKey(r.key);
+              if (year && term && r.key !== termKey) save({ ...data, currentYear: year, currentTerm: term });
+              setSelectedProgramId(r.id); setProgramTab('days'); goto('programDetail');
+            }}
             onOpenSeason={(key) => {
               const { year, term } = parseTermKey(key);
               // فتح الموسم = الوقوف فيه، مثل ما لو اخترته من شاشة البداية
@@ -4375,6 +4728,13 @@ export default function App() {
           </Field>
           <Field label="البيان"><input className={inputCls} value={form.note || ''} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="مثال: راتب الترم الأول" /></Field>
           <Field label="التاريخ (هـ)"><input className={inputCls} value={form.date || ''} onChange={(e) => setForm({ ...form, date: e.target.value })} placeholder="1448/02/01" /></Field>
+          <Field label="الموسم" hint="على أي ترم تنحسب هذي العملية. الرصيد ما يتأثر — بس الإيراد والمصروف.">
+            <select className={inputCls} value={form.termKey === undefined ? termKey : form.termKey}
+              onChange={(e) => setForm({ ...form, termKey: e.target.value })}>
+              {seasonKeys.map((k) => <option key={k} value={k}>{seasonLabel(k)}</option>)}
+              <option value="">بلا موسم</option>
+            </select>
+          </Field>
           {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
           <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={addFaidAdjustment}>إضافة</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
         </Modal>
@@ -4431,22 +4791,82 @@ export default function App() {
                 الأيام اللي تحددها له يقدر يحضّرها ويسجّل فيها، حتى لو ما علّمت له صلاحية «الأسابيع والحضور».
               </div>
             )}
-            {form.accessScope === 'limited' && (
-              <div className="max-h-40 overflow-y-auto border border-slate-100 rounded-lg p-2 space-y-1">
-                {data.programs.length === 0 && <div className="text-xs text-slate-400 p-2">لا توجد برامج/أيام بعد</div>}
-                {data.programs.map((p) => (
-                  <div key={p.id}>
-                    <div className="text-xs font-semibold text-slate-500 px-1 pt-1">{p.name}</div>
-                    {p.weeks.map((w) => (
-                      <label key={w.id} className="flex items-center gap-2 px-2 py-1.5 text-sm text-slate-700 hover:bg-slate-50 rounded cursor-pointer">
-                        <input type="checkbox" checked={(form.allowedWeeks || []).some((a) => a.programId === p.id && a.weekId === w.id)} onChange={() => toggleAllowedWeek(p.id, w.id)} />
-                        {w.name}
-                      </label>
-                    ))}
+            {form.accessScope === 'limited' && (() => {
+              /*
+                القائمة كانت كل أيام كل البرامج من كل المواسم في صندوق واحد —
+                تطول مع كل ترم يمر. صارت سطرًا لكل برنامج ينفتح على أيامه،
+                وما تعرض إلا برامج الموسم إلا لو طلب القديمة.
+              */
+              const q = scopeQuery.trim();
+              const pool = scopeOld ? data.programs : allTermPrograms;
+              const list = !q ? pool
+                : pool.filter((p) => p.name.includes(q) || (p.weeks || []).some((w) => w.name.includes(q)));
+              const picked = form.allowedWeeks || [];
+              const countIn = (p) => picked.filter((a) => a.programId === p.id).length;
+              const toggleAll = (p) => {
+                const ids = (p.weeks || []).map((w) => w.id);
+                const allOn = ids.length > 0 && ids.every((id) => picked.some((a) => a.programId === p.id && a.weekId === id));
+                setForm({
+                  ...form,
+                  allowedWeeks: allOn
+                    ? picked.filter((a) => a.programId !== p.id)
+                    : [...picked.filter((a) => a.programId !== p.id), ...ids.map((id) => ({ programId: p.id, weekId: id }))],
+                });
+              };
+              return (
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <span className="text-xs text-slate-500">مختار <b className="text-slate-800">{picked.length}</b> يوم</span>
+                    <button type="button" className="text-xs text-brand-600"
+                      onClick={() => setScopeOld(!scopeOld)}>
+                      {scopeOld ? 'الموسم الحالي فقط' : 'أظهر المواسم السابقة'}
+                    </button>
                   </div>
-                ))}
-              </div>
-            )}
+                  {pool.length > 4 && (
+                    <input className={inputCls + ' mb-2'} value={scopeQuery} onChange={(e) => setScopeQuery(e.target.value)}
+                      placeholder="ابحث باسم البرنامج أو اليوم" />
+                  )}
+                  <div className="max-h-72 overflow-y-auto border border-slate-100 rounded-lg p-2 space-y-1">
+                    {list.length === 0 && (
+                      <div className="text-xs text-slate-400 p-2">
+                        {pool.length === 0 ? 'ما فيه برامج في هذا الموسم.' : 'ما فيه برنامج بهذا الاسم.'}
+                      </div>
+                    )}
+                    {list.map((p) => {
+                      const on = scopeOpen.includes(p.id);
+                      const n = countIn(p);
+                      return (
+                        <div key={p.id} className="rounded-lg">
+                          <div className="flex items-center gap-2">
+                            <button type="button" className="flex-1 min-w-0 flex items-center gap-2 px-2 py-2 text-right hover:bg-slate-50 rounded-lg"
+                              onClick={() => setScopeOpen(on ? scopeOpen.filter((x) => x !== p.id) : [...scopeOpen, p.id])}>
+                              <ChevronLeft size={14} className={`text-slate-300 shrink-0 transition-transform ${on ? 'rotate-90' : '-rotate-90'}`} />
+                              <span className="text-sm text-slate-800 truncate">{p.name}</span>
+                              <span className={`text-[11px] shrink-0 mr-auto ${n ? 'text-brand-700 font-semibold' : 'text-slate-400'}`}>
+                                {n} من {(p.weeks || []).length}
+                              </span>
+                            </button>
+                            <button type="button" onClick={() => toggleAll(p)}
+                              className="text-[11px] text-slate-500 border border-slate-200 rounded-lg px-2 py-1.5 shrink-0">الكل</button>
+                          </div>
+                          {on && (
+                            <div className="pr-6">
+                              {(p.weeks || []).length === 0 && <div className="text-[11px] text-slate-400 px-2 py-1.5">ما فيه أيام في هذا البرنامج.</div>}
+                              {(p.weeks || []).map((w) => (
+                                <label key={w.id} className="flex items-center gap-2 px-2 py-1.5 text-sm text-slate-700 hover:bg-slate-50 rounded cursor-pointer">
+                                  <input type="checkbox" checked={picked.some((a) => a.programId === p.id && a.weekId === w.id)} onChange={() => toggleAllowedWeek(p.id, w.id)} />
+                                  {w.name}
+                                </label>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
           </Field>
           {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
           <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={saveUser}>{modal === 'editUser' ? 'حفظ' : 'إضافة'}</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
@@ -5437,20 +5857,26 @@ function Delta({ now, before }) {
  * وفلتر بالاسم عشان يتابع برنامجًا واحدًا — «جمعة الرواد» في مواسمه الثلاثة —
  * بدل ما يفتح كل موسم على حدة ويجمع الأرقام برأسه.
  */
-function SeasonsReport({ programs, terms, onBack, onOpenSeason }) {
-  const [pick, setPick] = useState('all');
+function SeasonsReport({ programs, terms, onBack, onOpenSeason, onOpenProgram }) {
+  const [chosen, setChosen] = useState([]);   // معرّفات البرامج المختارة
+  const [open, setOpen] = useState(false);    // القائمة مفتوحة أو مقفولة
+  const [q, setQ] = useState('');
   const [copied, setCopied] = useState('');
-  const names = programNames(programs);
-  const picked = names.find((n) => n.key === pick) || null;
-  const scope = picked ? programs.filter((p) => normalizeName(p.name || '') === picked.key) : programs;
-  const rows = seasonRows(scope, terms);
-  const title = picked ? `مقارنة مواسم «${picked.name}»` : 'مقارنة المواسم';
+
+  const all = programRows(programs, terms);
+  const byProgram = chosen.length > 0;
+  const rows = byProgram ? all.filter((r) => chosen.includes(r.id)) : seasonRows(programs, terms);
+  const title = byProgram ? 'تقرير البرامج المختارة' : 'مقارنة المواسم';
+  const shown = q.trim() ? all.filter((r) => r.label.includes(q.trim())) : all;
+
+  const toggle = (id) => setChosen((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]));
 
   const t = rows.reduce((a, r) => ({
-    revenue: a.revenue + r.revenue, expenses: a.expenses + r.expenses, net: a.net + r.net,
-    school: a.school + r.school, faid: a.faid + r.faid, people: a.people + r.people,
-    slots: a.slots + r.slots, present: a.present + r.present, programs: a.programs + r.programs,
-  }), { revenue: 0, expenses: 0, net: 0, school: 0, faid: 0, people: 0, slots: 0, present: 0, programs: 0 });
+    revenue: a.revenue + r.revenue, expenses: a.expenses + r.expenses,
+    faid: a.faid + r.faid, people: a.people + r.people,
+    slots: a.slots + r.slots, present: a.present + r.present,
+    programs: a.programs + (r.programs || 1),
+  }), { revenue: 0, expenses: 0, faid: 0, people: 0, slots: 0, present: 0, programs: 0 });
 
   const share = async () => {
     const text = seasonsReportText(rows, title);
@@ -5470,14 +5896,49 @@ function SeasonsReport({ programs, terms, onBack, onOpenSeason }) {
       <Breadcrumb items={[{ label: 'التقارير', onClick: onBack }, { label: 'مقارنة المواسم' }]} />
       <h2 className="text-xl font-extrabold text-slate-800 mt-1 mb-1">مقارنة المواسم</h2>
       <div className="text-sm text-slate-400 mb-4">
-        {picked ? `«${picked.name}» في ${countSeasons(rows.length)}` : `كل المواسم المسجّلة عندك — ${countSeasons(rows.length)}`}
+        {byProgram
+          ? `${rows.length} برنامج مختار — كل واحد بأرقامه`
+          : `كل المواسم المسجّلة عندك — ${countSeasons(rows.length)}`}
       </div>
 
-      {names.length > 0 && (
+      {/*
+        قائمة منسدلة لا شريط أزرار: مع كثرة البرامج يطول الشريط ويضيع فيه اللي
+        تدوّره. وهي بالبرنامج نفسه لا بالاسم، فاختلاف تسمية الموسمين ما يفرّقهما.
+      */}
+      {all.length > 0 && (
         <div className="mb-4">
-          <FilterChips
-            options={[{ id: 'all', label: 'كل البرامج' }, ...names.map((n) => ({ id: n.key, label: n.name, count: n.count }))]}
-            value={pick} onChange={setPick} />
+          <button type="button" onClick={() => setOpen(!open)}
+            className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 flex items-center justify-between gap-2 text-sm">
+            <span className={chosen.length ? 'text-slate-800 font-semibold' : 'text-slate-400'}>
+              {chosen.length ? `${chosen.length} برنامج مختار` : 'اختر برامج للمقارنة (أو خلّها فاضية للمواسم)'}
+            </span>
+            <ChevronLeft size={16} className={`text-slate-400 shrink-0 transition-transform ${open ? 'rotate-90' : '-rotate-90'}`} />
+          </button>
+
+          {open && (
+            <div className="mt-2 bg-white border border-slate-200 rounded-xl p-2">
+              {all.length > 6 && (
+                <input className={inputCls + ' mb-2'} value={q} onChange={(e) => setQ(e.target.value)}
+                  placeholder="ابحث باسم البرنامج أو الموسم" />
+              )}
+              <div className="max-h-64 overflow-y-auto space-y-1">
+                {shown.length === 0 && <div className="text-xs text-slate-400 p-2">ما فيه برنامج بهذا الاسم.</div>}
+                {shown.map((r) => (
+                  <label key={r.id} className="flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-slate-50 cursor-pointer">
+                    <input type="checkbox" checked={chosen.includes(r.id)} onChange={() => toggle(r.id)} />
+                    <span className="min-w-0">
+                      <span className="block text-sm text-slate-800 truncate">{r.name}</span>
+                      <span className="block text-[11px] text-slate-400">{r.season}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              {chosen.length > 0 && (
+                <button className="text-xs text-slate-500 mt-2 px-2"
+                  onClick={() => { setChosen([]); setOpen(false); }}>شِل الاختيار كله</button>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -5489,21 +5950,23 @@ function SeasonsReport({ programs, terms, onBack, onOpenSeason }) {
             <MiniStat label="إجمالي الإيراد" value={fmt(t.revenue)} icon={TrendingUp} tone="green" />
             <MiniStat label="إجمالي المصروفات" value={fmt(t.expenses)} icon={TrendingDown} tone="red" />
             <MiniStat label="نصيب فيض" value={fmt(t.faid)} icon={ShieldCheck} />
-            <MiniStat label="مجموع المشتركين" value={fmt(t.people)} icon={UsersIcon} />
+            <MiniStat label={byProgram ? 'مجموع المسجّلين' : 'مجموع المشتركين'} value={fmt(t.people)} icon={UsersIcon} />
           </div>
 
-          {rows.length === 1 && (
+          {!byProgram && rows.length === 1 && (
             <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-xs text-slate-500 mb-4">
               موسم واحد ما ينقارن. لما يصير عندك موسمان بتبين الأسهم جنب كل رقم.
             </div>
           )}
 
           <div className="bg-white rounded-2xl border border-slate-100 overflow-x-auto mb-3">
-            <table className={`w-full text-sm ${picked ? 'min-w-[540px]' : 'min-w-[620px]'}`}>
+            <table className="w-full text-sm min-w-[640px]">
               <thead className="bg-slate-50 text-slate-500 text-xs"><tr>
-                <th className={cell + ' text-right font-medium'}>الموسم</th>
-                {!picked && <th className={cell + ' text-right font-medium'}>البرامج</th>}
-                <th className={cell + ' text-right font-medium'}>المشتركون</th>
+                <th className={cell + ' text-right font-medium'}>{byProgram ? 'البرنامج' : 'الموسم'}</th>
+                {byProgram
+                  ? <th className={cell + ' text-right font-medium'}>الموسم</th>
+                  : <th className={cell + ' text-right font-medium'}>البرامج</th>}
+                <th className={cell + ' text-right font-medium'}>{byProgram ? 'المسجّلون' : 'المشتركون'}</th>
                 <th className={cell + ' text-right font-medium'}>الإيراد</th>
                 <th className={cell + ' text-right font-medium'}>المصروفات</th>
                 <th className={cell + ' text-right font-medium'}>فيض</th>
@@ -5511,13 +5974,19 @@ function SeasonsReport({ programs, terms, onBack, onOpenSeason }) {
               </tr></thead>
               <tbody>
                 {rows.map((r, i) => {
-                  const prev = rows[i + 1] || null;
+                  // الفرق يُقارن بالسطر اللي تحته، وهو الأقدم — وفي صفوف البرامج
+                  // ما يُقارن إلا ببرنامج يحمل نفس الاسم، وإلا صار مقارنة بين شيئين
+                  const prev = byProgram
+                    ? rows.slice(i + 1).find((x) => normalizeName(x.name) === normalizeName(r.name)) || null
+                    : rows[i + 1] || null;
                   const att = pct(r.present, r.slots);
                   return (
-                    <tr key={r.key} className="border-t border-slate-50 cursor-pointer hover:bg-slate-50/50"
-                      onClick={() => onOpenSeason(r.key)}>
-                      <td className={cell + ' font-semibold text-slate-800 whitespace-nowrap'}>{r.label}</td>
-                      {!picked && <td className={cell + ' text-slate-600'}>{r.programs}</td>}
+                    <tr key={r.id || r.key} className="border-t border-slate-50 cursor-pointer hover:bg-slate-50/50"
+                      onClick={() => (byProgram ? onOpenProgram(r) : onOpenSeason(r.key))}>
+                      <td className={cell + ' font-semibold text-slate-800 whitespace-nowrap'}>{byProgram ? r.name : r.label}</td>
+                      {byProgram
+                        ? <td className={cell + ' text-slate-500 whitespace-nowrap text-xs'}>{r.season}</td>
+                        : <td className={cell + ' text-slate-600'}>{r.programs}</td>}
                       <td className={cell + ' text-slate-800'}>
                         {fmt(r.people)}<Delta now={r.people} before={prev?.people} />
                       </td>
@@ -5534,7 +6003,7 @@ function SeasonsReport({ programs, terms, onBack, onOpenSeason }) {
                 })}
                 <tr className="border-t-2 border-slate-100 bg-slate-50/60 font-bold text-slate-800">
                   <td className={cell}>الإجمالي</td>
-                  {!picked && <td className={cell}>{t.programs}</td>}
+                  <td className={cell}>{byProgram ? '' : t.programs}</td>
                   <td className={cell}>{fmt(t.people)}</td>
                   <td className={cell + ' text-green-700'}>{fmt(t.revenue)}</td>
                   <td className={cell + ' text-red-600'}>{fmt(t.expenses)}</td>
@@ -5546,8 +6015,10 @@ function SeasonsReport({ programs, terms, onBack, onOpenSeason }) {
           </div>
 
           <div className="text-xs text-slate-400 mb-4 px-1 leading-relaxed">
-            المشترك يُحسب مرة وحدة في الموسم مهما كثرت أيامه. نسبة الحضور من الأيام
-            المحضّرة بالأسماء فقط. اضغط أي موسم عشان تفتحه بتفاصيله.
+            {byProgram
+              ? 'المسجّلون في كل برنامج على حدة — واللي سجّل في برنامجين ينحسب في الاثنين. اضغط أي سطر عشان تفتح البرنامج.'
+              : 'المشتركون أشخاص بلا تكرار: الواحد يُحسب مرة وحدة في الموسم مهما كثرت أيامه وبرامجه. اضغط أي موسم عشان تفتحه.'}
+            {' '}نسبة الحضور من الأيام المحضّرة بالأسماء فقط.
           </div>
 
           <button className={btnPrimary + ' w-full'} onClick={share}><Send size={16} /> مشاركة المقارنة</button>
