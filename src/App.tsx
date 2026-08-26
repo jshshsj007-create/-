@@ -11,7 +11,7 @@ import {
   studentsOf, upsertRegistration, findDuplicates, mergeGuardians, mergeStudents, guardianNameFrom,
   dedupeByPhone, remapParticipants,
 } from './people.js';
-import { makeToken as makeSignupToken, TEXTS, waIntl, varNames, fieldsFor, DEFAULT_WA_TEMPLATE } from './signup.js';
+import { makeToken as makeSignupToken, TEXTS, waIntl, waLink, varNames, fieldsFor, dayLabel, DEFAULT_WA_TEMPLATE } from './signup.js';
 import { readImage, POSTER, GALLERY } from './img.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
 import { DAY_NAMES, hourLabel, scheduleOf } from './schedule.js';
@@ -20,7 +20,7 @@ import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v5.4';
+const APP_VERSION = 'v5.5';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -569,7 +569,12 @@ const TEXT_LABELS = [
   ['guardian', 'عنوان قسم ولي الأمر'],
   ['guardianHint', 'الشرح تحته'],
   ['student', 'عنوان قسم الطالب'],
+  ['days', 'تسمية قسم الأيام'],
+  ['packageLabel', 'تسمية «طريقة التسجيل»'],
+  ['dueLabel', 'تسمية «المبلغ المستحق»'],
+  ['payLabel', 'تسمية «طريقة الدفع»'],
   ['contact', 'زر «تواصل معنا»'],
+  ['share', 'زر «شارك الرابط»'],
   ['submit', 'زر الإرسال'],
   ['successTitle', 'عنوان صفحة النجاح'],
   ['successSub', 'السطر تحته'],
@@ -1360,19 +1365,54 @@ export default function App() {
   };
 
   /* ------------------------------ المشاركون ------------------------------ */
+  /**
+   * الجوال في التسجيل اليدوي اختياري تمامًا: بدونه يمشي التسجيل مثل ما كان.
+   * ومعه يدخل الطالب قاعدة المشتركين تحت ولي أمر بهذا الرقم — نفس اللي يصير
+   * للمسجّل من الرابط بالضبط، فما يصير عندنا قاعدتان بطريقتين.
+   * يرجّع { next, studentId }: `next` بيانات فيها ولي الأمر وابنه، أو null لو ما فيه رقم.
+   */
+  const linkByPhone = (base) => {
+    const phone = (form.gPhone || '').trim();
+    if (!phone || !isValidPhone(phone)) return { next: base, studentId: form.studentId };
+    const res = upsertRegistration(
+      { guardians: base.guardians, students: base.students, newId: uid },
+      { guardian: { name: '', phone }, kids: [{ name: form.name.trim() }] },
+      Date.now(),
+    );
+    return {
+      next: { ...base, guardians: res.guardians, students: res.students },
+      studentId: res.linked[0]?.student?.id || form.studentId,
+    };
+  };
+
+  /** نموذج تعديل المشارك، وفيه جوال ولي أمره إن كان مربوطًا بسجلّه. */
+  const participantForm = (p, weeks) => {
+    const student = p.studentId ? data.students.find((s) => s.id === p.studentId) : null;
+    const guardian = student ? data.guardians.find((g) => g.id === student.guardianId) : null;
+    return {
+      ...p,
+      gPhone: guardian?.phone || '',
+      ...(weeks ? { days: enrolledDays(p, weeks).map((w) => w.id), amountTouched: true } : {}),
+    };
+  };
+
   const addParticipant = () => {
     if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب اسم الطالب' }); return; }
     const accountId = form.accountId || data.faidAccounts[0]?.id;
     // في المجمّع لازم يكون مسجّل بيوم واحد على الأقل؛ في المنفصل ما فيه أيام أصلًا.
     if (isGrouped && !(form.days || []).length) { setForm({ ...form, error: 'اختر يوم واحد على الأقل' }); return; }
-    patchLedger(activeRef, (l) => {
+    if ((form.gPhone || '').trim() && !isValidPhone(form.gPhone)) {
+      setForm({ ...form, error: 'رقم الجوال غير صحيح. امسحه أو صحّحه.' }); return;
+    }
+    const { next, studentId } = linkByPhone(data);
+    save(withLedger(next, activeRef, (l) => {
       const patch = {
         participants: [...(l.participants || []), {
           id: uid(), name: form.name.trim(),
           amount: accountId === 'unpaid' ? 0 : Number(form.amount || 0),
           accountId, attendance: 'معلق',
           // الربط بسجلّ الطالب هو اللي يخلّي تاريخه عبر المواسم يتجمّع في مكان واحد
-          ...(form.studentId ? { studentId: form.studentId } : {}),
+          ...(studentId ? { studentId } : {}),
           ...(isGrouped ? { days: form.days } : {}),
         }],
       };
@@ -1380,7 +1420,7 @@ export default function App() {
       // ينتقل لبند تحصيل إضافي حتى ما يضيع من الحساب
       if (isQuick(l)) Object.assign(patch, quickToNamed(l));
       return patch;
-    });
+    }));
     setSearch(''); // عشان الجديد يبان فورًا لو كان فيه بحث شغّال
     closeModal();
   };
@@ -1388,14 +1428,18 @@ export default function App() {
     if (!form.name?.trim() || !form.id) { setForm({ ...form, error: 'اكتب اسم الطالب' }); return; }
     const accountId = form.accountId;
     if (isGrouped && !(form.days || []).length) { setForm({ ...form, error: 'اختر يوم واحد على الأقل' }); return; }
-    patchLedger(activeRef, (l) => ({
+    if ((form.gPhone || '').trim() && !isValidPhone(form.gPhone)) {
+      setForm({ ...form, error: 'رقم الجوال غير صحيح. امسحه أو صحّحه.' }); return;
+    }
+    const { next, studentId } = linkByPhone(data);
+    save(withLedger(next, activeRef, (l) => ({
       participants: (l.participants || []).map((p) => (p.id !== form.id ? p : {
         ...p, name: form.name.trim(), accountId, amount: accountId === 'unpaid' ? 0 : Number(form.amount || 0),
         // التعديل يقدر يربط تسجيلًا قديمًا بسجلّ الطالب، أو يفك الربط
-        studentId: form.studentId || undefined,
+        studentId: studentId || undefined,
         ...(isGrouped ? { days: form.days } : {}),
       })),
-    }));
+    })));
     closeModal();
   };
   /** تحويل يوم من التسجيل السريع للأسماء بدون ما يضيع المبلغ المسجّل. */
@@ -2171,6 +2215,12 @@ export default function App() {
   const visiblePrograms = !limitedScope ? data.programs
     : data.programs.filter((p) => (p.weeks || []).some((w) => canSeeWeek(p.id, w.id)));
   const backupPlan = scheduleOf(data);
+  /** جوال ولي أمر المشارك، إن كان تسجيله مربوطًا بسجلّ الطالب. */
+  const phoneOf = (part) => {
+    const student = part?.studentId ? data.students.find((s) => s.id === part.studentId) : null;
+    const guardian = student ? data.guardians.find((g) => g.id === student.guardianId) : null;
+    return guardian?.phone || '';
+  };
   /** اللي ما دفعوا: في برامج الموسم، وعبر المواسم كلها لو طلبها. */
   const termUnpaid = unpaidRows(termPrograms);
   const allUnpaid = unpaidRows(visiblePrograms);
@@ -2693,16 +2743,22 @@ export default function App() {
                         </div>
                       </div>
                       <div className="text-sm font-bold text-red-600 shrink-0">{r.due > 0 ? `${fmt(r.due)} ر.س` : '—'}</div>
+                      {/* المطالبة تحتاج طريقًا له، فالرقم يصير زرًا لا نصًّا */}
+                      {(() => {
+                        const href = waLink(phoneOf(r.part), '');
+                        return href ? (
+                          <a href={href} target="_blank" rel="noreferrer" title="واتساب"
+                            className="w-9 h-9 rounded-lg bg-[#25D366] text-white flex items-center justify-center shrink-0">
+                            <Send size={15} />
+                          </a>
+                        ) : null;
+                      })()}
                       {/* التسجيل يُفتح مباشرة عشان يحدّد طريقة الدفع بلا ما يلف على البرنامج */}
                       <button className="bg-brand-600 text-white text-xs font-semibold px-3 py-2 rounded-lg shrink-0"
                         onClick={() => {
                           setSelectedProgramId(r.program.id);
                           setSelectedWeekId(r.week?.id || null);
-                          setForm({
-                            ...r.part,
-                            days: enrolledDays(r.part, r.program.weeks).map((w) => w.id),
-                            amountTouched: true,
-                          });
+                          setForm(participantForm(r.part, r.program.weeks));
                           setModal('editParticipant');
                         }}>سجّل الدفع</button>
                     </div>
@@ -2825,7 +2881,7 @@ export default function App() {
                     showMoney={canMoney}
                     weeks={program.weeks}
                     locked={ledgerLocked}
-                    onEdit={canMoney ? (p) => { setForm({ ...p, days: enrolledDays(p, program.weeks).map((w) => w.id), amountTouched: true }); setModal('editParticipant'); } : null}
+                    onEdit={canMoney ? (p) => { setForm(participantForm(p, program.weeks)); setModal('editParticipant'); } : null}
                     onRemove={canMoney ? (p) => askConfirm(`حذف المشترك «${p.name}»؟`, () => removeParticipant(p.id)) : null}
                   />
                 )}
@@ -3007,6 +3063,38 @@ export default function App() {
                                 </button>
                               );
                             })}
+                          </div>
+                        </Field>
+
+                        {/*
+                          اسم اليوم عندك للتنظيم («الأسبوع الثاني»)، وعند ولي الأمر
+                          للفهم («يوم الجمعة ١٣ رجب»). نفس فكرة اسم طريقة الدفع.
+                        */}
+                        <Field label="شكل الأيام عند ولي الأمر"
+                          hint="الأزرار تريح لما الأيام قليلة، والقائمة أنسب لما تكثر.">
+                          <div className="flex gap-2 mb-3">
+                            {[['text', 'بأسمائها'], ['number', 'مرقّمة'], ['list', 'قائمة']].map(([v, l]) => (
+                              <button key={v} type="button" onClick={() => patchSignup({ dayStyle: v })}
+                                className={`flex-1 py-2 rounded-lg text-xs font-medium border ${(s.dayStyle || 'text') === v ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`}>
+                                {l}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="space-y-2">
+                            {(program.weeks || []).filter((w) => (s.openWeeks || []).includes(w.id)).map((w, i) => {
+                              const custom = (s.dayNames || {})[w.id] || '';
+                              const shown = dayLabel(s.dayStyle || 'text', w, i, custom);
+                              return (
+                                <div key={w.id} className="flex items-center gap-2">
+                                  <span className="text-xs text-slate-500 w-24 shrink-0 truncate">{w.name}</span>
+                                  <input className={inputCls} value={custom} placeholder={shown}
+                                    onChange={(e) => typeSignup({ dayNames: { ...(s.dayNames || {}), [w.id]: e.target.value } })} />
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <div className="text-[11px] text-slate-400 mt-2">
+                            اتركه فاضيًا فيشوف الاسم المكتوب في الرمادي.
                           </div>
                         </Field>
 
@@ -3307,7 +3395,7 @@ export default function App() {
                     totalDays={program.weeks.length}
                     locked={week.status === 'مغلق'}
                     onSet={(p, s) => setAttendance(p.id, s, week.id)}
-                    onEdit={canMoney ? (p) => { setForm({ ...p, days: enrolledDays(p, program.weeks).map((w) => w.id), amountTouched: true }); setModal('editParticipant'); } : null}
+                    onEdit={canMoney ? (p) => { setForm(participantForm(p, program.weeks)); setModal('editParticipant'); } : null}
                   />
                 )}
                 <div className="mt-3 text-sm text-slate-500 px-1 flex flex-wrap gap-x-4 gap-y-1">
@@ -3440,7 +3528,7 @@ export default function App() {
                         statusOf={(p) => p.attendance || 'معلق'}
                         onSetAttendance={(p, s) => setAttendance(p.id, s)}
                         locked={ledgerLocked}
-                        onEdit={canMoney ? (p) => { setForm({ ...p }); setModal('editParticipant'); } : null}
+                        onEdit={canMoney ? (p) => { setForm(participantForm(p)); setModal('editParticipant'); } : null}
                         onRemove={canMoney ? (p) => askConfirm(`حذف «${p.name}»؟`, () => removeParticipant(p.id)) : null}
                       />
                     )}
@@ -4543,6 +4631,18 @@ export default function App() {
               </div>
             );
           })()}
+
+          {/*
+            بدونه يمشي التسجيل مثل ما كان؛ ومعه يدخل الطالب قاعدة المشتركين
+            ويصير لك طريق توصله — وهو نفسه اللي يمنع تكرار ولي الأمر.
+          */}
+          {canGuardians && (
+            <Field label="جوال ولي الأمر (اختياري)"
+              hint="تكتبه فيدخل الطالب قائمة المشتركين وتقدر تكلّمه من «ما دفع». وتقدر تتركه فاضيًا.">
+              <input className={inputCls} dir="ltr" inputMode="tel" value={form.gPhone || ''}
+                onChange={(e) => setForm({ ...form, gPhone: e.target.value, error: '' })} placeholder="05xxxxxxxx" />
+            </Field>
+          )}
 
           <Field label="طريقة الدفع / التصنيف">
             <select className={inputCls} value={form.accountId || data.faidAccounts[0]?.id || ''}

@@ -31,12 +31,27 @@ export const fieldsFor = (data, program) => [
  * ما يُعرض لولي الأمر: اسم البرنامج وأيامه المتاحة وسعره وطرق الدفع فقط.
  * ولا حرف عن المسجّلين — الرابط عام، وأي أحد يفتحه.
  */
+/**
+ * اسم اليوم كما يشوفه ولي الأمر — قد يكون غير اسمه عندك.
+ * «الأسبوع الثاني» عندك، و«يوم الجمعة ١٣ رجب» عنده. الاسم المخصّص يفوز دائمًا،
+ * وبدونه: `number` يرقّمها، وغيره يعرض اسمها الأصلي.
+ */
+export const DAY_STYLES = ['text', 'number', 'list'];
+export const dayLabel = (style, week, index, custom) => {
+  const c = String(custom || '').trim();
+  if (c) return c;
+  if (style === 'number') return `اليوم ${index + 1}`;
+  return week?.name || '';
+};
+
 export const publicView = (data, program) => {
   const s = program.signup || {};
   const openIds = s.openWeeks || [];
+  const names = s.dayNames || {};
+  const dayStyle = DAY_STYLES.includes(s.dayStyle) ? s.dayStyle : 'text';
   const days = (program.weeks || [])
     .filter((w) => openIds.includes(w.id))
-    .map((w) => ({ id: w.id, name: w.name, date: w.date || '' }));
+    .map((w, i) => ({ id: w.id, name: dayLabel(dayStyle, w, i, names[w.id]), date: w.date || '' }));
 
   /**
    * المجمّع يُباع بطريقتين معًا: تسجيل يومي بسعر اليوم، وباقات بأسعارها.
@@ -81,6 +96,7 @@ export const publicView = (data, program) => {
     packages,
     // المجمّع يختار ولي الأمر أيامه؛ المنفصل يختار أي أسابيع يبي
     days,
+    dayStyle,
     accounts: (data.faidAccounts || [])
       .filter((a) => (s.accounts || []).includes(a.id))
       .map((a) => ({
@@ -121,8 +137,13 @@ export const TEXTS = {
   guardian: 'بيانات ولي الأمر',
   guardianHint: 'جوالك هو اللي نعرفك فيه لو سجّلت مرة ثانية.',
   student: 'بيانات الطالب',
+  days: 'الأيام',
+  packageLabel: 'طريقة التسجيل',
+  dueLabel: 'المبلغ المستحق',
+  payLabel: 'طريقة الدفع',
   submit: 'إرسال التسجيل',
   contact: 'تواصل معنا',
+  share: 'شارك الرابط',
   successTitle: 'تم تسجيلك',
   successSub: 'سجّلنا {الطالب} في {البرنامج}.',
   refLabel: 'الرقم المرجعي',

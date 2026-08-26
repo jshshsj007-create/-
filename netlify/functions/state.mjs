@@ -9,7 +9,7 @@
  */
 import { getStore } from '@netlify/blobs';
 import crypto from 'node:crypto';
-import { programByToken, publicView, validateSubmission, applySubmission, rateLimited } from '../../src/signup.js';
+import { programByToken, publicView, validateSubmission, applySubmission, rateLimited, waIntl } from '../../src/signup.js';
 import { dedupeByPhone, remapParticipants } from '../../src/people.js';
 import { runBackup, backupStatus, readSnapshot } from '../lib/backup.mjs';
 
@@ -171,7 +171,9 @@ export default async (req) => {
 
   if (op === 'signup_info') {
     const program = doc && programByToken(doc.data?.programs, body.token);
-    if (!program) return json({ error: 'closed' }, 404);
+    // الرابط المقفل يرجّع رقم الفريق وحده: «تواصل معنا» بلا طريق كلام فاضي،
+    // والرقم عام أصلًا يشوفه كل من فتح أي رابط تسجيل
+    if (!program) return json({ error: 'closed', wa: waIntl(doc?.data?.waNumber) }, 404);
     return json({ ok: true, view: publicView(doc.data, program) });
   }
 

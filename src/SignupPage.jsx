@@ -3,11 +3,11 @@
  * وما تعرف شيئًا عن بقية البيانات — تستقبل فقط.
  */
 import React, { useState, useEffect } from 'react';
-import { Check, AlertTriangle, Plus, X, Copy, Upload, MessageCircle } from 'lucide-react';
+import { Check, AlertTriangle, Plus, X, Copy, Upload, MessageCircle, Share2 } from 'lucide-react';
 import { api } from './cloud.js';
 import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 import { isValidPhone } from './people.js';
-import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, daysAllowed, daysAreFixed, coversAll, RECEIPT_TYPES, RECEIPT_MAX, txt, waLink, fillTemplate, signupVars } from './signup.js';
+import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, daysAllowed, daysAreFixed, coversAll, RECEIPT_TYPES, RECEIPT_MAX, txt, TEXTS, waLink, fillTemplate, signupVars } from './signup.js';
 
 const input = 'w-full border border-slate-200 rounded-xl px-3.5 py-3 text-[15px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent';
 const inputBad = input.replace('border-slate-200', 'border-red-300');
@@ -35,6 +35,36 @@ function WaButton({ href, children }) {
       className="w-full bg-[#25D366] text-white font-bold rounded-xl py-3.5 flex items-center justify-center gap-2 text-[15px]">
       <MessageCircle size={19} /> {children}
     </a>
+  );
+}
+
+/**
+ * مشاركة الرابط: ولي الأمر يرسله لأي أحد بضغطة. قائمة المشاركة في الجوال
+ * أسرع طريق لواتساب، وعلى ما ينقصه ذلك ننسخ الرابط وننبّهه إنه اننسخ.
+ */
+function ShareButton({ title, label }) {
+  const [said, setSaid] = useState('');
+  const go = async () => {
+    const url = typeof location === 'undefined' ? '' : location.href;
+    const text = `${title}\n${url}`;
+    try {
+      if (navigator.share) { await navigator.share({ title, text: title, url }); return; }
+      await navigator.clipboard.writeText(text);
+      setSaid('اننسخ الرابط — الصقه وين ما تبي');
+    } catch {
+      setSaid('');
+    }
+    setTimeout(() => setSaid(''), 3000);
+  };
+  if (!label) return null;
+  return (
+    <>
+      <button type="button" onClick={go}
+        className="w-full bg-white border border-slate-200 text-slate-700 font-bold rounded-xl py-3.5 flex items-center justify-center gap-2 text-[15px]">
+        <Share2 size={18} /> {label}
+      </button>
+      {said && <div className="text-xs text-center text-slate-500 mt-2">{said}</div>}
+    </>
   );
 }
 
@@ -137,6 +167,7 @@ export default function SignupPage({ token }) {
   const [receipt, setReceipt] = useState(null);
   const [busy, setBusy] = useState(false);
   const [goWa, setGoWa] = useState('');
+  const [closedWa, setClosedWa] = useState('');
 
   /**
    * بعد التسجيل يشوف رقمه المرجعي أول، ثم يتحوّل للمحادثة. المهلة مقصودة:
@@ -161,8 +192,11 @@ export default function SignupPage({ token }) {
         if (d.length === 1 && !r.body.view.usePackages) setKids([{ name: '', days: [d[0].id] }]);
         if (r.body.view.accounts.length === 1) setAccountId(r.body.view.accounts[0].id);
         setState('form');
-      } else if (r.status === 404) setState('closed');
-      else setState('error');
+      } else if (r.status === 404) {
+        // الرابط مقفل، لكن الخادم يرجّع رقم الفريق عشان يبقى له طريق يوصلنا منه
+        setClosedWa(r.body?.wa || '');
+        setState('closed');
+      } else setState('error');
     })();
   }, [token]);
 
@@ -171,26 +205,31 @@ export default function SignupPage({ token }) {
   }
 
   if (state === 'blocked') {
+    // «تواصل مع الفريق» بلا طريق للفريق كلام فاضي، فالزر جزء من الرسالة لا زينة
+    const href = waLink(view?.wa?.number, '');
     return (
       <Shell>
         <div className="bg-white rounded-2xl p-8 text-center">
           <div className="text-4xl mb-3">⏳</div>
           <div className="font-bold text-lg text-slate-800 mb-1">التسجيل مو متاح حاليًا</div>
-          <div className="text-sm text-slate-500">
+          <div className="text-sm text-slate-500 mb-5">
             {view?.programName ? `«${view.programName}» ` : ''}ما فتح للتسجيل بعد. تواصل مع الفريق.
           </div>
+          <WaButton href={href}>{txt(view, 'contact') || TEXTS.contact}</WaButton>
         </div>
       </Shell>
     );
   }
 
   if (state === 'closed') {
+    const href = waLink(closedWa, '');
     return (
       <Shell>
         <div className="bg-white rounded-2xl p-8 text-center">
           <div className="text-4xl mb-3">🔒</div>
           <div className="font-bold text-lg text-slate-800 mb-1">التسجيل مقفل</div>
-          <div className="text-sm text-slate-500">هذا الرابط ما عاد شغّالًا. تواصل مع الفريق للحصول على رابط جديد.</div>
+          <div className="text-sm text-slate-500 mb-5">هذا الرابط ما عاد شغّالًا. تواصل مع الفريق للحصول على رابط جديد.</div>
+          <WaButton href={href}>{TEXTS.contact}</WaButton>
         </div>
       </Shell>
     );
@@ -208,6 +247,9 @@ export default function SignupPage({ token }) {
       </Shell>
     );
   }
+
+  /** عنوان المشاركة: اللي يوصله الرابط يعرف وش هو قبل ما يفتح. */
+  const shareTitle = `${view?.programName || TEAM_NAME} — التسجيل مفتوح`;
 
   if (state === 'done') {
     const vars = signupVars(view, { answers, kids, accountId }, { ref: result?.ref });
@@ -238,6 +280,8 @@ export default function SignupPage({ token }) {
               <div className="mt-3"><WaButton href={href}>{txt(view, 'openWa', vars)}</WaButton></div>
             </>
           )}
+          {/* أقوى لحظة يوصّي فيها غيره: خلّص وارتاح */}
+          <div className="mt-3"><ShareButton title={shareTitle} label={txt(view, 'share')} /></div>
         </div>
       </Shell>
     );
@@ -295,6 +339,33 @@ export default function SignupPage({ token }) {
   const details = String(view.details || '').split('\n').map((l) => l.trim()).filter(Boolean);
   const contactHref = waLink(view.wa.number, '');
 
+  /**
+   * أي بطاقة تجي أول؟ بطاقة الطالب تتكرر مع كل ابن، فما تنفع تتداخل مع خانات
+   * ولي الأمر — يبقى ترتيبهما بطاقتين. ويقرّره ترتيب الخانتين المقفولتين في
+   * الإعدادات: حطّ اسم الطالب فوق الجوال، فبطاقته تطلع فوق.
+   */
+  const idxName = fields.findIndex((f) => f.id === 'name');
+  const idxPhone = fields.findIndex((f) => f.id === 'gPhone');
+  const kidsFirst = idxName >= 0 && idxPhone >= 0 && idxName < idxPhone;
+
+  const guardianCard = (
+    <div className="bg-white rounded-2xl p-5 mb-4">
+      {txt(view, 'guardian') && <div className="font-bold text-slate-800 mb-1">{txt(view, 'guardian')}</div>}
+      {txt(view, 'guardianHint') && <div className="text-xs text-slate-400 mb-4">{txt(view, 'guardianHint')}</div>}
+      {guardianFields.map((f) => (
+        <div key={f.id} data-bad={errors[f.id] ? '1' : undefined}>
+          <Row label={f.label} required={f.required} error={errors[f.id]}>
+            <FieldInput field={f} value={answers[f.id]} bad={!!errors[f.id]}
+              onChange={(v) => { setAnswers({ ...answers, [f.id]: v }); setErrors({ ...errors, [f.id]: null }); }} />
+          </Row>
+        </div>
+      ))}
+      {answers.gPhone && !isValidPhone(answers.gPhone) && !errors.gPhone && (
+        <div className="text-xs text-slate-400 -mt-2">مثال: 0551234567</div>
+      )}
+    </div>
+  );
+
   return (
     <Shell>
       {view.poster && (
@@ -335,21 +406,9 @@ export default function SignupPage({ token }) {
         <div className="mb-4"><WaButton href={contactHref}>{txt(view, 'contact')}</WaButton></div>
       )}
 
-      <div className="bg-white rounded-2xl p-5 mb-4">
-        {txt(view, 'guardian') && <div className="font-bold text-slate-800 mb-1">{txt(view, 'guardian')}</div>}
-        {txt(view, 'guardianHint') && <div className="text-xs text-slate-400 mb-4">{txt(view, 'guardianHint')}</div>}
-        {guardianFields.map((f) => (
-          <div key={f.id} data-bad={errors[f.id] ? '1' : undefined}>
-            <Row label={f.label} required={f.required} error={errors[f.id]}>
-              <FieldInput field={f} value={answers[f.id]} bad={!!errors[f.id]}
-                onChange={(v) => { setAnswers({ ...answers, [f.id]: v }); setErrors({ ...errors, [f.id]: null }); }} />
-            </Row>
-          </div>
-        ))}
-        {answers.gPhone && !isValidPhone(answers.gPhone) && !errors.gPhone && (
-          <div className="text-xs text-slate-400 -mt-2">مثال: 0551234567</div>
-        )}
-      </div>
+      <div className="mb-4"><ShareButton title={shareTitle} label={txt(view, 'share')} /></div>
+
+      {!kidsFirst && guardianCard}
 
       {kids.map((kid, i) => (
         <div key={i} className="bg-white rounded-2xl p-5 mb-4">
@@ -381,7 +440,7 @@ export default function SignupPage({ token }) {
 
           {view.usePackages && (
             <div data-bad={errors[`kid${i}.package`] ? '1' : undefined}>
-              <Row label="طريقة التسجيل" required error={errors[`kid${i}.package`]}>
+              <Row label={txt(view, 'packageLabel')} required error={errors[`kid${i}.package`]}>
                 <div className="space-y-2">
                   {view.packages.map((pk) => {
                     const on = kid.packageId === pk.id;
@@ -435,7 +494,7 @@ export default function SignupPage({ token }) {
             const full = daysAreFixed(pkg) && picked >= allowed;
             return (
               <div data-bad={errors[`kid${i}.days`] ? '1' : undefined}>
-                <Row label="الأيام" required error={errors[`kid${i}.days`]}>
+                <Row label={txt(view, 'days')} required error={errors[`kid${i}.days`]}>
                   {view.usePackages && (
                     <div className="text-xs text-slate-500 mb-2">
                       {daysAreFixed(pkg)
@@ -443,6 +502,29 @@ export default function SignupPage({ token }) {
                         : <>اختر الأيام اللي تبيها — اخترت {picked} من {view.days.length}</>}
                     </div>
                   )}
+                  {/*
+                    الأزرار المربّعة تريح لما الأيام قليلة، وتتعب لما تكثر —
+                    فصاحب البرنامج يختار «قائمة» فتنزل سطرًا سطرًا بمساحة أقل.
+                  */}
+                  {view.dayStyle === 'list' ? (
+                    <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
+                      {view.days.map((d) => {
+                        const on = (kid.days || []).includes(d.id);
+                        const blocked = !on && full;
+                        return (
+                          <label key={d.id}
+                            className={`flex items-center gap-3 px-3.5 py-3 text-sm ${blocked ? 'opacity-40' : 'cursor-pointer'} ${on ? 'bg-brand-50' : ''}`}>
+                            <input type="checkbox" checked={on} disabled={blocked}
+                              onChange={() => { toggleDay(i, d.id); setErrors({ ...errors, [`kid${i}.days`]: null }); }} />
+                            <span className="min-w-0">
+                              <span className="block text-slate-800">{d.name}</span>
+                              {d.date && <span className="block text-[11px] text-slate-400">{d.date}</span>}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  ) : (
                   <div className="grid grid-cols-2 gap-2">
                     {view.days.map((d) => {
                       const on = (kid.days || []).includes(d.id);
@@ -458,6 +540,7 @@ export default function SignupPage({ token }) {
                       );
                     })}
                   </div>
+                  )}
                   {dueFor(view, kid) > 0 && (
                     <div className="text-sm text-brand-800 bg-brand-50 rounded-xl px-3 py-2 mt-3 font-semibold">
                       {view.usePackages && !pkg?.perDay ? pkg.name : `${picked} يوم`} · {fmt(dueFor(view, kid))} ر.س
@@ -475,10 +558,12 @@ export default function SignupPage({ token }) {
         <Plus size={18} /> أضف ابناً آخر
       </button>
 
+      {kidsFirst && guardianCard}
+
       {view.accounts.length > 0 && (
         <div className="bg-white rounded-2xl p-5 mb-4" data-bad={errors.accountId ? '1' : undefined}>
-          <div className="font-bold text-slate-800 mb-1">طريقة الدفع</div>
-          {total > 0 && <div className="text-sm text-slate-500 mb-4">المبلغ المستحق: <b className="text-brand-700">{fmt(total)} ر.س</b></div>}
+          <div className="font-bold text-slate-800 mb-1">{txt(view, 'payLabel')}</div>
+          {total > 0 && <div className="text-sm text-slate-500 mb-4">{txt(view, 'dueLabel')}: <b className="text-brand-700">{fmt(total)} ر.س</b></div>}
           <div className="space-y-2">
             {view.accounts.map((a) => {
               const on = accountId === a.id;
