@@ -52,6 +52,8 @@ body { font-family: 'Tajawal', system-ui, sans-serif; background: #F1F4F9; }
 /* ألوان الحالة: نخفّف خلفيتها ونرفع نصّها */
 .dark .bg-green-50 { background-color: #10261C; }
 .dark .bg-green-100 { background-color: #17351F; }
+.dark .border-green-100,
+.dark .border-green-200 { border-color: #1E4A32; }
 .dark .text-green-700,
 .dark .text-green-600 { color: #6FD69B; }
 .dark .bg-red-50 { background-color: #2A1618; }

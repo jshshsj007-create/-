@@ -3,7 +3,7 @@ import {
   Home, BookOpen, Wallet, Settings, Plus, X, Check, ChevronLeft, Trash2, Pencil,
   Users as UsersIcon, Calendar, TrendingUp, TrendingDown, Layers, ShieldCheck,
   Lock, Unlock, Trophy, LogOut, KeyRound, Plane, Search, AlertTriangle, Send,
-  RotateCcw, Wand2, CalendarDays, FileText, Copy, Clock,
+  RotateCcw, Wand2, CalendarDays, FileText, Copy, Clock, BookMarked,
 } from 'lucide-react';
 import { api, clone, merge3, readSession, writeSession, clearSession, readPending, writePending, clearPending } from './cloud.js';
 import {
@@ -16,14 +16,18 @@ import { readImage, POSTER, GALLERY } from './img.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
 import { DAY_NAMES, hourLabel, scheduleOf } from './schedule.js';
 import { readTheme, writeTheme, applyTheme } from './theme.js';
+import {
+  SURAHS, PARTS, emptyWird, rangeText, carryAfter, studentTotals,
+  studentSessions, studentOfUser, khayrRows, khayrReportText,
+} from './khayr.js';
 import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v5.6';
-const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
-const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
+const APP_VERSION = 'v5.7';
+const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
+const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'معلّم خيركم', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
 const LEVELS = ['أولية', 'متوسطة', 'عليا'];
 export const ORDINALS = ['الأول', 'الثاني', 'الثالث', 'الرابع', 'الخامس', 'السادس', 'السابع', 'الثامن', 'التاسع', 'العاشر',
@@ -382,6 +386,11 @@ const defaultData = () => ({
   faidAdjustments: [],
   competitions: [],
   trips: [],
+  /**
+   * خيركم: طلابه قائمة مستقلة عن مشتركي البرامج، وجلساته سجل التسميع.
+   * الشيخ يكتب والطالب يقرأ — ولذلك الطالب يُربط بحسابه بـ`userId`.
+   */
+  khayr: { students: [], sessions: [] },
   users: [],
   // قاعدة العملاء: ولي الأمر ← أبناؤه. تعيش عبر المواسم كلها، مو داخل ترم واحد.
   guardians: [],
@@ -447,6 +456,9 @@ export function migrate(loaded) {
   });
   // author = صاحب الفكرة، غير idea اللي هي شرح المسابقة نفسها
   d.competitions = (d.competitions || []).map((c) => ({ author: '', idea: '', tools: [], photos: [], ...c }));
+  d.khayr = { students: [], sessions: [], ...(d.khayr || {}) };
+  d.khayr.students = (d.khayr.students || []).map((st) => ({ wird: emptyWird(), ...st }));
+  d.khayr.sessions = (d.khayr.sessions || []).map((se) => ({ entries: {}, ...se }));
   d.trips = (d.trips || []).map((t) => {
     const trip = { incomeItems: [], expenseItems: [], ...t };
     // الأرقام المجملة القديمة تتحول لبند واحد باسم واضح
@@ -1002,6 +1014,11 @@ export default function App() {
   const [selectedCompId, setSelectedCompId] = useState(null);
   const [selectedGuardianId, setSelectedGuardianId] = useState(null);
   const [guardianSearch, setGuardianSearch] = useState('');
+  const [selectedKhayrSessionId, setSelectedKhayrSessionId] = useState(null);
+  const [selectedKhayrStudentId, setSelectedKhayrStudentId] = useState(null);
+  const [khayrTab, setKhayrTab] = useState('report');   // التقرير · الجلسات · الطلاب
+  const [khayrScope, setKhayrScope] = useState('term');  // هذا الموسم أو كلها
+  const [khayrMsg, setKhayrMsg] = useState('');
   const [weekTab, setWeekTab] = useState('finance');
   const [programTab, setProgramTab] = useState('days');
   const [settingsTab, setSettingsTab] = useState('users');
@@ -1870,6 +1887,85 @@ export default function App() {
   const removeTripItem = (key, itemId) => patchTrip({ [key]: (trip[key] || []).filter((x) => x.id !== itemId) });
   const removeTrip = (tid) => { save({ ...data, trips: data.trips.filter((t) => t.id !== tid) }); goto('trips'); };
 
+  /* ------------------------------- خيركم ------------------------------- */
+
+  const patchKhayr = (patch) => save({ ...data, khayr: { ...data.khayr, ...patch } });
+
+  const saveKhayrStudent = () => {
+    if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب اسم الطالب' }); return; }
+    const fields = {
+      name: form.name.trim(),
+      phone: normalizePhone(form.phone || ''),
+      wird: {
+        review: Number(form.review || 0),
+        tathbit: Number(form.tathbit || 0),
+        hifz: Number(form.hifz || 0),
+      },
+      userId: form.userId || '',
+    };
+    patchKhayr({
+      students: form.id
+        ? data.khayr.students.map((s) => (s.id !== form.id ? s : { ...s, ...fields }))
+        : [...data.khayr.students, { id: uid(), ...fields }],
+    });
+    closeModal();
+  };
+
+  /** يمشي الطالب ويمشي تسميعه معه — ما نخلّي سجلات معلّقة بلا صاحب. */
+  const removeKhayrStudent = (sid) => patchKhayr({
+    students: data.khayr.students.filter((s) => s.id !== sid),
+    sessions: data.khayr.sessions.map((se) => {
+      const { [sid]: gone, ...rest } = se.entries || {};
+      return { ...se, entries: rest };
+    }),
+  });
+
+  const addKhayrSession = () => {
+    if (!form.date?.trim()) { setForm({ ...form, error: 'اكتب تاريخ الجلسة' }); return; }
+    const created = { id: uid(), termKey, date: form.date.trim(), entries: {} };
+    patchKhayr({ sessions: [...data.khayr.sessions, created] });
+    setSelectedKhayrSessionId(created.id);
+    setModal(null); setForm({});
+    goto('khayrSession');
+  };
+
+  const removeKhayrSession = (sid) => {
+    patchKhayr({ sessions: data.khayr.sessions.filter((s) => s.id !== sid) });
+    goto('khayr');
+  };
+
+  /**
+   * تسميع طالب في جلسة. الغائب ما نحفظ له مدى ولا أوجه — نحفظ ما حمّله الشيخ
+   * وبس، عشان ما يبقى في السجل كلام من نموذج فُتح ثم بُدّل قراره.
+   */
+  const saveKhayrEntry = () => {
+    const sid = form.studentId;
+    const entry = form.present === false
+      ? { present: false, due: Number(form.due || 0), note: (form.note || '').trim() }
+      : {
+        present: true,
+        note: (form.note || '').trim(),
+        ...Object.fromEntries(PARTS.map((p) => [p.id, {
+          from: form[p.id]?.from || '', fromAya: form[p.id]?.fromAya || '',
+          to: form[p.id]?.to || '', toAya: form[p.id]?.toAya || '',
+          pages: Number(form[p.id]?.pages || 0),
+        }])),
+      };
+    patchKhayr({
+      sessions: data.khayr.sessions.map((se) => (se.id !== selectedKhayrSessionId ? se
+        : { ...se, entries: { ...se.entries, [sid]: entry } })),
+    });
+    closeModal();
+  };
+
+  const clearKhayrEntry = (sessionId, sid) => patchKhayr({
+    sessions: data.khayr.sessions.map((se) => {
+      if (se.id !== sessionId) return se;
+      const { [sid]: gone, ...rest } = se.entries || {};
+      return { ...se, entries: rest };
+    }),
+  });
+
   /* --------------------------- رابط التسجيل --------------------------- */
 
   const signupPatched = (patch) => ({
@@ -2304,6 +2400,37 @@ export default function App() {
   /** التكرار المحتمل: التطبيق يشتبه، والمستخدم يقرّر. */
   const duplicates = canGuardians ? findDuplicates(data.guardians, data.students) : [];
 
+  /* ------------------------------- خيركم ------------------------------- */
+  /**
+   * قسم مستقل: طلابه قائمة خاصة ما لها علاقة بمشتركي البرامج. والطالب المربوط
+   * بحساب يقرأ سجلّه هو وحده — الشيخ يكتب، والطالب يشوف.
+   */
+  const canKhayr = can('خيركم');
+  const khayr = data.khayr || { students: [], sessions: [] };
+  const myKhayrStudent = canKhayr ? null : studentOfUser(khayr.students, currentUser?.id);
+  const termKhayrSessions = khayr.sessions.filter((s) => s.termKey === termKey);
+  const scopedKhayrSessions = khayrScope === 'all' ? khayr.sessions : termKhayrSessions;
+  const khayrSession = khayr.sessions.find((s) => s.id === selectedKhayrSessionId);
+  const khayrStudent = khayr.students.find((s) => s.id === selectedKhayrStudentId);
+  /** المتراكم قبل هذي الجلسة — أساس الرقم اللي يشوفه الشيخ وهو يسجّل. */
+  const carryBefore = (student, session) => studentTotals(
+    student,
+    khayr.sessions.filter((s) => String(s.date || '') < String(session?.date || '')),
+  ).carry;
+
+  const shareKhayrReport = async () => {
+    const title = `خيركم — ${khayrScope === 'all' ? 'كل المواسم' : `الترم ${data.currentTerm} ${data.currentYear} هـ`}`;
+    const text = khayrReportText(khayrRows(khayr.students, scopedKhayrSessions, khayr.sessions), title);
+    try {
+      if (navigator.share) { await navigator.share({ title, text }); return; }
+      await navigator.clipboard.writeText(text);
+      setKhayrMsg('اننسخ التقرير، الصقه وين ما تبي');
+    } catch {
+      setKhayrMsg('ما قدر ينسخ. حدّد النص ونسخه يدويًا.');
+    }
+    setTimeout(() => setKhayrMsg(''), 3000);
+  };
+
   /** آخر مدير نشط ما ينحذف ولا يتعطّل، وإلا انقفل التطبيق على الجميع. */
   const activeAdmins = data.users.filter((u) => u.role === 'مدير' && u.status === 'نشط');
   const noAdminExists = data.users.length > 0 && activeAdmins.length === 0;
@@ -2498,6 +2625,9 @@ export default function App() {
     { id: 'programs', label: 'البرامج', desc: 'عرض وإدارة البرامج', icon: BookOpen, show: canAttend },
     { id: 'faid', label: 'فيض', desc: 'حسابات فيض والأرصدة', icon: Wallet, show: can('فيض - الإيرادات والمصروفات') },
     { id: 'competitions', label: 'المسابقات', desc: 'بنك الأفكار والأدوات', icon: Trophy, show: can('الإعداد (المسابقات)') },
+    { id: 'khayr', label: 'خيركم', desc: 'التسميع والمتابعة', icon: BookMarked, show: canKhayr },
+    // الطالب المربوط يدخل على سجلّه هو، بلا أي صلاحية
+    { id: 'khayrMe', label: 'خيركم', desc: 'سجلّك في التسميع', icon: BookMarked, show: !!myKhayrStudent },
     { id: 'trips', label: 'السفرات', desc: 'الرحلات وحساباتها', icon: Plane, show: can('السفرات') },
     { id: 'guardians', label: 'المشتركين', desc: 'الطلاب وأولياء أمورهم', icon: UsersIcon, show: canGuardians },
     { id: 'reports', label: 'التقارير', desc: 'التقارير والإحصائيات', icon: FileText, show: canMoney },
@@ -2516,7 +2646,8 @@ export default function App() {
     (id === 'reports' && view === 'seasons') ||
     (id === 'programs' && (view === 'programDetail' || view === 'weekDetail' || view === 'unpaid')) ||
     (id === 'home' && (view === 'competitions' || view === 'trips' || view === 'tripDetail'
-      || view === 'competitionDetail' || view === 'guardians' || view === 'guardianDetail'));
+      || view === 'competitionDetail' || view === 'guardians' || view === 'guardianDetail'
+      || view === 'khayr' || view === 'khayrSession' || view === 'khayrMe'));
 
   /** فلترة حسب طريقة الدفع: حساب معيّن، أو «ما دفع»، أو الكل. */
   const byPay = (p) => payFilter === 'all' || p.accountId === payFilter;
@@ -3965,6 +4096,249 @@ export default function App() {
           </div>
         )}
 
+        {view === 'khayr' && canKhayr && (
+          <div>
+            <h2 className="text-xl font-extrabold text-slate-800">خيركم</h2>
+            <div className="text-sm text-slate-400 mb-5 mt-1">
+              التسميع والمتابعة — {khayr.students.length} طالب
+            </div>
+            <Tabs
+              tabs={[{ id: 'report', label: 'التقرير' }, { id: 'sessions', label: 'الجلسات' }, { id: 'students', label: 'الطلاب' }]}
+              value={khayrTab} onChange={setKhayrTab} />
+
+            {khayrTab === 'report' && (
+              <div>
+                <FilterChips
+                  options={[
+                    { id: 'term', label: 'هذا الموسم', count: termKhayrSessions.length },
+                    { id: 'all', label: 'كل المواسم', count: khayr.sessions.length },
+                  ]}
+                  value={khayrScope} onChange={setKhayrScope} />
+                <div className="h-4" />
+                {!khayr.students.length ? (
+                  <div className={emptyCls}>ما فيه طلاب بعد. أضفهم من تبويب «الطلاب».</div>
+                ) : (
+                  <>
+                    <div className="bg-white rounded-2xl border border-slate-100 overflow-x-auto">
+                      <table className="w-full text-sm min-w-[520px]">
+                        <thead className="bg-slate-50 text-slate-500 text-xs"><tr>
+                          <th className="text-right px-4 py-3 font-medium">الطالب</th>
+                          <th className="text-right px-3 py-3 font-medium">متراكم</th>
+                          <th className="text-right px-3 py-3 font-medium">حضور</th>
+                          <th className="text-right px-3 py-3 font-medium">غياب</th>
+                          <th className="text-right px-3 py-3 font-medium">مراجعة</th>
+                          <th className="text-right px-3 py-3 font-medium">تثبيت</th>
+                          <th className="text-right px-3 py-3 font-medium">حفظ</th>
+                        </tr></thead>
+                        <tbody>
+                          {khayrRows(khayr.students, scopedKhayrSessions, khayr.sessions).map((r) => (
+                            <tr key={r.student.id} className="border-t border-slate-50">
+                              <td className="px-4 py-3 font-semibold text-slate-800 whitespace-nowrap">{r.student.name}</td>
+                              <td className={`px-3 py-3 font-bold ${r.carry > 0 ? 'text-amber-600' : 'text-green-600'}`}>{r.carry}</td>
+                              <td className="px-3 py-3 text-slate-600">{r.attended}</td>
+                              <td className="px-3 py-3 text-slate-400">{r.absent}</td>
+                              <td className="px-3 py-3 text-slate-600">{r.review}</td>
+                              <td className="px-3 py-3 text-slate-600">{r.tathbit}</td>
+                              <td className="px-3 py-3 text-slate-600">{r.hifz}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-2 leading-6">
+                      الأوجه عن {khayrScope === 'all' ? 'كل المواسم' : 'هذا الموسم'}، والمتراكم دَين قائم ما يتصفّر بانتهاء الترم.
+                    </div>
+                    <button className={btnPrimary + ' w-full mt-3'} onClick={shareKhayrReport}>
+                      <Copy size={16} /> نسخ التقرير
+                    </button>
+                    {khayrMsg && <div className="text-xs text-brand-700 text-center mt-2">{khayrMsg}</div>}
+                  </>
+                )}
+              </div>
+            )}
+
+            {khayrTab === 'sessions' && (
+              <div>
+                <button className={btnPrimary + ' w-full mb-4'}
+                  onClick={() => { setForm({ date: '' }); setModal('khayrSessionNew'); }}>
+                  <Plus size={16} /> جلسة جديدة
+                </button>
+                {!termKhayrSessions.length ? (
+                  <div className={emptyCls}>ما فيه جلسات في هذا الموسم بعد.</div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {[...termKhayrSessions].sort((a, b) => String(b.date).localeCompare(String(a.date))).map((se) => {
+                      const done = Object.keys(se.entries || {}).length;
+                      return (
+                        <button key={se.id} onClick={() => { setSelectedKhayrSessionId(se.id); goto('khayrSession'); }}
+                          className="w-full bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3 text-right hover:shadow-md transition-shadow">
+                          <span className="w-11 h-11 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center shrink-0"><CalendarDays size={20} /></span>
+                          <span className="flex-1 min-w-0">
+                            <span className="block font-bold text-slate-800">{se.date}</span>
+                            <span className="block text-xs text-slate-400 mt-0.5">سُجّل {done} من {khayr.students.length}</span>
+                          </span>
+                          <ChevronLeft size={18} className="text-slate-300 shrink-0" />
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {khayrTab === 'students' && (
+              <div>
+                <button className={btnPrimary + ' w-full mb-4'}
+                  onClick={() => { setForm({ review: '', tathbit: '', hifz: '' }); setModal('khayrStudent'); }}>
+                  <Plus size={16} /> طالب جديد
+                </button>
+                {!khayr.students.length ? (
+                  <div className={emptyCls}>ما فيه طلاب بعد. أضف أول طالب.</div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {khayr.students.map((st) => {
+                      const linked = data.users.find((u) => u.id === st.userId);
+                      return (
+                        <div key={st.id} className="bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="font-bold text-slate-800">{st.name}</div>
+                            <div className="text-[11px] text-slate-400 mt-1">
+                              الورد: مراجعة {st.wird?.review || 0} · تثبيت {st.wird?.tathbit || 0} · حفظ {st.wird?.hifz || 0}
+                            </div>
+                            {can('المستخدمون والصلاحيات') && (
+                              <div className="mt-1.5">
+                                {linked
+                                  ? <Badge tone="brand">مرتبط بحساب: {linked.name}</Badge>
+                                  : <Badge tone="slate">بلا حساب</Badge>}
+                              </div>
+                            )}
+                          </div>
+                          <button onClick={() => { setForm({ ...st, ...(st.wird || emptyWird()) }); setModal('khayrStudent'); }}
+                            className="text-slate-400 hover:text-brand-700"><Pencil size={16} /></button>
+                          <button onClick={() => askConfirm(`حذف «${st.name}» وكل تسميعه؟`, () => removeKhayrStudent(st.id))}
+                            className="text-slate-300 hover:text-red-500"><Trash2 size={16} /></button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {view === 'khayrSession' && canKhayr && khayrSession && (
+          <div>
+            <Breadcrumb items={[{ label: 'خيركم', onClick: () => { setKhayrTab('sessions'); goto('khayr'); } }, { label: khayrSession.date }]} />
+            <div className="flex items-center gap-2 mb-1 mt-2">
+              <h2 className="text-lg font-bold text-slate-800">جلسة {khayrSession.date}</h2>
+              <button onClick={() => askConfirm(`حذف جلسة ${khayrSession.date} وكل تسميعها؟`, () => removeKhayrSession(khayrSession.id))}
+                className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>
+            </div>
+            <div className="text-sm text-slate-400 mb-5">اضغط اسم الطالب وسجّل تسميعه.</div>
+            {!khayr.students.length ? (
+              <div className={emptyCls}>ما فيه طلاب بعد. أضفهم من تبويب «الطلاب».</div>
+            ) : (
+              <div className="space-y-2.5">
+                {khayr.students.map((st) => {
+                  const entry = khayrSession.entries?.[st.id];
+                  const before = carryBefore(st, khayrSession);
+                  const after = carryAfter(before, entry, st.wird?.hifz);
+                  return (
+                    <div key={st.id} className="bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3">
+                      <button className="flex-1 min-w-0 text-right"
+                        onClick={() => {
+                          setForm(entry
+                            ? { studentId: st.id, ...entry, due: entry.due ?? '' }
+                            : { studentId: st.id, present: true, due: '' });
+                          setModal('khayrEntry');
+                        }}>
+                        <span className="block font-bold text-slate-800">{st.name}</span>
+                        <span className="block text-xs text-slate-400 mt-0.5">
+                          {!entry ? 'ما سُجّل بعد'
+                            : entry.present === false ? `غائب · حُمّل ${Number(entry.due || 0)} وجهًا`
+                              : PARTS.map((p) => `${p.label} ${Number(entry[p.id]?.pages || 0)}`).join(' · ')}
+                        </span>
+                      </button>
+                      {entry && (
+                        <>
+                          <Badge tone={entry.present === false ? 'red' : after > before ? 'amber' : 'green'}>
+                            متراكم {after}
+                          </Badge>
+                          <button onClick={() => askConfirm(`مسح تسميع «${st.name}» في هذي الجلسة؟`, () => clearKhayrEntry(khayrSession.id, st.id))}
+                            className="text-slate-300 hover:text-red-500"><X size={16} /></button>
+                        </>
+                      )}
+                      {!entry && <ChevronLeft size={18} className="text-slate-300 shrink-0" />}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {view === 'khayrMe' && myKhayrStudent && (() => {
+          const scoped = khayrScope === 'all' ? khayr.sessions : termKhayrSessions;
+          const t = studentTotals(myKhayrStudent, scoped);
+          const carry = studentTotals(myKhayrStudent, khayr.sessions).carry;
+          const log = studentSessions(myKhayrStudent, scoped);
+          return (
+            <div>
+              <Breadcrumb items={[{ label: 'الرئيسية', onClick: () => goto('home') }, { label: 'خيركم' }]} />
+              <h2 className="text-xl font-extrabold text-slate-800 mt-2">سجلّي في خيركم</h2>
+              <div className="text-sm text-slate-400 mb-4 mt-1">
+                {khayrScope === 'all' ? 'كل المواسم' : `الترم ${data.currentTerm} ${data.currentYear} هـ`}
+              </div>
+              <FilterChips
+                options={[
+                  { id: 'term', label: 'هذا الموسم', count: termKhayrSessions.length },
+                  { id: 'all', label: 'كل المواسم', count: khayr.sessions.length },
+                ]}
+                value={khayrScope} onChange={setKhayrScope} />
+              <div className="grid grid-cols-2 gap-3 my-4">
+                <MiniStat label="يوم حضور" value={t.attended} icon={CalendarDays} />
+                <MiniStat label="أوجه متراكمة" value={carry} icon={AlertTriangle} tone={carry > 0 ? 'red' : 'green'} />
+                <MiniStat label="وجه حفظ" value={t.hifz} icon={BookMarked} />
+                <MiniStat label="وجه مراجعة" value={t.review} icon={RotateCcw} />
+              </div>
+              <div className={cardCls}>
+                <div className="text-sm font-semibold text-slate-700 mb-3">آخر الجلسات</div>
+                {!log.length ? (
+                  <div className="text-sm text-slate-400">ما فيه جلسات مسجّلة لك بعد.</div>
+                ) : (
+                  <div className="divide-y divide-slate-50">
+                    {log.map(({ session: se, entry }) => (
+                      <div key={se.id} className="py-3 first:pt-0 last:pb-0">
+                        <div className="text-xs text-slate-400 mb-1">{se.date}</div>
+                        {entry.present === false ? (
+                          <div className="text-sm text-slate-400">
+                            غائب{Number(entry.due || 0) > 0 ? ` · تراكم عليك ${entry.due} وجهًا` : ''}
+                          </div>
+                        ) : (
+                          PARTS.map((p) => {
+                            const pages = Number(entry[p.id]?.pages || 0);
+                            const txt = rangeText(entry[p.id]);
+                            if (!pages && !txt) return null;
+                            return (
+                              <div key={p.id} className="text-sm text-slate-600 leading-7">
+                                <span className="font-bold text-brand-700">{p.label}</span>
+                                {txt ? ` ${txt}` : ''}{pages ? ` · ${pages} وجهًا` : ''}
+                              </div>
+                            );
+                          })
+                        )}
+                        {entry.note && <div className="bg-slate-50 rounded-xl px-3 py-2 text-xs text-slate-500 mt-2 leading-6">{entry.note}</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-3 text-center">للقراءة فقط — الشيخ وحده يسجّل التسميع.</div>
+            </div>
+          );
+        })()}
+
         {view === 'trips' && can('السفرات') && (
           <div>
             <div className="flex items-center justify-between mb-1 gap-3">
@@ -5174,6 +5548,134 @@ export default function App() {
           <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={addTrip}>إضافة</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
         </Modal>
       )}
+
+      {modal === 'khayrSessionNew' && (
+        <Modal title="جلسة جديدة" onClose={closeModal}>
+          <Field label="تاريخ الجلسة (هـ)" hint="الجلسة تنحفظ في الموسم المفتوح عندك الآن.">
+            <input className={inputCls} value={form.date || ''} onChange={(e) => setForm({ ...form, date: e.target.value })} placeholder="1448/03/13" />
+          </Field>
+          {form.error && <div className="text-xs text-red-500 mb-3">{form.error}</div>}
+          <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={addKhayrSession}>إضافة</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
+        </Modal>
+      )}
+
+      {modal === 'khayrStudent' && (
+        <Modal title={form.id ? 'تعديل الطالب' : 'طالب جديد'} onClose={closeModal} wide>
+          <Field label="اسم الطالب">
+            <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="سعد المطيري" />
+          </Field>
+          <Field label="جوال ولي الأمر (اختياري)">
+            <input className={inputCls} dir="ltr" value={form.phone || ''} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="05xxxxxxxx" />
+          </Field>
+          <Field label="الورد المطلوب في الجلسة" hint="الحفظ وحده هو اللي يتراكم لو قصّر عنه — والمراجعة والتثبيت أرقام تُسجَّل وبس.">
+            <div className="grid grid-cols-3 gap-2">
+              {PARTS.map((p) => (
+                <div key={p.id}>
+                  <div className="text-[11px] text-slate-400 text-center mb-1">{p.label}</div>
+                  <input type="number" className={inputCls + ' text-center'} value={form[p.id] ?? ''}
+                    onChange={(e) => setForm({ ...form, [p.id]: e.target.value })} placeholder="0" />
+                </div>
+              ))}
+            </div>
+          </Field>
+          {can('المستخدمون والصلاحيات') && (
+            <Field label="الحساب المرتبط" hint="اربطه بحسابه في التطبيق فيشوف سجلّه هو فقط لما يدخل، بلا تعديل.">
+              <select className={inputCls} value={form.userId || ''} onChange={(e) => setForm({ ...form, userId: e.target.value })}>
+                <option value="">بلا حساب</option>
+                {data.users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+            </Field>
+          )}
+          {form.error && <div className="text-xs text-red-500 mb-3">{form.error}</div>}
+          <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={saveKhayrStudent}>حفظ</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
+        </Modal>
+      )}
+
+      {modal === 'khayrEntry' && khayrSession && (() => {
+        const st = khayr.students.find((s) => s.id === form.studentId);
+        if (!st) return null;
+        const before = carryBefore(st, khayrSession);
+        const after = carryAfter(before, form.present === false
+          ? { present: false, due: form.due }
+          : { present: true, hifz: { pages: form.hifz?.pages } }, st.wird?.hifz);
+        const said = Number(form.hifz?.pages || 0);
+        const need = Number(st.wird?.hifz || 0);
+        return (
+          <Modal title={`تسميع ${st.name}`} onClose={closeModal} wide>
+            <div className="flex gap-2 mb-5">
+              {[['حاضر', true], ['غائب', false]].map(([label, val]) => (
+                <button key={label} type="button" onClick={() => setForm({ ...form, present: val })}
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-bold border transition-colors ${
+                    form.present === val
+                      ? (val ? 'bg-brand-700 text-white border-brand-700' : 'bg-red-600 text-white border-red-600')
+                      : 'bg-white text-slate-500 border-slate-200'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {form.present === false ? (
+              <Field label="أوجه متراكمة عليه"
+                hint="تحمّله ورده كاملًا لو غاب بلا عذر، أو تحط صفرًا لو كان معذورًا. القرار لك — التطبيق ما يعرف مين معذور.">
+                <input type="number" className={inputCls + ' text-center'} style={{ maxWidth: 120 }}
+                  value={form.due ?? ''} onChange={(e) => setForm({ ...form, due: e.target.value })} placeholder="0" />
+              </Field>
+            ) : (
+              PARTS.map((p) => {
+                const val = form[p.id] || {};
+                const set = (patch) => setForm({ ...form, [p.id]: { ...val, ...patch } });
+                return (
+                  <div key={p.id} className="border border-slate-100 rounded-2xl p-4 mb-3">
+                    <div className="flex items-center justify-between mb-3">
+                      <Badge tone="brand">{p.label}</Badge>
+                      <span className="text-[11px] text-slate-400">المطلوب {st.wird?.[p.id] || 0}</span>
+                    </div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-[11px] text-slate-400 w-8 shrink-0">من</span>
+                      <select className={inputCls} value={val.from || ''} onChange={(e) => set({ from: e.target.value })}>
+                        <option value="">— السورة —</option>
+                        {SURAHS.map((s) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                      <input type="number" className={inputCls + ' text-center'} style={{ maxWidth: 76 }}
+                        value={val.fromAya ?? ''} onChange={(e) => set({ fromAya: e.target.value })} placeholder="آية" />
+                    </div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-[11px] text-slate-400 w-8 shrink-0">إلى</span>
+                      <select className={inputCls} value={val.to || ''} onChange={(e) => set({ to: e.target.value })}>
+                        <option value="">— السورة —</option>
+                        {SURAHS.map((s) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                      <input type="number" className={inputCls + ' text-center'} style={{ maxWidth: 76 }}
+                        value={val.toAya ?? ''} onChange={(e) => set({ toAya: e.target.value })} placeholder="آية" />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-slate-400 shrink-0">عدد الأوجه</span>
+                      <input type="number" className={inputCls + ' text-center'} style={{ maxWidth: 90 }}
+                        value={val.pages ?? ''} onChange={(e) => set({ pages: e.target.value })} placeholder="0" />
+                    </div>
+                  </div>
+                );
+              })
+            )}
+
+            <Field label="ملاحظة الشيخ (اختيارية)">
+              <textarea className={inputCls} rows={3} value={form.note || ''}
+                onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="اكتب ملاحظتك…" />
+            </Field>
+
+            <div className={`rounded-xl px-4 py-3 text-sm font-semibold mb-4 ${
+              after > before ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                : after < before ? 'bg-green-50 text-green-700 border border-green-200'
+                  : 'bg-slate-50 text-slate-600 border border-slate-200'}`}>
+              {form.present === false
+                ? `المتراكم عليه بعد هذي الجلسة: ${after} ${after === 1 ? 'وجه' : 'أوجه'}`
+                : `سمّع ${said} من ${need} — المتراكم عليه بعد هذي الجلسة: ${after} ${after === 1 ? 'وجه' : 'أوجه'}`}
+            </div>
+
+            <div className="flex gap-2"><button className={btnPrimary + ' flex-1'} onClick={saveKhayrEntry}>حفظ التسميع</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
+          </Modal>
+        );
+      })()}
 
       {modal === 'addYear' && (
         <Modal title="إضافة سنة" onClose={closeModal}>

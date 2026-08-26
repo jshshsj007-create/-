@@ -98,9 +98,25 @@ const allowed = (u, perm) => isAdmin(u) || (u?.permissions || []).includes(perm)
  * بيانات الأهالي لمن ما أُعطي صلاحيتها — جوالات وأعمار وملاحظات صحية لأطفال،
  * ما تنزل جهازًا ما يحتاجها.
  */
+/**
+ * خيركم للطالب المربوط: سجلّه هو وحده. تسميع بقية الطلاب وملاحظات الشيخ فيهم
+ * ما تنزل جهازه أصلًا — الحجب في الخادم لا في الواجهة.
+ */
+const khayrOfStudent = (khayr, me) => {
+  const mine = (khayr?.students || []).find((s) => s.userId && s.userId === me?.id);
+  if (!mine) return { students: [], sessions: [] };
+  return {
+    students: [mine],
+    sessions: (khayr?.sessions || [])
+      .filter((s) => s.entries?.[mine.id])
+      .map((s) => ({ ...s, entries: { [mine.id]: s.entries[mine.id] } })),
+  };
+};
+
 const strip = (data, me) => {
   const out = { ...data, users: (data?.users || []).map(({ password, ...rest }) => rest) };
   if (!allowed(me, 'أولياء الأمور')) { out.guardians = []; out.students = []; }
+  if (!allowed(me, 'خيركم')) out.khayr = khayrOfStudent(data?.khayr, me);
   return out;
 };
 
@@ -127,6 +143,9 @@ const guard = (incoming, current, me) => {
     out.guardians = current?.guardians || [];
     out.students = current?.students || [];
   }
+
+  // الطالب يقرأ سجلّه ولا يكتبه — ولا يكتب فيه غير أهل الصلاحية
+  if (!allowed(me, 'خيركم')) out.khayr = current?.khayr || { students: [], sessions: [] };
   return out;
 };
 
