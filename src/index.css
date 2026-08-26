@@ -5,3 +5,76 @@
 
 html, body, #root { min-height: 100%; }
 body { font-family: 'Tajawal', system-ui, sans-serif; background: #F1F4F9; }
+
+/*
+ * المظهر الداكن.
+ *
+ * التطبيق مبني بألوان فاتحة مكتوبة داخل الشاشات نفسها — مئات المواضع. فبدل ما
+ * نعدّل كل موضع (وننسى واحدًا فيطلع نص أبيض على خلفية بيضاء)، نضع اللوحة الداكنة
+ * كطبقة واحدة فوقها. تُقرأ في مكان واحد، وتُراجع في مكان واحد.
+ *
+ * اللوحة مبنية على كحلي شعار فيض #022D71 — داكن يحمل الهوية، لا أسود عادي.
+ * صفحة ولي الأمر خارج هذا كله: هي واجهة الفريق للناس، تبقى فاتحة دائمًا.
+ */
+.dark body,
+.dark html { background: #0B1220; }
+
+.dark .bg-\[\#F1F4F9\] { background-color: #0B1220; }
+.dark .bg-white { background-color: #131C2E; }
+.dark .bg-slate-50,
+.dark .bg-slate-50\/60,
+.dark .bg-slate-50\/50 { background-color: #18233A; }
+.dark .bg-slate-100 { background-color: #1E2B45; }
+.dark .bg-slate-200 { background-color: #26344F; }
+
+.dark .text-slate-800,
+.dark .text-slate-700 { color: #E6EDF7; }
+.dark .text-slate-600 { color: #C3D0E4; }
+.dark .text-slate-500 { color: #9FB0C9; }
+.dark .text-slate-400 { color: #7E90AC; }
+.dark .text-slate-300,
+.dark .text-slate-200 { color: #5C6B85; }
+
+.dark .border-slate-100 { border-color: #22304C; }
+.dark .border-slate-200 { border-color: #2B3A59; }
+.dark .border-slate-300 { border-color: #35486B; }
+.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: #22304C; }
+
+/* الكحلي يفتح شوي عشان يُقرأ على خلفية داكنة */
+.dark .bg-brand-50 { background-color: #16233D; }
+.dark .bg-brand-100 { background-color: #1B2B4A; }
+.dark .border-brand-100 { border-color: #274070; }
+.dark .text-brand-600,
+.dark .text-brand-700,
+.dark .text-brand-800,
+.dark .text-brand-900 { color: #8FB4EE; }
+
+/* ألوان الحالة: نخفّف خلفيتها ونرفع نصّها */
+.dark .bg-green-50 { background-color: #10261C; }
+.dark .bg-green-100 { background-color: #17351F; }
+.dark .text-green-700,
+.dark .text-green-600 { color: #6FD69B; }
+.dark .bg-red-50 { background-color: #2A1618; }
+.dark .bg-red-100 { background-color: #3A1D20; }
+.dark .text-red-600,
+.dark .text-red-500 { color: #F08A8A; }
+.dark .text-red-400 { color: #D97A7A; }
+.dark .bg-amber-50 { background-color: #2A2210; }
+.dark .bg-amber-100 { background-color: #3A2F14; }
+.dark .border-amber-100,
+.dark .border-amber-200 { border-color: #4A3C16; }
+.dark .text-amber-900,
+.dark .text-amber-800,
+.dark .text-amber-700,
+.dark .text-amber-600 { color: #E8C978; }
+.dark .bg-blue-50 { background-color: #12233C; }
+.dark .text-blue-700 { color: #8FB4EE; }
+
+/* الخانات: الأغمق من البطاقة يفصل مكان الكتابة عن مكان القراءة */
+.dark input,
+.dark select,
+.dark textarea { background-color: #0E1728; color: #E6EDF7; }
+.dark input::placeholder,
+.dark textarea::placeholder { color: #64748B; }
+.dark input[type="checkbox"] { accent-color: #3B72C4; }
+.dark table thead { background-color: #18233A; }

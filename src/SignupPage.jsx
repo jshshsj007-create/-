@@ -41,8 +41,9 @@ function WaButton({ href, children }) {
 /**
  * مشاركة الرابط: ولي الأمر يرسله لأي أحد بضغطة. قائمة المشاركة في الجوال
  * أسرع طريق لواتساب، وعلى ما ينقصه ذلك ننسخ الرابط وننبّهه إنه اننسخ.
+ * `wide` للزر العريض في صفحة النجاح، وبدونه دائرة صغيرة في ذيل بطاقة النص.
  */
-function ShareButton({ title, label }) {
+function ShareButton({ title, label, wide = false }) {
   const [said, setSaid] = useState('');
   const go = async () => {
     const url = typeof location === 'undefined' ? '' : location.href;
@@ -57,14 +58,25 @@ function ShareButton({ title, label }) {
     setTimeout(() => setSaid(''), 3000);
   };
   if (!label) return null;
+  if (wide) {
+    return (
+      <>
+        <button type="button" onClick={go}
+          className="w-full bg-white border border-slate-200 text-slate-700 font-bold rounded-xl py-3.5 flex items-center justify-center gap-2 text-[15px]">
+          <Share2 size={18} /> {label}
+        </button>
+        {said && <div className="text-xs text-center text-slate-500 mt-2">{said}</div>}
+      </>
+    );
+  }
   return (
-    <>
-      <button type="button" onClick={go}
-        className="w-full bg-white border border-slate-200 text-slate-700 font-bold rounded-xl py-3.5 flex items-center justify-center gap-2 text-[15px]">
-        <Share2 size={18} /> {label}
+    <div className="mt-4 flex items-center gap-2">
+      <button type="button" onClick={go} title={label} aria-label={label}
+        className="w-11 h-11 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center shrink-0">
+        <Share2 size={19} />
       </button>
-      {said && <div className="text-xs text-center text-slate-500 mt-2">{said}</div>}
-    </>
+      {said && <span className="text-xs text-slate-500">{said}</span>}
+    </div>
   );
 }
 
@@ -76,13 +88,14 @@ function Note({ tone = 'brand', children }) {
   return <div className={`rounded-xl border px-3.5 py-2.5 text-sm ${tones[tone]}`}>{children}</div>;
 }
 
-function Row({ label, required, error, children }) {
+function Row({ label, required, error, hint, children }) {
   return (
     <div className="mb-4">
       <label className="block text-sm font-semibold text-slate-700 mb-1.5">
         {label}{required && <span className="text-red-500 mr-1">*</span>}
       </label>
       {children}
+      {hint && !error && <div className="text-[11px] text-slate-400 mt-1">{hint}</div>}
       {error && <div className="text-red-500 text-xs mt-1">{error}</div>}
     </div>
   );
@@ -187,9 +200,7 @@ export default function SignupPage({ token }) {
         setView(r.body.view);
         // ما فيه أيام مفتوحة (أو باقات): التسجيل ما ينفع يستقر في مكان
         if (r.body.view.blocked) { setState('blocked'); return; }
-        // اليوم الوحيد يُختار تلقائيًا — ما فيه داعي نخليه يضغط
-        const d = r.body.view.days;
-        if (d.length === 1 && !r.body.view.usePackages) setKids([{ name: '', days: [d[0].id] }]);
+        // الموعد يبدأ فاضيًا ولو كان واحدًا: ضغطته إقرار منه إنه شافه
         if (r.body.view.accounts.length === 1) setAccountId(r.body.view.accounts[0].id);
         setState('form');
       } else if (r.status === 404) {
@@ -281,7 +292,7 @@ export default function SignupPage({ token }) {
             </>
           )}
           {/* أقوى لحظة يوصّي فيها غيره: خلّص وارتاح */}
-          <div className="mt-3"><ShareButton title={shareTitle} label={txt(view, 'share')} /></div>
+          <div className="mt-3"><ShareButton title={shareTitle} label={txt(view, 'share')} wide /></div>
         </div>
       </Shell>
     );
@@ -340,30 +351,25 @@ export default function SignupPage({ token }) {
   const contactHref = waLink(view.wa.number, '');
 
   /**
-   * أي بطاقة تجي أول؟ بطاقة الطالب تتكرر مع كل ابن، فما تنفع تتداخل مع خانات
-   * ولي الأمر — يبقى ترتيبهما بطاقتين. ويقرّره ترتيب الخانتين المقفولتين في
-   * الإعدادات: حطّ اسم الطالب فوق الجوال، فبطاقته تطلع فوق.
+   * خانات ولي الأمر تنزل داخل بطاقة الابن الأول، تحت اسمه مباشرة — لأنها
+   * تُسأل مرة وحدة للعائلة كلها. وبطاقة الابن الثاني وما بعده بلا جوال:
+   * ما نسأل أبًا عن جواله ثلاث مرات لأن عنده ثلاثة أبناء.
    */
-  const idxName = fields.findIndex((f) => f.id === 'name');
-  const idxPhone = fields.findIndex((f) => f.id === 'gPhone');
-  const kidsFirst = idxName >= 0 && idxPhone >= 0 && idxName < idxPhone;
-
-  const guardianCard = (
-    <div className="bg-white rounded-2xl p-5 mb-4">
-      {txt(view, 'guardian') && <div className="font-bold text-slate-800 mb-1">{txt(view, 'guardian')}</div>}
-      {txt(view, 'guardianHint') && <div className="text-xs text-slate-400 mb-4">{txt(view, 'guardianHint')}</div>}
+  const guardianBlock = (
+    <>
       {guardianFields.map((f) => (
         <div key={f.id} data-bad={errors[f.id] ? '1' : undefined}>
-          <Row label={f.label} required={f.required} error={errors[f.id]}>
+          <Row label={f.label} required={f.required} error={errors[f.id]}
+            hint={f.id === 'gPhone' ? txt(view, 'guardianHint') : ''}>
             <FieldInput field={f} value={answers[f.id]} bad={!!errors[f.id]}
               onChange={(v) => { setAnswers({ ...answers, [f.id]: v }); setErrors({ ...errors, [f.id]: null }); }} />
           </Row>
         </div>
       ))}
       {answers.gPhone && !isValidPhone(answers.gPhone) && !errors.gPhone && (
-        <div className="text-xs text-slate-400 -mt-2">مثال: 0551234567</div>
+        <div className="text-xs text-slate-400 -mt-2 mb-4">مثال: 0551234567</div>
       )}
-    </div>
+    </>
   );
 
   return (
@@ -371,6 +377,18 @@ export default function SignupPage({ token }) {
       {view.poster && (
         <div className="bg-white rounded-2xl p-2.5 mb-4">
           <img src={`/api/img/${view.poster}`} alt={view.programName} className="w-full rounded-xl block" />
+        </div>
+      )}
+
+      {/* الصور أولًا: يشوف قبل ما يقرأ. ثم النص، وفي ذيله زر المشاركة */}
+      {(view.gallery || []).length > 0 && (
+        <div className="bg-white rounded-2xl p-3 mb-4">
+          <div className="flex gap-2 overflow-x-auto">
+            {view.gallery.map((id) => (
+              <img key={id} src={`/api/img/${id}`} alt=""
+                className="w-28 h-20 object-cover rounded-xl shrink-0" />
+            ))}
+          </div>
         </div>
       )}
 
@@ -387,28 +405,14 @@ export default function SignupPage({ token }) {
             ))}
           </ul>
         )}
+        <ShareButton title={shareTitle} label={txt(view, 'share')} />
       </div>
-
-      {(view.gallery || []).length > 0 && (
-        <div className="bg-white rounded-2xl p-3 mb-4">
-          <div className="flex gap-2 overflow-x-auto">
-            {view.gallery.map((id) => (
-              <img key={id} src={`/api/img/${id}`} alt=""
-                className="w-28 h-20 object-cover rounded-xl shrink-0" />
-            ))}
-          </div>
-        </div>
-      )}
 
       {view.notice && <div className="mb-4"><Note tone="amber">{view.notice}</Note></div>}
 
       {view.wa.contact && contactHref && (
         <div className="mb-4"><WaButton href={contactHref}>{txt(view, 'contact')}</WaButton></div>
       )}
-
-      <div className="mb-4"><ShareButton title={shareTitle} label={txt(view, 'share')} /></div>
-
-      {!kidsFirst && guardianCard}
 
       {kids.map((kid, i) => (
         <div key={i} className="bg-white rounded-2xl p-5 mb-4">
@@ -428,6 +432,9 @@ export default function SignupPage({ token }) {
                 onChange={(e) => { setKid(i, { name: e.target.value }); setErrors({ ...errors, [`kid${i}.name`]: null }); }} />
             </Row>
           </div>
+
+          {/* الجوال تحت اسم الابن الأول، ويُسأل مرة وحدة للعائلة كلها */}
+          {i === 0 && guardianBlock}
 
           {kidFields.map((f) => (
             <div key={f.id} data-bad={errors[`kid${i}.${f.id}`] ? '1' : undefined}>
@@ -554,11 +561,9 @@ export default function SignupPage({ token }) {
       ))}
 
       <button type="button" className="w-full bg-white border border-dashed border-slate-300 text-brand-700 font-semibold rounded-2xl py-3.5 mb-4 flex items-center justify-center gap-2"
-        onClick={() => setKids([...kids, { name: '', days: (!view.usePackages && view.days.length === 1) ? [view.days[0].id] : [] }])}>
+        onClick={() => setKids([...kids, { name: '', days: [] }])}>
         <Plus size={18} /> أضف ابناً آخر
       </button>
-
-      {kidsFirst && guardianCard}
 
       {view.accounts.length > 0 && (
         <div className="bg-white rounded-2xl p-5 mb-4" data-bad={errors.accountId ? '1' : undefined}>

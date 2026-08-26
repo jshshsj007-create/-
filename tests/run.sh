@@ -56,4 +56,5 @@ node tests/seasons.test.mjs
 node tests/faidterm.test.mjs
 node tests/schedule.test.mjs
 node tests/daylabel.test.mjs
+node tests/polling.test.mjs
 rm -rf "$STUB" tests/build

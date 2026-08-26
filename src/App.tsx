@@ -15,12 +15,13 @@ import { makeToken as makeSignupToken, TEXTS, waIntl, waLink, varNames, fieldsFo
 import { readImage, POSTER, GALLERY } from './img.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
 import { DAY_NAMES, hourLabel, scheduleOf } from './schedule.js';
+import { readTheme, writeTheme, applyTheme } from './theme.js';
 import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v5.5';
+const APP_VERSION = 'v5.6';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -266,6 +267,18 @@ export const programNames = (programs) => {
   return [...m.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'ar'));
 };
 
+/**
+ * كم ننتظر قبل السؤال التالي عن تعديلات الزملاء، حسب طول غفلة صاحب الجهاز.
+ * صفر = نوقف تمامًا وننتظر لمسته. الأرقام مقصودة: وهو شغّال ما يحس بفرق،
+ * واللي ينسى التطبيق مفتوحًا ساعتين ما يكلّف ولا طلب بعد أول ربع ساعة.
+ */
+export const pollDelay = (idleMs) => {
+  if (idleMs < 60_000) return 10_000;
+  if (idleMs < 5 * 60_000) return 30_000;
+  if (idleMs < 15 * 60_000) return 120_000;
+  return 0;
+};
+
 /* --------------------------- مواسم عمليات فيض --------------------------- */
 /**
  * التاريخ يُكتب بحرية («1448/2/1» أو «1448-02-01»)، فنحوّله لمفتاح موحّد
@@ -432,7 +445,8 @@ export function migrate(loaded) {
     const src = d.programs.find((p) => p.id === a.source.programId);
     return src?.termKey ? { ...a, termKey: src.termKey } : { ...a };
   });
-  d.competitions = (d.competitions || []).map((c) => ({ idea: '', tools: [], photos: [], ...c }));
+  // author = صاحب الفكرة، غير idea اللي هي شرح المسابقة نفسها
+  d.competitions = (d.competitions || []).map((c) => ({ author: '', idea: '', tools: [], photos: [], ...c }));
   d.trips = (d.trips || []).map((t) => {
     const trip = { incomeItems: [], expenseItems: [], ...t };
     // الأرقام المجملة القديمة تتحول لبند واحد باسم واضح
@@ -1012,6 +1026,8 @@ export default function App() {
   const [savedAt, setSavedAt] = useState(null); // وقت آخر حفظ تلقائي
   const [backup, setBackup] = useState({ status: null, busy: false, msg: '' }); // حالة النسخ التلقائي
   const [staleBuild, setStaleBuild] = useState(false); // فيه نسخة أحدث على الخادم
+  const [theme, setTheme] = useState(readTheme);       // فاتح أو داكن — لهذا الجهاز وحده
+  useEffect(() => { applyTheme(theme); writeTheme(theme); }, [theme]);
   const [loginError, setLoginError] = useState('');
 
   /** نقارن نسختنا بالمنشورة عند الفتح وكل ما رجع للتطبيق، وكل خمس دقائق. */
@@ -1149,18 +1165,62 @@ export default function App() {
     }
   }, []);
 
-  // إعادة محاولة دورية للحفظ المعلّق + سحب تعديلات الزملاء
+  /**
+   * سحب تعديلات الزملاء + إعادة محاولة الحفظ المعلّق.
+   *
+   * السؤال كل ٧ ثوانٍ بلا توقف كان يكلّف ٥١٤ طلبًا في الساعة لكل جهاز — حتى
+   * والجوال في الجيب وشاشته مقفلة وما أحد يقرأ ولا يعدّل. فصار السؤال يتبع
+   * صاحبه: سريع وهو شغّال، ويتباطأ لما يسكن، ويتوقف لما تُقفل الشاشة —
+   * ويرجع فورًا بأول لمسة أو أول فتحة، فيسحب قبل ما يشوف الشاشة.
+   */
+  const lastTouch = useRef(Date.now());
   useEffect(() => {
-    if (!cloudOn || !sess.current.token) return;
-    const t = setInterval(async () => {
+    if (!cloudOn || !sess.current.token) return undefined;
+    let alive = true;
+    let timer = null;
+
+    const pull = async () => {
+      if (!alive) return;
       if (queueRef.current) { flush(); return; }
       if (busyRef.current) return;
       const r = await api('pull', { token: sess.current.token, sinceRev: revRef.current });
+      if (!alive) return;
       if (r.status === 200 && r.body?.data) { adopt(r.body.data, r.body.rev); setSyncState('idle'); }
       else if (r.status === 200) setSyncState('idle');
       else if (r.status === 0) setSyncState('offline');
-    }, 7000);
-    return () => clearInterval(t);
+    };
+
+    const stop = () => { clearTimeout(timer); timer = null; };
+    const schedule = () => {
+      stop();
+      if (!alive || document.visibilityState !== 'visible') return;
+      const wait = pollDelay(Date.now() - lastTouch.current);
+      // صفر = سكون طويل، فما نجدول شيئًا وننتظر لمسته
+      if (wait) timer = setTimeout(tick, wait);
+    };
+    async function tick() { await pull(); schedule(); }
+
+    /** رجوع من غفلة: نسحب في نفس اللحظة ثم نستأنف الإيقاع السريع. */
+    const wake = () => { lastTouch.current = Date.now(); pull(); schedule(); };
+    const onTouch = () => {
+      const asleep = timer === null;
+      lastTouch.current = Date.now();
+      // ما نعيد الجدولة مع كل لمسة، وإلا صار التمرير المستمر يؤجّل السحب أبدًا
+      if (asleep) wake();
+    };
+    const onVisible = () => (document.visibilityState === 'visible' ? wake() : stop());
+
+    document.addEventListener('visibilitychange', onVisible);
+    document.addEventListener('pointerdown', onTouch, { passive: true });
+    document.addEventListener('keydown', onTouch);
+    schedule();
+    return () => {
+      alive = false;
+      stop();
+      document.removeEventListener('visibilitychange', onVisible);
+      document.removeEventListener('pointerdown', onTouch);
+      document.removeEventListener('keydown', onTouch);
+    };
   }, [cloudOn, currentUser, flush, adopt]);
 
   /** حفظ تلقائي: كل تعديل ينحفظ فورًا، ما فيه زر حفظ. */
@@ -1741,6 +1801,7 @@ export default function App() {
   const saveCompetition = () => {
     if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب اسم المسابقة' }); return; }
     const fields = {
+      author: (form.author || '').trim(),
       name: form.name.trim(), level: form.level || LEVELS[0], date: form.date || '',
       participants: Number(form.participants || 0), idea: form.idea || '',
       tools: form.tools || [], photos: form.photos || [],
@@ -1937,14 +1998,19 @@ export default function App() {
     closeModal();
   };
 
-  /** يحرّك خانة في النموذج فوق أو تحت — والترتيب هنا هو ترتيب صفحة التسجيل. */
+  /**
+   * يحرّك خانة في النموذج فوق أو تحت. الخانتان المقفولتان مثبّتتان في الأعلى
+   * (الاسم ثم الجوال) لأن مكانهما في الصفحة ثابت، فالتحريك بين البقية وحدها.
+   */
+  const pinnedFields = data.signupFields.filter((f) => LOCKED_FIELDS.includes(f.id));
+  const freeFields = data.signupFields.filter((f) => !LOCKED_FIELDS.includes(f.id));
   const moveSignupField = (id, dir) => {
-    const list = [...data.signupFields];
+    const list = [...freeFields];
     const i = list.findIndex((f) => f.id === id);
     const j = i + dir;
     if (i < 0 || j < 0 || j >= list.length) return;
     [list[i], list[j]] = [list[j], list[i]];
-    save({ ...data, signupFields: list });
+    save({ ...data, signupFields: [...pinnedFields, ...list] });
   };
 
   /* --------------------------- أولياء الأمور --------------------------- */
@@ -2518,9 +2584,10 @@ export default function App() {
             {syncState === 'offline'
               ? <span className="text-[11px] text-amber-600 flex items-center gap-1"><AlertTriangle size={12} /> غير متصل — بيحفظ لما يرجع النت</span>
               : savedAt && <span className="text-[11px] text-brand-600 flex items-center gap-1"><Check size={12} /> {cloudOn ? 'محفوظ للفريق' : 'محفوظ'}</span>}
+            {/* الشعار أبيض، فبيته كحلي في المظهرين — على الأبيض يختفي */}
             {currentUser && (
-              <button onClick={() => setModal('account')} className="w-9 h-9 rounded-full bg-brand-100 text-brand-800 text-xs font-bold flex items-center justify-center">
-                {currentUser.name.slice(0, 1)}
+              <button onClick={() => setModal('account')} className="w-9 h-9 rounded-full bg-brand-700 flex items-center justify-center overflow-hidden">
+                <FaydhLogo size={26} variant="mark" />
               </button>
             )}
           </div>
@@ -2547,15 +2614,29 @@ export default function App() {
         {view === 'home' && (
           <div>
             <div className="bg-brand-800 rounded-3xl p-6 mb-5 text-white">
-              <div className="text-lg font-bold mb-1">{currentUser ? `أهلًا ${currentUser.name}` : 'مرحبًا بك'} 👋</div>
-              <div className="text-brand-200 text-sm">اختر القسم اللي تبي تشتغل عليه</div>
+              <div className="flex items-center gap-3">
+                <span className="shrink-0"><FaydhLogo size={38} variant="mark" /></span>
+                <div className="flex-1 min-w-0 text-center">
+                  <div className="text-lg font-bold">{currentUser ? `أهلًا ${currentUser.name}` : 'مرحبًا بك'} 👋</div>
+                </div>
+              </div>
+              {/* سطر واحد لا ينكسر حتى على الجوالات الضيقة */}
+              <div className="text-brand-200 text-[12px] text-center mt-2 whitespace-nowrap overflow-hidden text-ellipsis">
+                اختر القسم اللي تبي تشتغل عليه
+              </div>
             </div>
-            <div className="grid grid-cols-2 gap-3 mb-5">
-              <MiniStat label="برامج الترم" value={termPrograms.length} icon={BookOpen} />
-              {can('فيض - الإيرادات والمصروفات')
-                ? <MiniStat label="رصيد فيض" value={fmt(balance)} icon={Wallet} tone={balance >= 0 ? 'green' : 'red'} />
-                : <MiniStat label="أيام مفتوحة" value={termPrograms.flatMap((p) => p.weeks).filter((w) => w.status === 'مفتوح').length} icon={Calendar} />}
-            </div>
+            {/*
+              الأرقام تخص من يملك أقسامها: مسؤول المسابقات ما له علاقة بعدد
+              برامجك ولا أيامك المفتوحة، فما نعرضها له أصلًا.
+            */}
+            {(canAttend || can('فيض - الإيرادات والمصروفات')) && (
+              <div className="grid grid-cols-2 gap-3 mb-5">
+                {canAttend && <MiniStat label="برامج الترم" value={termPrograms.length} icon={BookOpen} />}
+                {can('فيض - الإيرادات والمصروفات')
+                  ? <MiniStat label="رصيد فيض" value={fmt(balance)} icon={Wallet} tone={balance >= 0 ? 'green' : 'red'} />
+                  : canAttend && <MiniStat label="أيام مفتوحة" value={termPrograms.flatMap((p) => p.weeks).filter((w) => w.status === 'مفتوح').length} icon={Calendar} />}
+              </div>
+            )}
             {/* تسجيلات الرابط ما تنفع تنتظر بصمت داخل برنامج ما فتحته */}
             {canSignup && (() => {
               const waiting = termPrograms
@@ -3804,6 +3885,7 @@ export default function App() {
                       className="w-full bg-white rounded-2xl border border-slate-100 p-4 text-right hover:shadow-md transition-shadow">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
+                          {c.author && <div className="text-[11px] text-slate-400 mb-0.5">فكرة: {c.author}</div>}
                           <div className="font-bold text-slate-800">{c.name}</div>
                           <div className="text-xs text-slate-400 mt-0.5 line-clamp-2">{c.idea || 'ما فيه وصف للفكرة'}</div>
                         </div>
@@ -3827,9 +3909,12 @@ export default function App() {
           <div>
             <Breadcrumb items={[{ label: 'النادي', onClick: () => goto('competitions') }, { label: competition.name }]} />
             <div className="flex items-center justify-between gap-2 mb-4 mt-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <h2 className="text-lg font-bold text-slate-800 truncate">{competition.name}</h2>
-                <Badge tone="brand">{competition.level}</Badge>
+              <div className="min-w-0">
+                {competition.author && <div className="text-[11px] text-slate-400 mb-0.5">فكرة: {competition.author}</div>}
+                <div className="flex items-center gap-2 min-w-0">
+                  <h2 className="text-lg font-bold text-slate-800 truncate">{competition.name}</h2>
+                  <Badge tone="brand">{competition.level}</Badge>
+                </div>
               </div>
               <div className="flex items-center gap-1 shrink-0">
                 <button onClick={() => { setForm({ ...competition, tools: competition.tools || [], photos: competition.photos || [] }); setModal('editCompetition'); }}
@@ -3955,7 +4040,24 @@ export default function App() {
         {/* ------------------------------- الإعدادات ------------------------------- */}
         {view === 'settings' && (
           <div>
-            <h2 className="text-lg sm:text-xl font-bold text-slate-800 mb-5">الإعدادات</h2>
+            <h2 className="text-lg sm:text-xl font-bold text-slate-800 mb-4">الإعدادات</h2>
+
+            {/* المظهر فوق التبويبات: يخصّ الجهاز لا الفريق، فما ينتمي لأي تبويب */}
+            <div className={cardCls + ' mb-5 flex items-center gap-3'}>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold text-slate-700">المظهر</div>
+                <div className="text-[11px] text-slate-400 mt-0.5">لهذا الجهاز وحده — زميلك يختار مظهره.</div>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                {[['light', 'فاتح'], ['dark', 'داكن']].map(([v, l]) => (
+                  <button key={v} type="button" onClick={() => setTheme(v)}
+                    className={`px-4 py-2 rounded-lg text-xs font-semibold border ${theme === v ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <Tabs value={settingsTab} onChange={(t) => { setSettingsTab(t); setForm({}); }} tabs={[
               { id: 'users', label: 'المستخدمون والصلاحيات' },
               { id: 'terms', label: 'السنوات والفصول' },
@@ -4047,8 +4149,9 @@ export default function App() {
                 </div>
                 <div className={cardCls}>
                   <div className="space-y-2">
-                    {data.signupFields.map((f, i) => {
+                    {[...pinnedFields, ...freeFields].map((f) => {
                       const locked = LOCKED_FIELDS.includes(f.id);
+                      const i = freeFields.findIndex((x) => x.id === f.id);
                       return (
                         <div key={f.id} className="flex items-center justify-between gap-2 bg-slate-50 rounded-xl px-3 py-2.5">
                           <div className="min-w-0">
@@ -4061,14 +4164,15 @@ export default function App() {
                             </div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
-                            {/* الترتيب هنا هو الترتيب اللي يشوفه ولي الأمر. القفل يمنع
-                                الحذف لا التحريك، فيقدر يحط اسم الطالب فوق أو الجوال. */}
-                            <div className="flex flex-col">
-                              <button className="text-slate-400 disabled:opacity-25 leading-none px-1" disabled={i === 0}
-                                title="فوق" onClick={() => moveSignupField(f.id, -1)}>▲</button>
-                              <button className="text-slate-400 disabled:opacity-25 leading-none px-1" disabled={i === data.signupFields.length - 1}
-                                title="تحت" onClick={() => moveSignupField(f.id, 1)}>▼</button>
-                            </div>
+                            {/* الاسم والجوال ترتيبهما ثابت في الصفحة، فلا أسهم لهما */}
+                            {!locked && (
+                              <div className="flex flex-col">
+                                <button className="text-slate-400 disabled:opacity-25 leading-none px-1" disabled={i === 0}
+                                  title="فوق" onClick={() => moveSignupField(f.id, -1)}>▲</button>
+                                <button className="text-slate-400 disabled:opacity-25 leading-none px-1" disabled={i === freeFields.length - 1}
+                                  title="تحت" onClick={() => moveSignupField(f.id, 1)}>▼</button>
+                              </div>
+                            )}
                             <select className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 disabled:opacity-50"
                               disabled={locked} value={f.required ? 'req' : 'opt'}
                               onChange={(e) => save({
@@ -4100,8 +4204,10 @@ export default function App() {
                 <div className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-xs text-slate-500 flex items-start gap-2">
                   <ShieldCheck size={15} className="shrink-0 mt-0.5 text-slate-400" />
                   <span>
-                    <b>جوال ولي الأمر</b> و<b>اسم الطالب</b> مقفولان وما ينحذفان:
-                    الجوال هو اللي يمنع تكرار ولي الأمر لو سجّل مرة ثانية، والاسم هو المشترك نفسه.
+                    <b>اسم الطالب</b> و<b>جوال ولي الأمر</b> مقفولان وما ينحذفان:
+                    الاسم هو المشترك نفسه، والجوال يمنع تكرار ولي الأمر لو سجّل مرة ثانية.
+                    وترتيبهما ثابت في الصفحة — الاسم أول وتحته الجوال، ويُسأل مرة وحدة مهما
+                    كثر الأبناء. والخانات الباقية ترتّبها بالأسهم.
                   </span>
                 </div>
 
@@ -4975,6 +5081,10 @@ export default function App() {
 
       {modal === 'editCompetition' && (
         <Modal title={form.id ? 'تعديل المسابقة' : 'مسابقة جديدة'} onClose={closeModal} wide>
+          {/* أول خانة: الفكرة لها صاحب، ويبقى اسمه معها في بنك المسابقات */}
+          <Field label="صاحب الفكرة" hint="مين جاب هذي المسابقة. اختياري.">
+            <input className={inputCls} value={form.author || ''} onChange={(e) => setForm({ ...form, author: e.target.value })} placeholder="مثال: عبدالله" />
+          </Field>
           <Field label="اسم المسابقة">
             <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} placeholder="مثال: سباق الأقماع" />
           </Field>
@@ -5402,7 +5512,9 @@ export default function App() {
       {modal === 'account' && currentUser && (
         <Modal title="الحساب" onClose={closeModal}>
           <div className="flex items-center gap-3 mb-5">
-            <div className="w-12 h-12 rounded-full bg-brand-100 text-brand-800 font-bold flex items-center justify-center">{currentUser.name.slice(0, 1)}</div>
+            <div className="w-12 h-12 rounded-full bg-brand-700 flex items-center justify-center overflow-hidden shrink-0">
+              <FaydhLogo size={34} variant="mark" />
+            </div>
             <div>
               <div className="font-bold text-slate-800">{currentUser.name}</div>
               <div className="text-xs text-slate-400">{currentUser.username} · {currentUser.role}</div>
