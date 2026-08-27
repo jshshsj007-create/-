@@ -128,3 +128,115 @@ export const studentSessions = (student, sessions) =>
 /** الطالب المربوط بهذا الحساب، إن وُجد. */
 export const studentOfUser = (students, userId) =>
   (students || []).find((s) => s.userId && s.userId === userId) || null;
+
+/* ------------------------- الأجزاء والأوجه ------------------------- */
+
+/** الجزء عشرون وجهًا — الوحدة اللي يتحوّل بها كلام الشيخ إلى رقم واحد. */
+export const PAGES_PER_PART = 20;
+
+export const toPages = (n, unit) =>
+  Math.round(num(n) * (unit === 'parts' ? PAGES_PER_PART : 1));
+
+/**
+ * «جزءان و٧ أوجه» — الشيخ يقول أجزاء والتطبيق يخزّن أوجهًا، فنرجّع كلامه له
+ * كما يقوله. الرقم الخام يبقى وحده الحقيقة، وهذا عرضه فقط.
+ */
+export const partsText = (pages) => {
+  const p = num(pages);
+  if (!p) return '0';
+  const parts = Math.floor(p / PAGES_PER_PART);
+  const rest = p % PAGES_PER_PART;
+  const partWord = parts === 1 ? 'جزء' : parts === 2 ? 'جزءان' : parts <= 10 ? `${parts} أجزاء` : `${parts} جزءًا`;
+  const pageWord = rest === 1 ? 'وجه' : rest === 2 ? 'وجهان' : rest <= 10 ? `${rest} أوجه` : `${rest} وجهًا`;
+  if (!parts) return pageWord;
+  if (!rest) return partWord;
+  return `${partWord} و${pageWord}`;
+};
+
+/** محفوظ الطالب بالأوجه — منه تُقاس دورة المراجعة كلها. */
+export const memorizedPages = (student) => toPages(student?.mem?.amount, student?.mem?.unit);
+
+/** «من الناس إلى الروم» — حدّ المحفوظ كما يكتبه الشيخ. */
+export const memRangeText = (student) => {
+  const from = String(student?.mem?.from || '').trim();
+  const to = String(student?.mem?.to || '').trim();
+  return from && to ? `من ${from} إلى ${to}` : from ? `من ${from}` : to ? `إلى ${to}` : '';
+};
+
+/* --------------------------- دورة المراجعة --------------------------- */
+
+/**
+ * الدورة: أن يمرّ الطالب على محفوظه كله مراجعةً. ما نطلب من الشيخ يعلّم بدايتها
+ * ولا نهايتها — نجمع أوجه مراجعته جلسةً بعد جلسة، فإذا بلغ المجموع محفوظه
+ * أُقفلت الدورة وبدأت التالية من نفسها. رقم واحد يدخله، والباقي يُحسب.
+ */
+export const reviewCycles = (student, sessions) => {
+  const total = memorizedPages(student);
+  const done = [];
+  let cur = { pages: 0, marks: [] };
+  for (const s of sortedSessions(sessions)) {
+    const entry = s.entries?.[student?.id];
+    if (!entry || entry.present === false) continue;
+    const pages = pagesOf(entry, 'review');
+    if (!pages) continue;
+    cur.marks.push({ date: s.date || '', pages });
+    cur.pages += pages;
+    if (total > 0 && cur.pages >= total) { done.push(cur); cur = { pages: 0, marks: [] }; }
+  }
+  return { total, done, current: cur };
+};
+
+/** هدف الدورة بالجلسات — ثلاث بشكل افتراضي، كما هو عرف الحلقة. */
+export const cycleTarget = (student) => {
+  const n = num(student?.mem?.target);
+  return n > 0 ? n : 3;
+};
+
+/**
+ * انزلاق الدورة: المحفوظ يكبر كل أسبوع والورد ثابت، فالدورة تطول من نفسها
+ * وما أحد ينتبه — الطالب يسمّع نفس القدر كل جلسة ويبدو منضبطًا.
+ * فنحسبها بالقسمة: كم جلسة يحتاج ليمرّ على محفوظه بورده الحالي.
+ */
+export const cycleDrift = (student) => {
+  const total = memorizedPages(student);
+  const wird = num(student?.wird?.review);
+  const target = cycleTarget(student);
+  if (!total || !wird) return null;
+
+  /*
+   * نقرّب لأقرب عدد لا لأعلاه: عشرة أجزاء بورد ثلاثة تُقال «ثلاث جلسات» كما
+   * يقولها الشيخ، لا أربعًا. ولو رفعناها لأعلى لصاح المنبّه على طالب ماشٍ
+   * على الخطة تمامًا — ومنبّهٌ يصيح على السليم لا يُسمَع له يوم يصيح على المنزلق.
+   */
+  const need = Math.max(1, Math.round(total / wird));
+  if (need <= target) return { ok: true, need, target };
+
+  // والاقتراح يُرفع لأعلى: لازم يكفي فعلًا، وبأجزاء كاملة لأن الشيخ يفكّر بها
+  const raw = Math.ceil(total / target);
+  const suggest = student?.wird?.reviewUnit === 'pages'
+    ? raw
+    : Math.ceil(raw / PAGES_PER_PART) * PAGES_PER_PART;
+  return { ok: false, need, target, suggest };
+};
+
+/* ---------------------------- موضع الطالب ---------------------------- */
+
+/**
+ * وين وقف في آخر جلسة. الشيخ ما يلزمه يفتح الجلسة الماضية ليتذكّر —
+ * الموضع يمشي مع الطالب، وخانة «من» تُفتح عليه.
+ */
+export const lastStop = (student, sessions, partId) => {
+  for (const { entry } of studentSessions(student, sessions)) {
+    const part = entry?.[partId];
+    if (part?.to) return { from: part.to, fromAya: part.toAya || '' };
+  }
+  return null;
+};
+
+/** «الحديد ١٢» — موضعه معروضًا. */
+export const stopText = (stop) =>
+  !stop?.from ? '' : `${stop.from}${num(stop.fromAya) ? ` ${num(stop.fromAya)}` : ''}`;
+
+/** موضع الطالب في الأقسام الثلاثة، لتعبئة «من» عند فتح تسميعه. */
+export const stopsOf = (student, sessions) =>
+  Object.fromEntries(PARTS.map((p) => [p.id, lastStop(student, sessions, p.id)]));

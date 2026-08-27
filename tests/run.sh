@@ -59,4 +59,6 @@ node tests/daylabel.test.mjs
 node tests/polling.test.mjs
 node tests/khayr.test.mjs
 node tests/status.test.mjs
+node tests/trace.test.mjs
+node tests/cycle.test.mjs
 rm -rf "$STUB" tests/build

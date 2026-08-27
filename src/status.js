@@ -24,6 +24,17 @@ export const TONES = { [ON]: 'green', [PART]: 'amber', [OFF]: 'red', [NEW]: 'sla
 export const NEAR = 3;
 export const FAR = 7;
 
+/**
+ * الرقمان يُضبطان من الإعدادات مرة واحدة لكل البرامج — لأن «متقطع» كلمة
+ * لها معنى واحد في الفريق، ما تختلف من برنامج لبرنامج.
+ * ونضمن `far >= near` وإلا انقلب المعنى: صار المتقطع أضيق من المستمر.
+ */
+export const stateOpts = (settings) => {
+  const near = Math.max(1, Math.round(Number(settings?.stateNear) || NEAR));
+  const far = Math.max(near, Math.round(Number(settings?.stateFar) || FAR));
+  return { near, far };
+};
+
 /** الأقوى يغلب: يحضر في برنامج ويغيب عن ثانٍ = مستمر، لأنه ما انقطع عنّا. */
 const RANK = { [ON]: 3, [PART]: 2, [OFF]: 1, [NEW]: 0 };
 

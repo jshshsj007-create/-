@@ -11,7 +11,9 @@ import {
   studentsOf, upsertRegistration, findDuplicates, mergeGuardians, mergeStudents, guardianNameFrom,
   dedupeByPhone, remapParticipants, nameMatches, searchStudents,
 } from './people.js';
-import { STATES, TONES, studentState, stateCounts } from './status.js';
+import { STATES, TONES, studentState, stateCounts, stateOpts, NEAR, FAR } from './status.js';
+import { stamped, traceText, agoText } from './trace.js';
+import { trashed, pruned, sortedTrash, leftText, kindLabel, TRASH_DAYS } from './trash.js';
 import { makeToken as makeSignupToken, TEXTS, CLOSED, waIntl, waLink, varNames, fieldsFor, dayLabel, DEFAULT_WA_TEMPLATE } from './signup.js';
 import { readImage, POSTER, GALLERY } from './img.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
@@ -20,13 +22,15 @@ import { readTheme, writeTheme, applyTheme, readHideMoney, writeHideMoney } from
 import {
   SURAHS, PARTS, emptyWird, rangeText, carryAfter, studentTotals,
   studentSessions, studentOfUser, khayrRows, khayrReportText,
+  PAGES_PER_PART, toPages, partsText, memorizedPages, memRangeText,
+  reviewCycles, cycleTarget, cycleDrift, stopsOf, stopText,
 } from './khayr.js';
 import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v5.8';
+const APP_VERSION = 'v5.9';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'معلّم خيركم', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -392,6 +396,13 @@ const defaultData = () => ({
    * الشيخ يكتب والطالب يقرأ — ولذلك الطالب يُربط بحسابه بـ`userId`.
    */
   khayr: { students: [], sessions: [] },
+  /**
+   * إعدادات الفريق: كلمة «متقطع» لها معنى واحد عند الجميع، فتُضبط هنا مرة
+   * وتنطبق على كل البرامج.
+   */
+  settings: { stateNear: NEAR, stateFar: FAR },
+  /** المحذوف يقعد هنا شهرًا قبل ما يمضي — الغلط له رجعة. */
+  trash: [],
   users: [],
   // قاعدة العملاء: ولي الأمر ← أبناؤه. تعيش عبر المواسم كلها، مو داخل ترم واحد.
   guardians: [],
@@ -458,8 +469,16 @@ export function migrate(loaded) {
   // author = صاحب الفكرة، غير idea اللي هي شرح المسابقة نفسها
   d.competitions = (d.competitions || []).map((c) => ({ author: '', idea: '', tools: [], photos: [], ...c }));
   d.khayr = { students: [], sessions: [], ...(d.khayr || {}) };
-  d.khayr.students = (d.khayr.students || []).map((st) => ({ wird: emptyWird(), ...st }));
+  /**
+   * `mem` حدّ محفوظ الطالب: منه تُقاس دورة المراجعة. القدامى بلا حدّ — فدورتهم
+   * ما تبدأ إلا لما يكتبه الشيخ، وهذا أصدق من تخمينٍ يقيس على فراغ.
+   */
+  d.khayr.students = (d.khayr.students || []).map((st) => ({
+    wird: emptyWird(), mem: { from: '', to: '', amount: 0, unit: 'parts', target: 3 }, ...st,
+  }));
   d.khayr.sessions = (d.khayr.sessions || []).map((se) => ({ entries: {}, ...se }));
+  d.settings = { stateNear: NEAR, stateFar: FAR, ...(d.settings || {}) };
+  d.trash = pruned(d.trash || []);
   d.trips = (d.trips || []).map((t) => {
     const trip = { incomeItems: [], expenseItems: [], ...t };
     // الأرقام المجملة القديمة تتحول لبند واحد باسم واضح
@@ -814,6 +833,75 @@ function PickCard({ icon: Icon, title, note, onClick, chevron }) {
         {note && <span className="block text-xs text-slate-400 mt-0.5">{note}</span>}
       </span>
       {chevron && <ChevronLeft size={18} className="text-slate-300 shrink-0" />}
+    </button>
+  );
+}
+
+/**
+ * شريط الدورة: مربّع لكل جزء، والأخير يمتلئ جزئيًا لأن الطالب يقف في نص
+ * الجزء — والتطبيق يعرف وين بالضبط، فما نكذب عليه بمربع كامل أو فارغ.
+ */
+function CycleBar({ total, done }) {
+  const per = PAGES_PER_PART;
+  const n = Math.max(1, Math.ceil(total / per));
+  return (
+    <div className="flex gap-[3px] my-2">
+      {Array.from({ length: n }, (_, i) => {
+        const f = Math.max(0, Math.min(1, (done - i * per) / per));
+        return (
+          <span key={i} className="flex-1 h-4 rounded bg-slate-100 border border-slate-200 overflow-hidden relative">
+            {f > 0 && <span className="absolute inset-y-0 right-0 bg-green-600 block" style={{ width: `${(f * 100).toFixed(0)}%` }} />}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/** أجزاء أو أوجه — الشيخ يقولها كما اعتاد، والتطبيق يحوّلها. */
+function UnitPick({ value, onChange, className = '', label }) {
+  return (
+    <div className={`flex items-center gap-2 ${className}`}>
+      {label && <span className="text-[11px] text-slate-400">{label}</span>}
+      <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5">
+        {[['parts', 'أجزاء'], ['pages', 'أوجه']].map(([v, l]) => (
+          <button key={v} type="button" onClick={() => onChange(v)}
+            className={`text-[11px] font-bold px-3 py-1.5 rounded-md transition-colors ${
+              value === v ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-500'}`}>
+            {l}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * أثر السجل: «أضافه فهد · عدّله عبدالله — قبل ٣ أيام».
+ * سطر رمادي صغير تحت السجل، ما يزاحم محتواه ولا يختفي عن اللي يدوّره.
+ */
+function Trace({ item, className = '' }) {
+  const text = traceText(item);
+  if (!text) return null;
+  const when = agoText(item.editedAt || item.addedAt);
+  return (
+    <div className={`text-[10.5px] text-slate-400 ${className}`}>
+      {text}{when ? ` — ${when}` : ''}
+    </div>
+  );
+}
+
+/**
+ * مربّع قسم في الرئيسية. الشبكة تتكيّف مع عدد الأقسام: مربّع واحد ما ينفرد
+ * بعرض الشاشة كله (لذا max-w على المربّع نفسه)، ولا يتقزّم لما يكثرون.
+ */
+function SectionTile({ icon: Icon, title, note, onClick }) {
+  return (
+    <button onClick={onClick}
+      className="w-full max-w-[13.5rem] mx-auto aspect-square bg-white rounded-2xl border border-slate-100 px-3 py-4 flex flex-col items-center justify-center text-center hover:shadow-md transition-shadow">
+      <span className="w-12 h-12 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center mb-2.5"><Icon size={23} /></span>
+      <span className="block font-bold text-slate-800 text-sm leading-snug">{title}</span>
+      {note && <span className="block text-[11px] text-slate-400 mt-1 leading-relaxed">{note}</span>}
     </button>
   );
 }
@@ -1430,7 +1518,66 @@ export default function App() {
   const goto = (v) => { setView(v); setModal(null); setSearch(''); setPayFilter('all'); };
   const closeModal = () => { setModal(null); setForm({}); };
   /** نص زر الموافقة يوصف الفعل نفسه — «نعم، احذف» ما تصلح لتأكيد استلام مبلغ. */
-  const askConfirm = (text, onYes, yes = 'نعم، احذف') => setConfirm({ text, onYes, yes });
+  const askConfirm = (text, onYes, yes = 'نعم، احذف', detail = null) => setConfirm({ text, onYes, yes, detail });
+
+  /* ------------------------- الأثر والمحذوفات ------------------------- */
+
+  /** ختم السجل باسم من أضافه أو عدّله — يرافق كل حفظ. */
+  const mark = (record, isNew) => stamped(record, currentUser, isNew);
+
+  /**
+   * الحذف يمرّ من هنا: يروح السجل من مكانه ويقعد في الصندوق شهرًا.
+   * نمرّر `pruned` مع كل حذف، فالصندوق ينظّف نفسه بلا زر ولا موعد.
+   */
+  const intoTrash = (kind, item, opts = {}) =>
+    pruned([...(data.trash || []), trashed(kind, item, { by: currentUser?.name || '', ...opts })]);
+
+  const removeFromTrash = (id) => save({ ...data, trash: (data.trash || []).filter((t) => t.id !== id) });
+  const emptyTrash = () => save({ ...data, trash: [] });
+
+  /**
+   * الإرجاع يعرف مكان كل نوع. المشارك وحده يحتاج `where` — الباقي قوائم
+   * على مستوى البيانات، يرجع السجل لآخرها.
+   */
+  const restoreTrash = (entry) => {
+    const rest = (data.trash || []).filter((t) => t.id !== entry.id);
+    const it = entry.item;
+    const put = (patch) => save({ ...data, ...patch, trash: rest });
+    switch (entry.kind) {
+      case 'program': return put({ programs: [...data.programs, it] });
+      case 'competition': return put({ competitions: [...data.competitions, it] });
+      case 'trip': return put({ trips: [...data.trips, it] });
+      case 'faidAdjustment': return put({ faidAdjustments: [...data.faidAdjustments, it] });
+      case 'student': return put({ students: [...data.students, it] });
+      case 'guardian': {
+        const { kids = [], ...g } = it || {};
+        return put({
+          guardians: [...data.guardians, g],
+          students: [...data.students, ...kids.filter((k) => !data.students.some((s) => s.id === k.id))],
+        });
+      }
+      case 'khayrStudent': return put({ khayr: { ...data.khayr, students: [...data.khayr.students, it] } });
+      case 'khayrSession': return put({ khayr: { ...data.khayr, sessions: [...data.khayr.sessions, it] } });
+      case 'week':
+        return put({
+          programs: data.programs.map((p) => (p.id !== entry.where?.programId ? p : { ...p, weeks: [...p.weeks, it] })),
+        });
+      case 'participant': {
+        const { programId, weekId } = entry.where || {};
+        return put({
+          programs: data.programs.map((p) => {
+            if (p.id !== programId) return p;
+            if (!weekId) return { ...p, participants: [...(p.participants || []), it] };
+            return { ...p, weeks: p.weeks.map((w) => (w.id !== weekId ? w : { ...w, participants: [...(w.participants || []), it] })) };
+          }),
+        });
+      }
+      default: return put({});
+    }
+  };
+
+  /** حدّا «المستمر» و«المتقطع» — رقمان من الإعدادات لكل البرامج. */
+  const stOpts = stateOpts(data.settings);
 
   /* --------------------------- تعديل الدفاتر --------------------------- */
 
@@ -1444,6 +1591,8 @@ export default function App() {
     }),
   });
   const patchLedger = (ref, updater) => save(withLedger(data, ref, updater));
+  /** نفسه، مع تعديل على مستوى البيانات كلها في نفس الحفظ (الصندوق مثلًا). */
+  const patchLedgerAnd = (ref, extra, updater) => save({ ...withLedger(data, ref, updater), ...extra });
   /** نفسه، لكن للخانات اللي تُكتب حرفًا حرفًا (التواريخ مثلًا). */
   const typeLedger = (ref, updater) => saveTyping(withLedger(data, ref, updater));
 
@@ -1528,14 +1677,14 @@ export default function App() {
     const { next, studentId } = linkByPhone(data);
     save(withLedger(next, activeRef, (l) => {
       const patch = {
-        participants: [...(l.participants || []), {
+        participants: [...(l.participants || []), mark({
           id: uid(), name: form.name.trim(),
           amount: accountId === 'unpaid' ? 0 : Number(form.amount || 0),
           accountId, attendance: 'معلق',
           // الربط بسجلّ الطالب هو اللي يخلّي تاريخه عبر المواسم يتجمّع في مكان واحد
           ...(studentId ? { studentId } : {}),
           ...(isGrouped ? { days: form.days } : {}),
-        }],
+        }, true)],
       };
       // أول اسم يُسجَّل في يوم «سريع» يحوّله للأسماء، والمبلغ المسجّل سابقًا
       // ينتقل لبند تحصيل إضافي حتى ما يضيع من الحساب
@@ -1554,12 +1703,12 @@ export default function App() {
     }
     const { next, studentId } = linkByPhone(data);
     save(withLedger(next, activeRef, (l) => ({
-      participants: (l.participants || []).map((p) => (p.id !== form.id ? p : {
+      participants: (l.participants || []).map((p) => (p.id !== form.id ? p : mark({
         ...p, name: form.name.trim(), accountId, amount: accountId === 'unpaid' ? 0 : Number(form.amount || 0),
         // التعديل يقدر يربط تسجيلًا قديمًا بسجلّ الطالب، أو يفك الربط
         studentId: studentId || undefined,
         ...(isGrouped ? { days: form.days } : {}),
-      })),
+      }, false))),
     })));
     closeModal();
   };
@@ -1589,8 +1738,15 @@ export default function App() {
     const amount = price > 0 && !form.amountTouched ? days.length * price : form.amount;
     setForm({ ...form, days, amount, error: '' });
   };
-  const removeParticipant = (pid) =>
-    patchLedger(activeRef, (l) => ({ participants: (l.participants || []).filter((p) => p.id !== pid) }));
+  const removeParticipant = (pid) => {
+    const gone = (activeLedger?.participants || []).find((p) => p.id === pid);
+    save({
+      ...withLedger(data, activeRef, (l) => ({ participants: (l.participants || []).filter((p) => p.id !== pid) })),
+      ...(gone ? { trash: intoTrash('participant', gone, {
+        where: { programId: activeRef.programId, weekId: activeRef.kind === 'week' ? activeRef.weekId : '' },
+      }) } : {}),
+    });
+  };
 
   /** الحضور: المنفصل يخزّنه على المشارك، والمجمّع في خريطة attendance[weekId][participantId]. */
   const attendanceOf = (p, weekId) =>
@@ -1656,9 +1812,15 @@ export default function App() {
   };
 
   const deleteFaidTxn = (t) => {
+    const goneRows = data.faidAdjustments.filter((a) => (t.batchId ? a.batchId === t.batchId : a.id === t.id));
     const next0 = {
       ...data,
       faidAdjustments: data.faidAdjustments.filter((a) => (t.batchId ? a.batchId !== t.batchId : a.id !== t.id)),
+      // المقسّمة صفوف كثيرة بدفعة واحدة، فترجع كما راحت — دفعةً واحدة
+      trash: goneRows.reduce((tr, row) => pruned([...tr, trashed('faidAdjustment', row, {
+        by: currentUser?.name || '',
+        label: `${row.type || 'حركة'} ${fmt(row.amount)} ر.س${row.note ? ` — ${row.note}` : ''}`,
+      })]), data.trash || []),
     };
     // لو العملية مرحّلة من برنامج، نفكّ علامة الترحيل عن دفتره عشان يقدر يرحّل من جديد
     save(t.source ? withLedger(next0, t.source, () => ({ faidTransfer: null })) : next0);
@@ -1674,7 +1836,7 @@ export default function App() {
       const rows = (form.splitRows || []).filter((r) => r.accountId && Number(r.amount) > 0);
       if (!rows.length) { setForm({ ...form, error: 'اكتب حسابًا ومبلغًا في سطر واحد على الأقل' }); return; }
       const batchId = uid();
-      const txns = rows.map((r) => ({ id: uid(), batchId, accountId: r.accountId, date: form.date || '', termKey: season, type: form.type || 'إيراد', amount: Number(r.amount), note: form.note || '', ...tags }));
+      const txns = rows.map((r) => mark({ id: uid(), batchId, accountId: r.accountId, date: form.date || '', termKey: season, type: form.type || 'إيراد', amount: Number(r.amount), note: form.note || '', ...tags }, true));
       save({ ...data, faidAdjustments: [...data.faidAdjustments, ...txns] });
       closeModal();
       return;
@@ -1682,7 +1844,7 @@ export default function App() {
     // كان الزر ما يسوي شيئًا بصمت لو نسي يختار الحساب
     if (!form.accountId) { setForm({ ...form, error: 'اختر الحساب' }); return; }
     if (!(Number(form.amount) > 0)) { setForm({ ...form, error: 'اكتب المبلغ' }); return; }
-    save({ ...data, faidAdjustments: [...data.faidAdjustments, { id: uid(), accountId: form.accountId, date: form.date || '', termKey: season, type: form.type || 'إيراد', amount: Number(form.amount), note: form.note || '', ...tags }] });
+    save({ ...data, faidAdjustments: [...data.faidAdjustments, mark({ id: uid(), accountId: form.accountId, date: form.date || '', termKey: season, type: form.type || 'إيراد', amount: Number(form.amount), note: form.note || '', ...tags }, true)] });
     closeModal();
   };
 
@@ -1788,13 +1950,18 @@ export default function App() {
       ...emptyLedger('named'),
     }));
     const id = uid();
-    save({ ...data, programs: [...data.programs, { id, name: form.name.trim(), type, termKey, status: 'مفتوح', dayPrice: Number(form.dayPrice || 0), weeks, attendance: {}, ...emptyLedger('named') }] });
+    save({ ...data, programs: [...data.programs, mark({ id, name: form.name.trim(), type, termKey, status: 'مفتوح', dayPrice: Number(form.dayPrice || 0), weeks, attendance: {}, ...emptyLedger('named') }, true)] });
     setSelectedProgramId(id); setProgramTab('days'); goto('programDetail');
     setForm({});
   };
-  const patchProgram = (patch) => save({ ...data, programs: data.programs.map((p) => (p.id !== selectedProgramId ? p : { ...p, ...patch })) });
+  const patchProgram = (patch) => save({ ...data, programs: data.programs.map((p) => (p.id !== selectedProgramId ? p : mark({ ...p, ...patch }, false))) });
   const removeProgram = (pid) => {
-    save({ ...data, programs: data.programs.filter((p) => p.id !== pid) });
+    const gone = data.programs.find((p) => p.id === pid);
+    save({
+      ...data,
+      programs: data.programs.filter((p) => p.id !== pid),
+      ...(gone ? { trash: intoTrash('program', gone) } : {}),
+    });
     goto('programs');
   };
   const addWeek = () => {
@@ -1808,7 +1975,10 @@ export default function App() {
   const patchWeek = (patch) => patchLedger({ kind: 'week', programId: selectedProgramId, weekId: selectedWeekId }, () => patch);
   const typeWeek = (patch) => typeLedger({ kind: 'week', programId: selectedProgramId, weekId: selectedWeekId }, () => patch);
   const removeWeek = (weekId) => {
-    patchLedger({ kind: 'program', programId: selectedProgramId }, (p) => {
+    const goneWeek = (program?.weeks || []).find((w) => w.id === weekId);
+    patchLedgerAnd({ kind: 'program', programId: selectedProgramId },
+      goneWeek ? { trash: intoTrash('week', goneWeek, { where: { programId: selectedProgramId } }) } : {},
+      (p) => {
       const attendance = { ...(p.attendance || {}) };
       delete attendance[weekId];
       return {
@@ -1891,11 +2061,18 @@ export default function App() {
       ...data,
       competitions: form.id
         ? data.competitions.map((c) => (c.id !== form.id ? c : { ...c, ...fields }))
-        : [...data.competitions, { id: uid(), ...fields }],
+        : [...data.competitions, mark({ id: uid(), ...fields }, true)],
     });
     closeModal();
   };
-  const removeCompetition = (cid) => save({ ...data, competitions: data.competitions.filter((c) => c.id !== cid) });
+  const removeCompetition = (cid) => {
+    const gone = data.competitions.find((c) => c.id === cid);
+    save({
+      ...data,
+      competitions: data.competitions.filter((c) => c.id !== cid),
+      ...(gone ? { trash: intoTrash('competition', gone) } : {}),
+    });
+  };
 
   /** أدوات المسابقة: اسم الأداة وكميتها (أقماع ٦، كورة ٢…). */
   const addTool = () => {
@@ -1937,7 +2114,7 @@ export default function App() {
 
   const addTrip = () => {
     if (!form.name) return;
-    save({ ...data, trips: [...data.trips, { id: uid(), termKey, name: form.name.trim(), date: form.date || '', incomeItems: [], expenseItems: [] }] });
+    save({ ...data, trips: [...data.trips, mark({ id: uid(), termKey, name: form.name.trim(), date: form.date || '', incomeItems: [], expenseItems: [] }, true)] });
     closeModal();
   };
   const patchTrip = (patch) => save({ ...data, trips: data.trips.map((t) => (t.id !== selectedTripId ? t : { ...t, ...patch })) });
@@ -1949,11 +2126,37 @@ export default function App() {
     closeModal();
   };
   const removeTripItem = (key, itemId) => patchTrip({ [key]: (trip[key] || []).filter((x) => x.id !== itemId) });
-  const removeTrip = (tid) => { save({ ...data, trips: data.trips.filter((t) => t.id !== tid) }); goto('trips'); };
+  const removeTrip = (tid) => {
+    const gone = data.trips.find((t) => t.id === tid);
+    save({
+      ...data,
+      trips: data.trips.filter((t) => t.id !== tid),
+      ...(gone ? { trash: intoTrash('trip', gone) } : {}),
+    });
+    goto('trips');
+  };
 
   /* ------------------------------- خيركم ------------------------------- */
 
   const patchKhayr = (patch) => save({ ...data, khayr: { ...data.khayr, ...patch } });
+
+  /** نموذج تعديل الطالب: الورد يرجع بوحدته اللي كُتب بها، لا بالأوجه الخام. */
+  const khayrStudentForm = (st) => {
+    const unit = st.wird?.reviewUnit || 'parts';
+    const mem = st.mem || {};
+    return {
+      ...st,
+      tathbit: st.wird?.tathbit || 0,
+      hifz: st.wird?.hifz || 0,
+      review: unit === 'parts'
+        ? Math.round((Number(st.wird?.review || 0) / PAGES_PER_PART) * 100) / 100
+        : Number(st.wird?.review || 0),
+      reviewUnit: unit,
+      memFrom: mem.from || '', memTo: mem.to || '',
+      memAmount: mem.amount || '', memUnit: mem.unit || 'parts',
+      memTarget: mem.target || 3,
+    };
+  };
 
   const saveKhayrStudent = () => {
     if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب اسم الطالب' }); return; }
@@ -1961,32 +2164,49 @@ export default function App() {
       name: form.name.trim(),
       phone: normalizePhone(form.phone || ''),
       wird: {
-        review: Number(form.review || 0),
+        // المراجعة تُقال بالأجزاء والتثبيت والحفظ بالأوجه — نخزّنها كلها أوجهًا
+        review: toPages(form.review, form.reviewUnit || 'parts'),
+        reviewUnit: form.reviewUnit || 'parts',
         tathbit: Number(form.tathbit || 0),
         hifz: Number(form.hifz || 0),
+      },
+      mem: {
+        from: form.memFrom || '',
+        to: form.memTo || '',
+        amount: Number(form.memAmount || 0),
+        unit: form.memUnit || 'parts',
+        target: Math.max(1, Number(form.memTarget || 3)),
       },
       userId: form.userId || '',
     };
     patchKhayr({
       students: form.id
-        ? data.khayr.students.map((s) => (s.id !== form.id ? s : { ...s, ...fields }))
-        : [...data.khayr.students, { id: uid(), ...fields }],
+        ? data.khayr.students.map((s) => (s.id !== form.id ? s : mark({ ...s, ...fields }, false)))
+        : [...data.khayr.students, mark({ id: uid(), ...fields }, true)],
     });
     closeModal();
   };
 
   /** يمشي الطالب ويمشي تسميعه معه — ما نخلّي سجلات معلّقة بلا صاحب. */
-  const removeKhayrStudent = (sid) => patchKhayr({
-    students: data.khayr.students.filter((s) => s.id !== sid),
-    sessions: data.khayr.sessions.map((se) => {
-      const { [sid]: gone, ...rest } = se.entries || {};
-      return { ...se, entries: rest };
-    }),
-  });
+  const removeKhayrStudent = (sid) => {
+    const st = data.khayr.students.find((s) => s.id === sid);
+    save({
+      ...data,
+      khayr: {
+        ...data.khayr,
+        students: data.khayr.students.filter((s) => s.id !== sid),
+        sessions: data.khayr.sessions.map((se) => {
+          const { [sid]: gone, ...rest } = se.entries || {};
+          return { ...se, entries: rest };
+        }),
+      },
+      ...(st ? { trash: intoTrash('khayrStudent', st) } : {}),
+    });
+  };
 
   const addKhayrSession = () => {
     if (!form.date?.trim()) { setForm({ ...form, error: 'اكتب تاريخ الجلسة' }); return; }
-    const created = { id: uid(), termKey, date: form.date.trim(), entries: {} };
+    const created = mark({ id: uid(), termKey, date: form.date.trim(), entries: {} }, true);
     patchKhayr({ sessions: [...data.khayr.sessions, created] });
     setSelectedKhayrSessionId(created.id);
     setModal(null); setForm({});
@@ -1994,7 +2214,12 @@ export default function App() {
   };
 
   const removeKhayrSession = (sid) => {
-    patchKhayr({ sessions: data.khayr.sessions.filter((s) => s.id !== sid) });
+    const gone = data.khayr.sessions.find((s) => s.id === sid);
+    save({
+      ...data,
+      khayr: { ...data.khayr, sessions: data.khayr.sessions.filter((s) => s.id !== sid) },
+      ...(gone ? { trash: intoTrash('khayrSession', gone, { label: `جلسة ${gone.date}` }) } : {}),
+    });
     goto('khayr');
   };
 
@@ -2002,6 +2227,34 @@ export default function App() {
    * تسميع طالب في جلسة. الغائب ما نحفظ له مدى ولا أوجه — نحفظ ما حمّله الشيخ
    * وبس، عشان ما يبقى في السجل كلام من نموذج فُتح ثم بُدّل قراره.
    */
+  /**
+   * نموذج تسميع: خانة «من» تُفتح على مكان وقوفه في آخر جلسة، وما يلزم الشيخ
+   * يتذكّره ولا يرجع يدوّره. ولو كان مسجّلًا من قبل نفتح ما سُجّل كما هو.
+   */
+  const khayrEntryForm = (st, session) => {
+    const entry = session.entries?.[st.id];
+    if (entry) {
+      const unit = entry.review?.unit || st.wird?.reviewUnit || 'parts';
+      return {
+        studentId: st.id, ...entry, due: entry.due ?? '', reviewUnit: unit,
+        review: {
+          ...entry.review,
+          pages: unit === 'parts'
+            ? Math.round((Number(entry.review?.pages || 0) / PAGES_PER_PART) * 100) / 100
+            : Number(entry.review?.pages || 0),
+        },
+      };
+    }
+    // جلسات ما قبل هذي وحدها — الموضع يُؤخذ من الماضي لا من المستقبل
+    const before = khayr.sessions.filter((x) => String(x.date || '') < String(session.date || ''));
+    const stops = stopsOf(st, before);
+    return {
+      studentId: st.id, present: true, due: '',
+      reviewUnit: st.wird?.reviewUnit || 'parts',
+      ...Object.fromEntries(PARTS.map((p) => [p.id, stops[p.id] || {}])),
+    };
+  };
+
   const saveKhayrEntry = () => {
     const sid = form.studentId;
     const entry = form.present === false
@@ -2012,7 +2265,9 @@ export default function App() {
         ...Object.fromEntries(PARTS.map((p) => [p.id, {
           from: form[p.id]?.from || '', fromAya: form[p.id]?.fromAya || '',
           to: form[p.id]?.to || '', toAya: form[p.id]?.toAya || '',
-          pages: Number(form[p.id]?.pages || 0),
+          // المراجعة وحدها تُدخَل بالأجزاء أو بالأوجه؛ المخزَّن أوجه دائمًا
+          pages: p.id === 'review' ? toPages(form.review?.pages, form.reviewUnit || 'parts') : Number(form[p.id]?.pages || 0),
+          ...(p.id === 'review' ? { unit: form.reviewUnit || 'parts' } : {}),
         }])),
       };
     patchKhayr({
@@ -2117,6 +2372,68 @@ export default function App() {
     }),
   });
 
+  /**
+   * متأخرات الطالب: ما بقي عليه في برامج سابقة عبر المواسم كلها.
+   *
+   * قبلها كان الدين يضيع بين المواسم — يسجّل في الترم الجديد وأنت ما تدري
+   * إنه ما دفع اللي قبله، وما تكتشفه إلا يوم تقفل حسابات السنة. فنقولها لك
+   * وأنت واقف عليه، لا بعد سنة.
+   */
+  const arrearsOf = (studentId, name, exceptProgramId) => {
+    if (!studentId && !(name || '').trim()) return [];
+    return unpaidRows(data.programs)
+      .filter((r) => r.program.id !== exceptProgramId)
+      .filter((r) => (studentId ? r.part.studentId === studentId : sameName(r.part.name, name)))
+      .map((r) => {
+        const due = r.due || Number(r.part.amount || 0);
+        return { ...r, due, known: due > 0, label: `${r.program.name}${r.week ? ` · ${r.week.name}` : ''}` };
+      });
+  };
+  /**
+   * البرنامج اللي ما فيه سعر مسجّل ما نعرف كم على مشتركه — لكن نعرف يقينًا
+   * إنه ما دفع. فنقولها بلا رقم، ولا نسقطه من القائمة: دَينٌ مجهول المقدار
+   * دَينٌ، وإسقاطه لأننا ما نعرف حجمه إخفاءٌ لا اختصار.
+   */
+  const arrearsTotal = (rows) => rows.filter((r) => r.known).reduce((s, r) => s + r.due, 0);
+  const arrearsText = (rows) => {
+    const sum = arrearsTotal(rows);
+    const blind = rows.filter((r) => !r.known).length;
+    if (sum && blind) return `${fmt(sum)} ر.س و${blind === 1 ? 'تسجيل' : `${blind} تسجيلات`} بلا مبلغ مسجّل`;
+    if (sum) return `${fmt(sum)} ر.س`;
+    return `${rows.length === 1 ? 'تسجيل' : `${rows.length} تسجيلات`} بلا مبلغ مسجّل`;
+  };
+
+  /**
+   * «ما وصل» = يحذف التسجيل. اللي يسجّل ويحط «كاش» ثم ما يجي، أو يكتب إنه
+   * حوّل بلا إيصال — يمشي من القائمة، ويبقى شهرًا في الصندوق لو غلطت.
+   */
+  const dropPending = (part, weekId) => save({
+    ...withLedger(data, { kind: weekId ? 'week' : 'program', programId: program.id, weekId }, (l) => ({
+      participants: (l.participants || []).filter((x) => x.id !== part.id),
+    })),
+    trash: intoTrash('participant', part, { where: { programId: program.id, weekId: weekId || '' } }),
+  });
+
+  const askDropPending = (part, where, weekId) => {
+    const acc = (data.faidAccounts.find((a) => a.id === part.accountId) || {}).name || 'بلا حساب';
+    askConfirm(
+      `حذف تسجيل ${part.name}؟`,
+      () => dropPending(part, weekId),
+      'نعم، احذف',
+      {
+        lines: [
+          `المبلغ: ${fmt(part.amount)} ر.س · ${acc}`,
+          `${where}`,
+          `سجّل ${agoText(part.submittedAt) || 'بتاريخ غير مسجّل'}${part.receipt ? '' : ' · ما أرفق إيصالًا'}`,
+        ],
+        ...(part.receipt ? {
+          warn: 'هذا أرفق إيصالًا',
+          warnNote: 'العابث غالبًا ما يرفق شيئًا — راجع الإيصال قبل ما تحذف.',
+        } : {}),
+      },
+    );
+  };
+
   const confirmPending = (partId) => clearPendingFlag((part) => part.id === partId);
   const confirmAllPending = () => { clearPendingFlag((part) => !!part.pending); closeModal(); };
   /** تأكيد قائمة انتظار يوم أو أسبوع دفعة وحدة، بلا ما تمس بقية البرنامج. */
@@ -2211,9 +2528,9 @@ export default function App() {
 
     const fields = { name, phone: normalizePhone(phone), notes: (form.notes || '').trim() };
     if (form.id) {
-      save({ ...data, guardians: data.guardians.map((g) => (g.id === form.id ? { ...g, ...fields } : g)) });
+      save({ ...data, guardians: data.guardians.map((g) => (g.id === form.id ? mark({ ...g, ...fields }, false) : g)) });
     } else {
-      const created = { id: uid(), ...fields, altPhone: '', createdAt: Date.now(), lastSeenAt: Date.now() };
+      const created = mark({ id: uid(), ...fields, altPhone: '', createdAt: Date.now(), lastSeenAt: Date.now() }, true);
       save({ ...data, guardians: [...data.guardians, created] });
       // نفتح صفحته على طول — الخطوة الطبيعية بعدها إضافة أبنائه
       setSelectedGuardianId(created.id);
@@ -2223,10 +2540,14 @@ export default function App() {
   };
 
   const removeGuardian = (gid) => {
+    const gone = data.guardians.find((g) => g.id === gid);
+    const kids = data.students.filter((s) => s.guardianId === gid);
     save({
       ...data,
       guardians: data.guardians.filter((g) => g.id !== gid),
       students: data.students.filter((s) => s.guardianId !== gid),
+      // الأبناء يروحون معه، فيرجعون معه: نحفظهم في نفس السجل لا في سجلات متفرّقة
+      ...(gone ? { trash: intoTrash('guardian', { ...gone, kids }) } : {}),
     });
     goto('guardians');
   };
@@ -2259,18 +2580,23 @@ export default function App() {
       school: (form.school || '').trim(), health: (form.health || '').trim(),
     };
     if (form.id) {
-      save({ ...data, students: data.students.map((s) => (s.id === form.id ? { ...s, ...fields } : s)) });
+      save({ ...data, students: data.students.map((s) => (s.id === form.id ? mark({ ...s, ...fields }, false) : s)) });
     } else {
       const twin = studentsOf(data.students, form.guardianId).find((s) => sameName(s.name, name));
       if (twin) { setForm({ ...form, error: `«${twin.name}» مسجّل تحته من قبل` }); return; }
-      save({ ...data, students: [...data.students, { id: uid(), guardianId: form.guardianId, ...fields, createdAt: Date.now() }] });
+      save({ ...data, students: [...data.students, mark({ id: uid(), guardianId: form.guardianId, ...fields, createdAt: Date.now() }, true)] });
     }
     closeModal();
   };
 
   /** حذف الطالب ما يمس تسجيلاته المالية — يفك الربط فقط عشان الحسابات ما تختل. */
   const removeStudent = (sid) => {
-    save({ ...data, students: data.students.filter((s) => s.id !== sid) });
+    const gone = data.students.find((s) => s.id === sid);
+    save({
+      ...data,
+      students: data.students.filter((s) => s.id !== sid),
+      ...(gone ? { trash: intoTrash('student', gone) } : {}),
+    });
   };
 
   /** الدمج ينقل الأبناء، والتسجيلات القديمة تتبع الطالب الباقي. */
@@ -2879,9 +3205,9 @@ export default function App() {
               );
             })()}
 
-            <div className="space-y-3">
+            <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(9.25rem,1fr))]">
               {sections.map((c) => (
-                <PickCard key={c.id} icon={c.icon} title={c.label} note={c.desc} chevron onClick={() => goto(c.id)} />
+                <SectionTile key={c.id} icon={c.icon} title={c.label} note={c.desc} onClick={() => goto(c.id)} />
               ))}
             </div>
           </div>
@@ -3072,6 +3398,7 @@ export default function App() {
                 </button>
               )}
             </div>
+            <Trace item={program} className="-mt-2 mb-4" />
 
             {isGrouped && (
               <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-sm text-blue-800 mb-5 flex items-start gap-2">
@@ -3596,35 +3923,56 @@ export default function App() {
                   {pending.length > 0 && (
                     <div className={cardCls}>
                       <div className="font-bold text-slate-800 mb-1">ينتظر تأكيدك ({pending.length})</div>
-                      <div className="text-xs text-slate-400 mb-4">
-                        هذولا سجّلوا من الرابط. مبالغهم ما تُحسب إيرادًا لين تأكّد إن الفلوس وصلت.
-                        وتلقاهم كمان تحت «الانتظار» في نفس اليوم اللي سجّلوا فيه، جوّا شاشة الحضور.
+                      <div className="text-xs text-slate-400 mb-4 leading-relaxed">
+                        الإيصال قدامك. «وصل» يدخل المبلغ في الإيراد وينقله لقائمة الحضور،
+                        و«ما وصل» يحذف التسجيل — ويقعد شهرًا في صندوق المحذوفات لو غلطت.
                       </div>
-                      <div className="space-y-2">
-                        {pending.map(({ part, where, weekId }) => (
-                          <div key={part.id} className="border border-amber-200 bg-amber-50 rounded-xl px-3 py-2.5">
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="min-w-0">
-                                <div className="font-semibold text-sm text-slate-800 truncate">{part.name}</div>
-                                <div className="text-[11px] text-slate-500">
-                                  {where} · {fmt(part.amount)} ر.س · {(data.faidAccounts.find((a) => a.id === part.accountId) || {}).name || 'بلا حساب'}
+                      <div className="space-y-2.5">
+                        {pending.map(({ part, where, weekId }) => {
+                          const acc = (data.faidAccounts.find((a) => a.id === part.accountId) || {}).name || 'بلا حساب';
+                          const late = arrearsOf(part.studentId, part.name, program.id);
+                          const old = part.submittedAt && Date.now() - part.submittedAt > 14 * 24 * 3600 * 1000;
+                          return (
+                            <div key={part.id}
+                              className={`border rounded-xl p-3 ${late.length ? 'border-red-200 bg-red-50' : old ? 'border-orange-200 bg-orange-50' : 'border-amber-200 bg-amber-50'}`}>
+                              <div className="flex gap-3">
+                                {/* الإيصال ظاهر لا مخبّى خلف زر: القرار يُؤخذ عليه */}
+                                <button type="button" className="w-14 h-[4.5rem] rounded-lg overflow-hidden shrink-0 border border-slate-200 bg-white flex items-center justify-center"
+                                  onClick={() => part.receipt && (setForm({ receipt: part.receipt, who: part.name }), setModal('viewReceipt'))}>
+                                  {!part.receipt ? (
+                                    <span className="text-[9.5px] text-slate-400 leading-tight text-center px-1">بلا<br />إيصال</span>
+                                  ) : part.receipt.type === 'application/pdf' ? (
+                                    <FileText size={20} className="text-slate-400" />
+                                  ) : (
+                                    <img src={part.receipt.data} alt="الإيصال" className="w-full h-full object-cover" />
+                                  )}
+                                </button>
+                                <div className="min-w-0 flex-1">
+                                  <div className="font-semibold text-sm text-slate-800 truncate">{part.name}</div>
+                                  {late.length > 0 && (
+                                    <div className="text-[11px] text-red-600 font-bold mt-0.5">
+                                      ⚠️ عليه {arrearsText(late)} من {late.map((r) => r.label).join(' · ')}
+                                    </div>
+                                  )}
+                                  <div className="text-[11px] text-slate-500 mt-0.5">{where} · {fmt(part.amount)} ر.س · {acc}</div>
+                                  <div className={`text-[11px] mt-0.5 ${old ? 'text-orange-600 font-bold' : 'text-slate-400'}`}>
+                                    سجّل {agoText(part.submittedAt) || '— بلا تاريخ'}
+                                  </div>
+                                  <div className="flex gap-1.5 mt-2">
+                                    <button className="flex-1 bg-green-600 text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center justify-center gap-1"
+                                      onClick={() => confirmPending(part.id, weekId)}>
+                                      <Check size={14} /> وصل
+                                    </button>
+                                    <button className="flex-1 bg-white border border-red-200 text-red-600 text-xs font-bold px-3 py-2 rounded-lg flex items-center justify-center gap-1"
+                                      onClick={() => askDropPending(part, where, weekId)}>
+                                      <X size={14} /> ما وصل
+                                    </button>
+                                  </div>
                                 </div>
                               </div>
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                {part.receipt && (
-                                  <button className="bg-white border border-slate-200 text-slate-600 text-xs font-semibold px-2.5 py-2 rounded-lg flex items-center gap-1"
-                                    onClick={() => { setForm({ receipt: part.receipt, who: part.name }); setModal('viewReceipt'); }}>
-                                    <FileText size={14} /> الإيصال
-                                  </button>
-                                )}
-                                <button className="bg-green-600 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1"
-                                  onClick={() => confirmPending(part.id, weekId)}>
-                                  <Check size={14} /> تأكيد
-                                </button>
-                              </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                       <button className={btnPrimary + ' w-full mt-3'}
                         onClick={() => askConfirm(`تأكيد وصول مبالغ ${pending.length} تسجيل؟ بتدخل الإيراد.`, confirmAllPending, 'نعم، وصلت')}>
@@ -4071,6 +4419,7 @@ export default function App() {
                         <td className="px-4 py-3 text-slate-700">
                           {t.note || '-'}
                           {t.source && <span className="mr-2"><Badge tone="blue">مُرحّل من برنامج</Badge></span>}
+                          <Trace item={t} className="mt-1" />
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
                           {t.project && <div className="text-slate-700 text-xs font-semibold">{t.project}</div>}
@@ -4163,6 +4512,7 @@ export default function App() {
                   <h2 className="text-lg font-bold text-slate-800 truncate">{competition.name}</h2>
                   <Badge tone="brand">{competition.level}</Badge>
                 </div>
+                <Trace item={competition} className="mt-1" />
               </div>
               <div className="flex items-center gap-1 shrink-0">
                 <button onClick={() => { setForm({ ...competition, tools: competition.tools || [], photos: competition.photos || [] }); setModal('editCompetition'); }}
@@ -4306,7 +4656,7 @@ export default function App() {
             {khayrTab === 'students' && (
               <div>
                 <button className={btnPrimary + ' w-full mb-4'}
-                  onClick={() => { setForm({ review: '', tathbit: '', hifz: '' }); setModal('khayrStudent'); }}>
+                  onClick={() => { setForm({ review: '', tathbit: '', hifz: '', reviewUnit: 'parts', memUnit: 'parts', memTarget: 3 }); setModal('khayrStudent'); }}>
                   <Plus size={16} /> طالب جديد
                 </button>
                 {!khayr.students.length ? (
@@ -4315,25 +4665,96 @@ export default function App() {
                   <div className="space-y-2.5">
                     {khayr.students.map((st) => {
                       const linked = data.users.find((u) => u.id === st.userId);
+                      const stop = stopText(stopsOf(st, khayr.sessions).hifz);
+                      const cyc = reviewCycles(st, khayr.sessions);
+                      const drift = cycleDrift(st);
                       return (
-                        <div key={st.id} className="bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3">
-                          <div className="flex-1 min-w-0">
-                            <div className="font-bold text-slate-800">{st.name}</div>
-                            <div className="text-[11px] text-slate-400 mt-1">
-                              الورد: مراجعة {st.wird?.review || 0} · تثبيت {st.wird?.tathbit || 0} · حفظ {st.wird?.hifz || 0}
-                            </div>
-                            {can('المستخدمون والصلاحيات') && (
-                              <div className="mt-1.5">
-                                {linked
-                                  ? <Badge tone="brand">مرتبط بحساب: {linked.name}</Badge>
-                                  : <Badge tone="slate">بلا حساب</Badge>}
+                        <div key={st.id} className="bg-white rounded-2xl border border-slate-100 p-4">
+                          <div className="flex items-start gap-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="font-bold text-slate-800">{st.name}</div>
+                              {/* موضعه أول ما يُقرأ: هذا اللي يحتاجه الشيخ كل جلسة */}
+                              {stop && <div className="text-[11px] text-brand-700 font-semibold mt-0.5">وصل إلى: {stop}</div>}
+                              {memRangeText(st) && (
+                                <div className="text-[11px] text-slate-400 mt-0.5">
+                                  محفوظه: {memRangeText(st)} · {partsText(cyc.total)}
+                                </div>
+                              )}
+                              <div className="text-[11px] text-slate-400 mt-0.5">
+                                الورد: مراجعة {partsText(st.wird?.review || 0)} · تثبيت {st.wird?.tathbit || 0} · حفظ {st.wird?.hifz || 0}
                               </div>
-                            )}
+                              {can('المستخدمون والصلاحيات') && (
+                                <div className="mt-1.5">
+                                  {linked
+                                    ? <Badge tone="brand">مرتبط بحساب: {linked.name}</Badge>
+                                    : <Badge tone="slate">بلا حساب</Badge>}
+                                </div>
+                              )}
+                              <Trace item={st} className="mt-1.5" />
+                            </div>
+                            <button onClick={() => { setForm(khayrStudentForm(st)); setModal('khayrStudent'); }}
+                              className="text-slate-400 hover:text-brand-700 shrink-0"><Pencil size={16} /></button>
+                            <button onClick={() => askConfirm(`حذف «${st.name}» وكل تسميعه؟`, () => removeKhayrStudent(st.id))}
+                              className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 size={16} /></button>
                           </div>
-                          <button onClick={() => { setForm({ ...st, ...(st.wird || emptyWird()) }); setModal('khayrStudent'); }}
-                            className="text-slate-400 hover:text-brand-700"><Pencil size={16} /></button>
-                          <button onClick={() => askConfirm(`حذف «${st.name}» وكل تسميعه؟`, () => removeKhayrStudent(st.id))}
-                            className="text-slate-300 hover:text-red-500"><Trash2 size={16} /></button>
+
+                          {/* الدورة تتجمّع من نفسها: ما نطلب من الشيخ يعلّم بدايتها ولا نهايتها */}
+                          {cyc.total > 0 && (
+                            <div className="mt-3 pt-3 border-t border-slate-100">
+                              <div className="flex items-baseline justify-between gap-2">
+                                <span className="text-xs font-bold text-slate-700">الدورة الحالية</span>
+                                <span className="text-[11px] text-slate-400">
+                                  {cyc.current.marks.length ? `${cyc.current.marks.length} جلسة` : 'ما بدأت'}
+                                  {cyc.done.length ? ` · اكتملت ${cyc.done.length}` : ''}
+                                </span>
+                              </div>
+                              <CycleBar total={cyc.total} done={cyc.current.pages} />
+                              <div className="flex items-center justify-between text-[11px]">
+                                <span className="font-bold text-green-700">
+                                  {cyc.current.pages} من {cyc.total} وجه · {Math.round((cyc.current.pages / cyc.total) * 100)}%
+                                </span>
+                                <span className="text-slate-400">باقٍ {cyc.total - cyc.current.pages} وجهًا</span>
+                              </div>
+
+                              {/* الانزلاق: يسمّع نفس القدر كل جلسة ويبدو منضبطًا، والدورة تطول */}
+                              {drift && !drift.ok && (
+                                <div className="mt-2.5 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+                                  <div className="text-[11.5px] font-bold text-amber-800">
+                                    دورته صارت {drift.need} جلسة — وهدفكم {drift.target}
+                                  </div>
+                                  <div className="text-[11px] text-amber-700 mt-1 leading-relaxed">
+                                    ارفع ورد المراجعة إلى <b>{partsText(drift.suggest)}</b>. المحفوظ يكبر كل أسبوع
+                                    والورد ثابت، فالدورة تطول من نفسها وما أحد ينتبه.
+                                  </div>
+                                </div>
+                              )}
+                              {drift?.ok && (
+                                <div className="text-[11px] text-green-700 mt-2">
+                                  ✓ بورده الحالي يمرّ على محفوظه في {drift.need} جلسة — وهدفكم {drift.target}.
+                                </div>
+                              )}
+
+                              {cyc.done.length > 0 && (
+                                <details className="mt-2.5">
+                                  <summary className="text-[11px] text-slate-500 cursor-pointer font-semibold">
+                                    الدورات المكتملة ({cyc.done.length})
+                                  </summary>
+                                  <div className="mt-1.5 space-y-1">
+                                    {[...cyc.done].reverse().map((c, i) => (
+                                      <div key={i} className="flex items-center justify-between gap-2 text-[11px] border-t border-slate-50 pt-1.5">
+                                        <span className="text-slate-500 min-w-0 truncate">
+                                          {c.pages} وجهًا · {c.marks.map((m) => m.pages).join(' + ')}
+                                        </span>
+                                        <Badge tone={c.marks.length <= cycleTarget(st) ? 'green' : 'amber'}>
+                                          {c.marks.length} جلسة
+                                        </Badge>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </details>
+                              )}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -4364,13 +4785,14 @@ export default function App() {
                   return (
                     <div key={st.id} className="bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3">
                       <button className="flex-1 min-w-0 text-right"
-                        onClick={() => {
-                          setForm(entry
-                            ? { studentId: st.id, ...entry, due: entry.due ?? '' }
-                            : { studentId: st.id, present: true, due: '' });
-                          setModal('khayrEntry');
-                        }}>
+                        onClick={() => { setForm(khayrEntryForm(st, khayrSession)); setModal('khayrEntry'); }}>
                         <span className="block font-bold text-slate-800">{st.name}</span>
+                        {/* موضعه يمشي معه: الشيخ ما يرجع للجلسة الماضية ليتذكّر وين وقف */}
+                        {!entry && stopText(stopsOf(st, khayr.sessions).hifz) && (
+                          <span className="block text-[11px] text-brand-700 font-semibold mt-0.5">
+                            وصل إلى: {stopText(stopsOf(st, khayr.sessions).hifz)}
+                          </span>
+                        )}
                         <span className="block text-xs text-slate-400 mt-0.5">
                           {!entry ? 'ما سُجّل بعد'
                             : entry.present === false ? `غائب · حُمّل ${Number(entry.due || 0)} وجهًا`
@@ -4419,6 +4841,33 @@ export default function App() {
                 <MiniStat label="وجه حفظ" value={t.hifz} icon={BookMarked} />
                 <MiniStat label="وجه مراجعة" value={t.review} icon={RotateCcw} />
               </div>
+
+              {/* دورته يشوفها كما يشوفها شيخه — نفس الرقم، بلا تعديل */}
+              {(() => {
+                const cyc = reviewCycles(myKhayrStudent, khayr.sessions);
+                if (!cyc.total) return null;
+                return (
+                  <div className={cardCls + ' mb-4'}>
+                    <div className="flex items-baseline justify-between gap-2 mb-1">
+                      <span className="text-sm font-semibold text-slate-700">دورة مراجعتك</span>
+                      <span className="text-[11px] text-slate-400">
+                        {memRangeText(myKhayrStudent)} · {partsText(cyc.total)}
+                      </span>
+                    </div>
+                    <CycleBar total={cyc.total} done={cyc.current.pages} />
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-bold text-green-700">
+                        {cyc.current.pages} من {cyc.total} وجه · {Math.round((cyc.current.pages / cyc.total) * 100)}%
+                      </span>
+                      <span className="text-slate-400">
+                        باقٍ {cyc.total - cyc.current.pages} وجهًا
+                        {cyc.done.length ? ` · أتممت ${cyc.done.length} دورة` : ''}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div className={cardCls}>
                 <div className="text-sm font-semibold text-slate-700 mb-3">آخر الجلسات</div>
                 {!log.length ? (
@@ -4530,6 +4979,7 @@ export default function App() {
               <h2 className="text-lg sm:text-xl font-bold text-slate-800">{trip.name}</h2>
               {isAdmin && <button onClick={() => askConfirm(`حذف سفرة «${trip.name}»؟`, () => removeTrip(trip.id))} className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>}
             </div>
+            <Trace item={trip} className="-mt-3 mb-5" />
             <div className={cardCls + ' mb-3'}>
               <div className="text-sm text-slate-500 mb-2">التاريخ (هـ)</div>
               <input className={inputCls} value={trip.date} onChange={(e) => typeTrip({ date: e.target.value })} placeholder="1447/03/01" />
@@ -4583,8 +5033,95 @@ export default function App() {
               { id: 'terms', label: 'السنوات والفصول' },
               { id: 'signup', label: 'نموذج التسجيل' },
               { id: 'pay', label: 'طرق الدفع' },
+              { id: 'states', label: 'حالات المشتركين' },
+              { id: 'trash', label: `المحذوفات${(data.trash || []).length ? ` (${data.trash.length})` : ''}` },
               { id: 'backup', label: 'النسخ الاحتياطي' },
             ]} />
+
+            {/* ---------------------- حدّا المستمر والمتقطع ---------------------- */}
+            {settingsTab === 'states' && (() => {
+              const set = (k, v) => save({ ...data, settings: { ...data.settings, [k]: Math.max(1, Number(v) || 1) } });
+              const counts = stateCounts(data.students, data.programs, stOpts);
+              return (
+                <div className="space-y-4">
+                  <div className={cardCls}>
+                    <div className="text-sm font-bold text-slate-800 mb-1">متى يصير «مستمرًا»؟</div>
+                    <div className="text-[11px] text-slate-400 mb-3 leading-relaxed">
+                      إذا حضر ولو مرة في آخر <b className="text-slate-600">{stOpts.near}</b> أيام من البرنامج.
+                    </div>
+                    <Stepper value={data.settings?.stateNear ?? NEAR} onChange={(v) => set('stateNear', v)} min={1} max={30} />
+                  </div>
+
+                  <div className={cardCls}>
+                    <div className="text-sm font-bold text-slate-800 mb-1">ومتى يصير «متقطعًا»؟</div>
+                    <div className="text-[11px] text-slate-400 mb-3 leading-relaxed">
+                      إذا حضر في آخر <b className="text-slate-600">{stOpts.far}</b> أيام لكن ما حضر في آخر {stOpts.near}.
+                      وما حضر في السبعة كلها = <b className="text-red-600">منقطع</b>.
+                    </div>
+                    <Stepper value={data.settings?.stateFar ?? FAR} onChange={(v) => set('stateFar', v)} min={1} max={60} />
+                  </div>
+
+                  <div className={cardCls}>
+                    <div className="text-sm font-bold text-slate-800 mb-3">على هذي الأرقام، مشتركوك اليوم</div>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      {STATES.map((s) => (
+                        <div key={s} className="rounded-xl border border-slate-100 px-3 py-2.5 flex items-center justify-between">
+                          <Badge tone={TONES[s]}>{s}</Badge>
+                          <span className="text-lg font-extrabold text-slate-800">{counts[s]}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-3 leading-relaxed">
+                      نعدّ <b className="text-slate-600">بأيام البرنامج</b> لا بالتاريخ: اللي برنامجه واقف في الإجازة
+                      ما هو منقطعًا — البرنامج هو الواقف.
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* -------------------------- صندوق المحذوفات -------------------------- */}
+            {settingsTab === 'trash' && (() => {
+              const list = sortedTrash(data.trash);
+              return (
+                <div>
+                  <div className="text-[11px] text-slate-400 mb-3 leading-relaxed">
+                    كل محذوف يقعد هنا {TRASH_DAYS} يومًا ثم يمضي من نفسه. ترجّعه بضغطة، أو تمسحه الآن.
+                  </div>
+                  {!list.length ? (
+                    <div className={emptyCls}>الصندوق فاضي.</div>
+                  ) : (
+                    <>
+                      <div className="flex justify-end mb-3">
+                        <button className={btnDanger}
+                          onClick={() => askConfirm(`مسح ${list.length} سجلًا من الصندوق نهائيًا؟ ما لها رجعة بعدها.`, emptyTrash, 'نعم، امسح الكل')}>
+                          <Trash2 size={15} /> امسح الصندوق
+                        </button>
+                      </div>
+                      <div className="space-y-2.5">
+                        {list.map((t) => (
+                          <div key={t.id} className={cardCls + ' flex items-center gap-3'}>
+                            <span className="min-w-0 flex-1">
+                              <span className="block font-bold text-slate-800 text-sm truncate">{t.label}</span>
+                              <span className="block text-[11px] text-slate-400 mt-0.5">
+                                {kindLabel(t.kind)} · حذفه {t.by || 'غير معروف'} {agoText(t.at)}
+                              </span>
+                              <span className="block text-[11px] text-amber-600 mt-0.5">{leftText(t)}</span>
+                            </span>
+                            <button onClick={() => restoreTrash(t)}
+                              className="px-3 py-2 rounded-lg text-xs font-bold bg-brand-50 text-brand-700 shrink-0 flex items-center gap-1">
+                              <RotateCcw size={14} /> أرجعه
+                            </button>
+                            <button onClick={() => askConfirm(`مسح «${t.label}» نهائيًا؟`, () => removeFromTrash(t.id))}
+                              className="text-red-400 shrink-0"><Trash2 size={16} /></button>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
 
             {settingsTab === 'users' && (
               <div>
@@ -4919,7 +5456,7 @@ export default function App() {
            * المقارنة النصّية كانت تخفيه لأن «محمد» واقفة بينهما.
            */
           const list = data.students.filter((s) => {
-            if (statusFilter !== 'الكل' && studentState(data.programs, s.id) !== statusFilter) return false;
+            if (statusFilter !== 'الكل' && studentState(data.programs, s.id, stOpts) !== statusFilter) return false;
             if (!guardianSearch.trim()) return true;
             const g = data.guardians.find((x) => x.id === s.guardianId);
             if (nameMatches(s.name, guardianSearch)) return true;
@@ -4928,7 +5465,7 @@ export default function App() {
             if (q && normalizeName(s.school || '').includes(q)) return true;
             return false;
           }).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-          const counts = stateCounts(data.students, data.programs);
+          const counts = stateCounts(data.students, data.programs, stOpts);
 
           return (
             <div>
@@ -4984,7 +5521,7 @@ export default function App() {
                   {list.map((s) => {
                     const g = data.guardians.find((x) => x.id === s.guardianId);
                     const regs = historyOf(s.id);
-                    const state = studentState(data.programs, s.id);
+                    const state = studentState(data.programs, s.id, stOpts);
                     const wa = waLink(g?.phone, '');
                     return (
                       <div key={s.id} className="bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3">
@@ -5254,6 +5791,31 @@ export default function App() {
                   {s?.health && <span className="block text-amber-700 mt-0.5">⚠ {s.health}</span>}
                 </div>
                 <button type="button" className="text-xs text-slate-500 shrink-0" onClick={() => setForm({ ...form, studentId: null, unlinked: true })}>فك</button>
+              </div>
+            );
+          })()}
+
+          {/*
+            المتأخرات تُقال هنا لأن هنا لحظة القرار: هو واقف قدامك الآن.
+            بعد ما تسجّله وتمشي، ما عاد لك عليه سبيل إلا مكالمة.
+          */}
+          {(() => {
+            const late = arrearsOf(form.studentId, form.name, program?.id);
+            if (!late.length) return null;
+            return (
+              <div className="-mt-2 mb-4 bg-red-50 border border-red-200 rounded-xl px-3.5 py-3">
+                <div className="text-sm font-bold text-red-700">⚠️ عليه متأخرات: {arrearsText(late)}</div>
+                <div className="mt-1.5 space-y-0.5">
+                  {late.map((r, i) => (
+                    <div key={i} className="text-[11px] text-red-600">
+                      {r.label} — {r.known ? `${fmt(r.due)} ر.س` : 'بلا مبلغ مسجّل'}
+                      {r.program.termKey ? ` · ${seasonLabel(r.program.termKey)}` : ''}
+                    </div>
+                  ))}
+                </div>
+                <div className="text-[11px] text-red-500 mt-1.5 leading-relaxed">
+                  ما يمنع تسجيله — بس تعرفها الآن وهو قدامك، لا بعد سنة.
+                </div>
               </div>
             );
           })()}
@@ -5737,16 +6299,54 @@ export default function App() {
           <Field label="جوال ولي الأمر (اختياري)">
             <input className={inputCls} dir="ltr" value={form.phone || ''} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="05xxxxxxxx" />
           </Field>
-          <Field label="الورد المطلوب في الجلسة" hint="الحفظ وحده هو اللي يتراكم لو قصّر عنه — والمراجعة والتثبيت أرقام تُسجَّل وبس.">
+          <Field label="الورد المطلوب في الجلسة"
+            hint="المراجعة تُقال بالأجزاء، والتثبيت والحفظ بالأوجه. الحفظ وحده هو اللي يتراكم لو قصّر عنه.">
             <div className="grid grid-cols-3 gap-2">
               {PARTS.map((p) => (
                 <div key={p.id}>
-                  <div className="text-[11px] text-slate-400 text-center mb-1">{p.label}</div>
+                  <div className="text-[11px] text-slate-400 text-center mb-1">
+                    {p.label} {p.id === 'review' ? '' : <span className="text-slate-300">(أوجه)</span>}
+                  </div>
                   <input type="number" className={inputCls + ' text-center'} value={form[p.id] ?? ''}
                     onChange={(e) => setForm({ ...form, [p.id]: e.target.value })} placeholder="0" />
                 </div>
               ))}
             </div>
+            <UnitPick value={form.reviewUnit || 'parts'} onChange={(u) => setForm({ ...form, reviewUnit: u })}
+              className="mt-2" label="وحدة المراجعة" />
+          </Field>
+
+          {/*
+            حدّ المحفوظ: منه تُحسب دورة المراجعة كلها. الشيخ يكتبه مرة، ويزيده
+            كل ما أتمّ الطالب جزءًا — وما فيه مكان ثانٍ يدخله فيه.
+          */}
+          <Field label="محفوظ الطالب"
+            hint="من وين إلى وين يحفظ، وكم مقداره. منه يعرف التطبيق متى تكتمل دورة مراجعته.">
+            <div className="flex gap-2 mb-2">
+              <select className={inputCls} value={form.memFrom || ''} onChange={(e) => setForm({ ...form, memFrom: e.target.value })}>
+                <option value="">— من سورة —</option>
+                {SURAHS.map((x) => <option key={x} value={x}>{x}</option>)}
+              </select>
+              <select className={inputCls} value={form.memTo || ''} onChange={(e) => setForm({ ...form, memTo: e.target.value })}>
+                <option value="">— إلى سورة —</option>
+                {SURAHS.map((x) => <option key={x} value={x}>{x}</option>)}
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <input type="number" className={inputCls + ' text-center'} style={{ maxWidth: 96 }}
+                value={form.memAmount ?? ''} onChange={(e) => setForm({ ...form, memAmount: e.target.value })} placeholder="0" />
+              <UnitPick value={form.memUnit || 'parts'} onChange={(u) => setForm({ ...form, memUnit: u })} />
+            </div>
+            {Number(form.memAmount || 0) > 0 && (
+              <div className="text-[11px] text-brand-700 font-semibold mt-2">
+                = {partsText(toPages(form.memAmount, form.memUnit || 'parts'))}
+              </div>
+            )}
+          </Field>
+
+          <Field label="هدف الدورة (بالجلسات)" hint="في كم جلسة تبون يمرّ على محفوظه كاملًا؟ الجلسة أسبوعية.">
+            <input type="number" className={inputCls + ' text-center'} style={{ maxWidth: 96 }}
+              value={form.memTarget ?? 3} onChange={(e) => setForm({ ...form, memTarget: e.target.value })} placeholder="3" />
           </Field>
           {can('المستخدمون والصلاحيات') && (
             <Field label="الحساب المرتبط" hint="اربطه بحسابه في التطبيق فيشوف سجلّه هو فقط لما يدخل، بلا تعديل.">
@@ -5798,7 +6398,10 @@ export default function App() {
                   <div key={p.id} className="border border-slate-100 rounded-2xl p-4 mb-3">
                     <div className="flex items-center justify-between mb-3">
                       <Badge tone="brand">{p.label}</Badge>
-                      <span className="text-[11px] text-slate-400">المطلوب {st.wird?.[p.id] || 0}</span>
+                      {/* المراجعة تُقال بالأجزاء، فما نعرض للشيخ «60» وهو يقصد ثلاثة */}
+                      <span className="text-[11px] text-slate-400">
+                        المطلوب {p.id === 'review' ? partsText(st.wird?.review || 0) : (st.wird?.[p.id] || 0)}
+                      </span>
                     </div>
                     <div className="flex items-center gap-2 mb-2">
                       <span className="text-[11px] text-slate-400 w-8 shrink-0">من</span>
@@ -5818,11 +6421,27 @@ export default function App() {
                       <input type="number" className={inputCls + ' text-center'} style={{ maxWidth: 76 }}
                         value={val.toAya ?? ''} onChange={(e) => set({ toAya: e.target.value })} placeholder="آية" />
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-slate-400 shrink-0">عدد الأوجه</span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[11px] text-slate-400 shrink-0">{p.id === 'review' ? 'سمّع' : 'عدد الأوجه'}</span>
                       <input type="number" className={inputCls + ' text-center'} style={{ maxWidth: 90 }}
                         value={val.pages ?? ''} onChange={(e) => set({ pages: e.target.value })} placeholder="0" />
+                      {p.id === 'review' && (
+                        <UnitPick value={form.reviewUnit || 'parts'} onChange={(u) => setForm({ ...form, reviewUnit: u })} />
+                      )}
                     </div>
+                    {/* رقم واحد ووحدته — والباقي يُحسب: كم يعني بالأوجه، وكم قطع من دورته */}
+                    {p.id === 'review' && Number(val.pages || 0) > 0 && (() => {
+                      const said = toPages(val.pages, form.reviewUnit || 'parts');
+                      const total = memorizedPages(st);
+                      const cyc = reviewCycles(st, khayr.sessions.filter((x) => String(x.date || '') < String(khayrSession.date || '')));
+                      const pct = total ? Math.min(100, Math.round(((cyc.current.pages + said) / total) * 100)) : 0;
+                      return (
+                        <div className="mt-2 bg-green-50 text-green-700 rounded-lg px-3 py-2 text-[11.5px] font-bold">
+                          = {partsText(said)}
+                          {total > 0 && ` · قطع ${pct}% من دورته`}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })
@@ -6240,7 +6859,19 @@ export default function App() {
 
       {confirm && (
         <Modal title={confirm.onYes ? 'تأكيد' : 'ما ينفع'} onClose={() => setConfirm(null)}>
-          <div className="text-sm text-slate-600 mb-5">{confirm.text}</div>
+          <div className="text-sm text-slate-600 mb-4">{confirm.text}</div>
+          {/* الحذف ما له رجعة، فالتأكيد يذكر ما يميّز هذا السجل عن اللي جنبه */}
+          {confirm.detail?.warn && (
+            <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-3">
+              <div className="text-sm font-bold text-red-700">⚠️ {confirm.detail.warn}</div>
+              {confirm.detail.warnNote && <div className="text-xs text-red-500 mt-1 leading-relaxed">{confirm.detail.warnNote}</div>}
+            </div>
+          )}
+          {confirm.detail?.lines?.length > 0 && (
+            <div className="bg-slate-50 rounded-xl px-4 py-3 mb-4 space-y-1">
+              {confirm.detail.lines.map((l, i) => <div key={i} className="text-xs text-slate-600">{l}</div>)}
+            </div>
+          )}
           {confirm.onYes ? (
             <div className="flex gap-2">
               <button className={(confirm.yes === 'نعم، احذف' ? btnDanger : btnPrimary) + ' flex-1'}

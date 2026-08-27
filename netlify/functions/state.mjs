@@ -117,6 +117,12 @@ const strip = (data, me) => {
   const out = { ...data, users: (data?.users || []).map(({ password, ...rest }) => rest) };
   if (!allowed(me, 'أولياء الأمور')) { out.guardians = []; out.students = []; }
   if (!allowed(me, 'خيركم')) out.khayr = khayrOfStudent(data?.khayr, me);
+  /**
+   * صندوق المحذوفات يحمل سجلات كاملة — أهالي وطلابًا وتسميعًا. لو أرسلناه
+   * للكل، صار بابًا خلفيًا يتجاوز كل ما حجبناه فوق. فهو للمدير وحده،
+   * وهو صاحب الشاشة أصلًا.
+   */
+  if (!allowed(me, 'المستخدمون والصلاحيات')) out.trash = [];
   return out;
 };
 
@@ -146,6 +152,19 @@ const guard = (incoming, current, me) => {
 
   // الطالب يقرأ سجلّه ولا يكتبه — ولا يكتب فيه غير أهل الصلاحية
   if (!allowed(me, 'خيركم')) out.khayr = current?.khayr || { students: [], sessions: [] };
+
+  /**
+   * الصندوق: الموظف ما يشوفه (حجبناه في `strip`)، فلو قبلنا قائمته كما هي
+   * محا محذوفات المدير كلها بحفظة عادية. لكن حذفه هو يستحق الرجعة مثل غيره،
+   * فنقبل منه الإضافة وحدها: ما جاء جديدًا يُضاف، وما كان قائمًا يبقى.
+   * والإعدادات تُكتب من شاشة المدير، فتبقى له.
+   */
+  if (!allowed(me, 'المستخدمون والصلاحيات')) {
+    const kept = current?.trash || [];
+    const known = new Set(kept.map((t) => t.id));
+    out.trash = [...kept, ...(incoming?.trash || []).filter((t) => t?.id && !known.has(t.id))];
+    out.settings = current?.settings || {};
+  }
   return out;
 };
 
