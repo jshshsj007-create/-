@@ -20,6 +20,23 @@ export const writeTheme = (v) => {
   try { localStorage.setItem(KEY, THEMES.includes(v) ? v : 'light'); } catch { /* وضع خاص */ }
 };
 
+/**
+ * طمس أرقام فيض. مثل المظهر: قرار جهازٍ لا قرار فريق — واحد يفتح التطبيق
+ * والناس حوله، وزميله في مكتبه وحده. ويبقى الاختيار محفوظًا فما يعيده كل مرة.
+ */
+const MONEY_KEY = 'faid-hide-money';
+
+export const readHideMoney = () => {
+  try { return localStorage.getItem(MONEY_KEY) === '1'; } catch { return false; }
+};
+
+export const writeHideMoney = (on) => {
+  try {
+    if (on) localStorage.setItem(MONEY_KEY, '1');
+    else localStorage.removeItem(MONEY_KEY);
+  } catch { /* وضع خاص */ }
+};
+
 /** يلوّن الصفحة كلها، وشريط حالة الجوال معها حتى ما يبقى أبيض فوق شاشة داكنة. */
 export const applyTheme = (v) => {
   if (typeof document === 'undefined') return;

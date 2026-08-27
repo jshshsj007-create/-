@@ -98,6 +98,48 @@ export const sameName = (a, b) => {
   return Boolean(x) && x === y;
 };
 
+/**
+ * بحث الأسماء بالكلمات لا بالنص.
+ *
+ * لأن الأب يكتب اسم ابنه ثلاثيًا مرة وثنائيًا مرة: «عبدالعزيز محمد القاسم»
+ * و«عبدالعزيز القاسم». المقارنة النصّية ما تلقى الثاني في الأول لأن «محمد»
+ * واقفة بينهما — فيتكرّر الطالب ويتشقّق سجلّه: حضوره هنا ودفعه هناك.
+ *
+ * فنقارن كلمةً كلمة: كل كلمة كتبتها لازم تبدأ بها كلمةٌ من الاسم المحفوظ.
+ * والبداية لا المطابقة، عشان «عبدالعز» وأنت بعدك تكتب تلقى صاحبها.
+ */
+export const nameMatches = (stored, typed) => {
+  const want = nameTokens(typed);
+  if (!want.length) return true;
+  const have = nameTokens(stored);
+  return want.every((w) => have.some((h) => h.startsWith(w)));
+};
+
+/** كم كلمة تشترك فيها — الأقرب أولًا في قائمة الاقتراحات. */
+const shared = (a, b) => {
+  const x = nameTokens(a);
+  const y = nameTokens(b);
+  return x.filter((t) => y.some((o) => o === t)).length;
+};
+
+/**
+ * مرشّحو الاسم المكتوب، الأقرب أولًا.
+ *
+ * السخاء هنا مقصود: القائمة تُعرض ليختار منها الإنسان، ما هي دمجًا تلقائيًا.
+ * فالأولى أن نعرض من لا يلزم على أن نُخفي من يلزم — الإخفاء يصنع طالبًا مكرّرًا
+ * بصمت، والعرض الزائد سطرٌ يتجاوزه بعينه.
+ */
+export const searchStudents = (students, typed, limit = 6) => {
+  const first = firstName(typed);
+  if (!first) return [];
+  return (students || [])
+    .filter((s) => nameMatches(s.name, typed) || firstName(s.name) === first)
+    .map((s) => ({ s, score: shared(s.name, typed) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((x) => x.s);
+};
+
 /* ------------------------------ البحث والربط ------------------------------ */
 
 /** ولي الأمر صاحب هذا الجوال، إن وُجد. */

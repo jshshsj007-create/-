@@ -94,11 +94,6 @@ const isAdmin = (u) => u?.role === 'مدير';
 const allowed = (u, perm) => isAdmin(u) || (u?.permissions || []).includes(perm);
 
 /**
- * نسخة صالحة للإرسال لهذا المستخدم بالذات: بدون كلمات المرور أبدًا، وبدون
- * بيانات الأهالي لمن ما أُعطي صلاحيتها — جوالات وأعمار وملاحظات صحية لأطفال،
- * ما تنزل جهازًا ما يحتاجها.
- */
-/**
  * خيركم للطالب المربوط: سجلّه هو وحده. تسميع بقية الطلاب وملاحظات الشيخ فيهم
  * ما تنزل جهازه أصلًا — الحجب في الخادم لا في الواجهة.
  */
@@ -113,6 +108,11 @@ const khayrOfStudent = (khayr, me) => {
   };
 };
 
+/**
+ * نسخة صالحة للإرسال لهذا المستخدم بالذات: بدون كلمات المرور أبدًا، وبدون
+ * بيانات الأهالي لمن ما أُعطي صلاحيتها — جوالات وأعمار وملاحظات صحية لأطفال،
+ * ما تنزل جهازًا ما يحتاجها.
+ */
 const strip = (data, me) => {
   const out = { ...data, users: (data?.users || []).map(({ password, ...rest }) => rest) };
   if (!allowed(me, 'أولياء الأمور')) { out.guardians = []; out.students = []; }
@@ -192,7 +192,14 @@ export default async (req) => {
     const program = doc && programByToken(doc.data?.programs, body.token);
     // الرابط المقفل يرجّع رقم الفريق وحده: «تواصل معنا» بلا طريق كلام فاضي،
     // والرقم عام أصلًا يشوفه كل من فتح أي رابط تسجيل
-    if (!program) return json({ error: 'closed', wa: waIntl(doc?.data?.waNumber) }, 404);
+    if (!program) {
+      return json({
+        error: 'closed',
+        wa: waIntl(doc?.data?.waNumber),
+        closedTitle: doc?.data?.closedTitle || '',
+        closedText: doc?.data?.closedText || '',
+      }, 404);
+    }
     return json({ ok: true, view: publicView(doc.data, program) });
   }
 
@@ -273,7 +280,7 @@ export default async (req) => {
 
   // رفع صورة برنامج: ترجع معرّفًا، وهو وحده اللي ينحفظ في البيانات
   if (op === 'img_put') {
-    if (!allowed(me, 'البرامج')) return json({ error: 'forbidden' }, 403);
+    if (!allowed(me, 'البرامج') && !allowed(me, 'الإعداد (المسابقات)')) return json({ error: 'forbidden' }, 403);
     const raw = String(body.data || '');
     if (raw.length > IMG_CAP || !parseDataUrl(raw)) return json({ error: 'bad_image' }, 400);
     // المعرّف من المحتوى: نفس الصورة ما تتخزّن مرتين، والعنوان يبقى صالحًا للتخزين

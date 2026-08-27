@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
   normalizePhone, isValidPhone, formatPhone, normalizeName, sameName, firstName,
   findGuardianByPhone, studentsOf, findStudent, upsertRegistration, findDuplicates, mergeGuardians, mergeStudents, guardianNameFrom, dedupeByPhone, remapParticipants,
+  nameMatches, searchStudents,
 } from '../src/people.js';
 
 let passed = 0;
@@ -452,6 +453,54 @@ test('قاعدة فاضية ما تطيح', () => {
   assert.deepEqual(studentsOf(undefined, 'x'), []);
   assert.deepEqual(findDuplicates(undefined, undefined), []);
   assert.equal(findGuardianByPhone(undefined, '05'), null);
+});
+
+/* --------------------- البحث بالكلمات لا بالنص --------------------- */
+
+const roster = [
+  { id: 1, name: 'عبدالعزيز محمد القاسم' },
+  { id: 2, name: 'عبدالعزيز الحربي' },
+  { id: 3, name: 'مبارك سعد فهد' },
+  { id: 4, name: 'عبد العزيز بن ناصر الدوسري' },
+];
+
+test('الثنائي يلقى الثلاثي — والكلمة الوسطى ما تمنع', () => {
+  assert.ok(nameMatches('عبدالعزيز محمد القاسم', 'عبدالعزيز القاسم'));
+  assert.ok(nameMatches('محمد سعد فهد المطيري', 'محمد المطيري'));
+});
+
+test('وأول الكلمة يكفي وأنت بعدك تكتب', () => {
+  assert.ok(nameMatches('عبدالعزيز محمد القاسم', 'عبدالعز'));
+  assert.ok(nameMatches('عبدالعزيز محمد القاسم', 'عبدالعزيز القا'));
+});
+
+test('واسم ثانٍ ما يطابق', () => {
+  assert.equal(nameMatches('عبدالعزيز محمد القاسم', 'مبارك القاسم'), false);
+  assert.equal(nameMatches('عبدالعزيز محمد القاسم', 'عبدالعزيز الحربي'), false);
+});
+
+test('الاقتراحات: الثنائي يجيب صاحب الثلاثي، والأقرب أول', () => {
+  const hits = searchStudents(roster, 'عبدالعزيز القاسم');
+  assert.equal(hits[0].name, 'عبدالعزيز محمد القاسم', 'الأكثر اشتراكًا أولًا');
+  assert.ok(hits.some((h) => h.id === 2), 'وشريكه في الاسم الأول يُعرض ليُستبعد بالعين');
+  assert.ok(!hits.some((h) => h.id === 3), 'واللي ما يشاركه اسمه ما يُعرض');
+});
+
+test('والعكس كذلك: الثلاثي يجيب صاحب الثنائي', () => {
+  const only = [{ id: 9, name: 'عبدالعزيز القاسم' }];
+  const hits = searchStudents(only, 'عبدالعزيز محمد القاسم');
+  assert.equal(hits.length, 1, 'ما ينفتح له سجل ثانٍ');
+});
+
+test('«عبد الله» و«عبدالله» و«بن» و«ال» ما تفرّق', () => {
+  assert.ok(nameMatches('عبد العزيز بن ناصر الدوسري', 'عبدالعزيز الدوسري'));
+  assert.ok(nameMatches('عبدالله بن سعد', 'عبد الله سعد'));
+});
+
+test('بلا اسم ما فيه اقتراحات', () => {
+  assert.deepEqual(searchStudents(roster, ''), []);
+  assert.deepEqual(searchStudents(roster, '   '), []);
+  assert.deepEqual(searchStudents(undefined, 'محمد'), []);
 });
 
 console.log(`\n${passed} اختبار نجح.`);

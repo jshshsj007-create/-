@@ -7,7 +7,7 @@ import { Check, AlertTriangle, Plus, X, Copy, Upload, MessageCircle, Share2 } fr
 import { api } from './cloud.js';
 import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 import { isValidPhone } from './people.js';
-import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, daysAllowed, daysAreFixed, coversAll, RECEIPT_TYPES, RECEIPT_MAX, txt, TEXTS, waLink, fillTemplate, signupVars } from './signup.js';
+import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, daysAllowed, daysAreFixed, coversAll, RECEIPT_TYPES, RECEIPT_MAX, txt, TEXTS, CLOSED, waLink, fillTemplate, signupVars } from './signup.js';
 
 const input = 'w-full border border-slate-200 rounded-xl px-3.5 py-3 text-[15px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent';
 const inputBad = input.replace('border-slate-200', 'border-red-300');
@@ -24,6 +24,79 @@ function Shell({ children }) {
       </div>
       <div className="px-4 -mt-8 pb-16 max-w-lg mx-auto">{children}</div>
     </div>
+  );
+}
+
+/**
+ * معرض صور البرنامج.
+ *
+ * البوسترات عندنا طولية، والعرض بعرض الشاشة كان يخلّي الصورة الواحدة أطول من
+ * شاشتين — فولي الأمر يمرّ عليها ولا يشوف «سجّل ابنك» إلا بعد شاشتين. فالإطار
+ * ثابت الارتفاع والصورة تُحتوى داخله كاملة: ما تُقصّ منها زاوية، وما تبلع الصفحة.
+ * والتفاصيل الدقيقة تُقرأ بالضغط — تنفتح بملء الشاشة.
+ */
+function Gallery({ ids, alt }) {
+  const [at, setAt] = useState(0);
+  const [full, setFull] = useState(false);
+  const touch = React.useRef(null);
+  if (!ids.length) return null;
+
+  const go = (d) => setAt((i) => Math.min(ids.length - 1, Math.max(0, i + d)));
+  const swipe = {
+    onTouchStart: (e) => { touch.current = e.changedTouches[0].clientX; },
+    // في صفحة عربية الصورة التالية على اليسار، فالسحب لليسار يقدّم
+    onTouchEnd: (e) => {
+      const from = touch.current;
+      if (from == null) return;
+      const dx = e.changedTouches[0].clientX - from;
+      if (Math.abs(dx) > 40) go(dx > 0 ? -1 : 1);
+      touch.current = null;
+    },
+  };
+  const src = (id) => `/api/img/${id}`;
+
+  return (
+    <>
+      <div className="bg-white rounded-2xl p-2.5 mb-4">
+        <button type="button" onClick={() => setFull(true)} {...swipe}
+          className="w-full h-[46vh] min-h-[220px] max-h-[420px] rounded-xl bg-slate-100 flex items-center justify-center overflow-hidden">
+          <img src={src(ids[at])} alt={alt || ''} className="max-w-full max-h-full object-contain block" />
+        </button>
+
+        {ids.length > 1 && (
+          <div className="flex gap-2 mt-2.5 overflow-x-auto">
+            {ids.map((id, i) => (
+              <button key={id} type="button" onClick={() => setAt(i)}
+                className={`w-[70px] h-[52px] rounded-lg overflow-hidden shrink-0 border-2 bg-slate-100 ${i === at ? 'border-brand-700' : 'border-transparent'}`}>
+                <img src={src(id)} alt="" className={`w-full h-full block ${i === at ? 'object-contain' : 'object-cover'}`} />
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {full && (
+        <div className="fixed inset-0 z-50 bg-slate-900/95 flex flex-col items-center justify-center gap-4 p-4"
+          onClick={() => setFull(false)}>
+          <button type="button" aria-label="إغلاق"
+            className="absolute top-4 left-4 w-9 h-9 rounded-full bg-white/15 text-white flex items-center justify-center">
+            <X size={20} />
+          </button>
+          <img src={src(ids[at])} alt={alt || ''} onClick={(e) => e.stopPropagation()} {...swipe}
+            className="max-w-full max-h-[78vh] object-contain rounded" />
+          {ids.length > 1 && (
+            <>
+              <div className="text-slate-300 text-sm">{at + 1} من {ids.length}</div>
+              <div className="flex gap-1.5">
+                {ids.map((id, i) => (
+                  <span key={id} className={`w-1.5 h-1.5 rounded-full ${i === at ? 'bg-white' : 'bg-white/30'}`} />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -181,6 +254,7 @@ export default function SignupPage({ token }) {
   const [busy, setBusy] = useState(false);
   const [goWa, setGoWa] = useState('');
   const [closedWa, setClosedWa] = useState('');
+  const [closedTexts, setClosedTexts] = useState({ title: '', text: '' });
 
   /**
    * بعد التسجيل يشوف رقمه المرجعي أول، ثم يتحوّل للمحادثة. المهلة مقصودة:
@@ -206,6 +280,7 @@ export default function SignupPage({ token }) {
       } else if (r.status === 404) {
         // الرابط مقفل، لكن الخادم يرجّع رقم الفريق عشان يبقى له طريق يوصلنا منه
         setClosedWa(r.body?.wa || '');
+        setClosedTexts({ title: r.body?.closedTitle || '', text: r.body?.closedText || '' });
         setState('closed');
       } else setState('error');
     })();
@@ -238,8 +313,10 @@ export default function SignupPage({ token }) {
       <Shell>
         <div className="bg-white rounded-2xl p-8 text-center">
           <div className="text-4xl mb-3">🔒</div>
-          <div className="font-bold text-lg text-slate-800 mb-1">التسجيل مقفل</div>
-          <div className="text-sm text-slate-500 mb-5">هذا الرابط ما عاد شغّالًا. تواصل مع الفريق للحصول على رابط جديد.</div>
+          <div className="font-bold text-lg text-slate-800 mb-1">{closedTexts.title || CLOSED.title}</div>
+          {(closedTexts.text ?? CLOSED.text) !== '' && (
+            <div className="text-sm text-slate-500 mb-5 whitespace-pre-wrap">{closedTexts.text || CLOSED.text}</div>
+          )}
           <WaButton href={href}>{TEXTS.contact}</WaButton>
         </div>
       </Shell>
@@ -374,23 +451,8 @@ export default function SignupPage({ token }) {
 
   return (
     <Shell>
-      {view.poster && (
-        <div className="bg-white rounded-2xl p-2.5 mb-4">
-          <img src={`/api/img/${view.poster}`} alt={view.programName} className="w-full rounded-xl block" />
-        </div>
-      )}
-
       {/* الصور أولًا: يشوف قبل ما يقرأ. ثم النص، وفي ذيله زر المشاركة */}
-      {(view.gallery || []).length > 0 && (
-        <div className="bg-white rounded-2xl p-3 mb-4">
-          <div className="flex gap-2 overflow-x-auto">
-            {view.gallery.map((id) => (
-              <img key={id} src={`/api/img/${id}`} alt=""
-                className="w-28 h-20 object-cover rounded-xl shrink-0" />
-            ))}
-          </div>
-        </div>
-      )}
+      <Gallery ids={[view.poster, ...(view.gallery || [])].filter(Boolean)} alt={view.programName} />
 
       <div className="bg-white rounded-2xl p-5 mb-4">
         {txt(view, 'intro') && <div className="text-xs text-slate-400 mb-1">{txt(view, 'intro')}</div>}

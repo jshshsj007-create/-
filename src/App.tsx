@@ -3,19 +3,20 @@ import {
   Home, BookOpen, Wallet, Settings, Plus, X, Check, ChevronLeft, Trash2, Pencil,
   Users as UsersIcon, Calendar, TrendingUp, TrendingDown, Layers, ShieldCheck,
   Lock, Unlock, Trophy, LogOut, KeyRound, Plane, Search, AlertTriangle, Send,
-  RotateCcw, Wand2, CalendarDays, FileText, Copy, Clock, BookMarked,
+  RotateCcw, Wand2, CalendarDays, FileText, Copy, Clock, BookMarked, Eye, EyeOff,
 } from 'lucide-react';
 import { api, clone, merge3, readSession, writeSession, clearSession, readPending, writePending, clearPending } from './cloud.js';
 import {
   normalizePhone, isValidPhone, formatPhone, normalizeName, sameName,
   studentsOf, upsertRegistration, findDuplicates, mergeGuardians, mergeStudents, guardianNameFrom,
-  dedupeByPhone, remapParticipants,
+  dedupeByPhone, remapParticipants, nameMatches, searchStudents,
 } from './people.js';
-import { makeToken as makeSignupToken, TEXTS, waIntl, waLink, varNames, fieldsFor, dayLabel, DEFAULT_WA_TEMPLATE } from './signup.js';
+import { STATES, TONES, studentState, stateCounts } from './status.js';
+import { makeToken as makeSignupToken, TEXTS, CLOSED, waIntl, waLink, varNames, fieldsFor, dayLabel, DEFAULT_WA_TEMPLATE } from './signup.js';
 import { readImage, POSTER, GALLERY } from './img.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
 import { DAY_NAMES, hourLabel, scheduleOf } from './schedule.js';
-import { readTheme, writeTheme, applyTheme } from './theme.js';
+import { readTheme, writeTheme, applyTheme, readHideMoney, writeHideMoney } from './theme.js';
 import {
   SURAHS, PARTS, emptyWird, rangeText, carryAfter, studentTotals,
   studentSessions, studentOfUser, khayrRows, khayrReportText,
@@ -25,7 +26,7 @@ import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v5.7';
+const APP_VERSION = 'v5.8';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'معلّم خيركم', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -1014,6 +1015,10 @@ export default function App() {
   const [selectedCompId, setSelectedCompId] = useState(null);
   const [selectedGuardianId, setSelectedGuardianId] = useState(null);
   const [guardianSearch, setGuardianSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('الكل');  // تصفية المشتركين بحالتهم
+  const [tripScope, setTripScope] = useState('term');       // سفرات الموسم أو كلها
+  const [hideMoney, setHideMoney] = useState(readHideMoney);  // طمس أرقام فيض على هذا الجهاز
+  useEffect(() => { writeHideMoney(hideMoney); }, [hideMoney]);
   const [selectedKhayrSessionId, setSelectedKhayrSessionId] = useState(null);
   const [selectedKhayrStudentId, setSelectedKhayrStudentId] = useState(null);
   const [khayrTab, setKhayrTab] = useState('report');   // التقرير · الجلسات · الطلاب
@@ -1295,6 +1300,9 @@ export default function App() {
   const program = data.programs.find((p) => p.id === selectedProgramId);
   const week = program?.weeks.find((w) => w.id === selectedWeekId);
   const trip = data.trips.find((t) => t.id === selectedTripId);
+  /** السفرات في النطاق المعروض: موسمك، أو كلها، أو اللي بلا موسم عشان تحدّده. */
+  const tripsInScope = data.trips.filter((t) => (tripScope === 'all' ? true
+    : tripScope === 'none' ? !t.termKey : t.termKey === termKey));
   const competition = data.competitions.find((c) => c.id === selectedCompId);
   const isGrouped = program?.type === 'مجمع';
 
@@ -1312,6 +1320,16 @@ export default function App() {
    * وإلا صار الادخار يبان كأنه صرف.
    */
   const isInvestmentMove = (a) => a.kind === 'investment';
+  /**
+   * رصيد افتتاحي: ما كان في الحساب أو في الاستثمار قبل التطبيق.
+   *
+   * لو أدخلناه إيرادًا عاديًا، قال تقرير الترم إنك حصّلت ما لم تحصّله، وبقيت
+   * مقارنة المواسم غلطًا للأبد. فهو يزيد الرصيد ولا يدخل حساب موسم.
+   */
+  const isOpening = (a) => a.kind === 'opening' || a.kind === 'openInvest';
+
+  /** مبلغ للعرض: يُطمس لو المستخدم أخفى الأرقام، وتبقى العمليات تحت مقروءة. */
+  const riyal = (n) => (hideMoney ? '••••' : `${fmt(n)} ر.س`);
 
   /**
    * الرصيد لا موسم له: الفلوس اللي في الحساب موجودة مهما بدّلت الترم، فيُحسب
@@ -1319,20 +1337,23 @@ export default function App() {
    * الموسم؟» — فيُحسبان من عمليات الموسم وحده.
    */
   const statsOf = (list) => data.faidAccounts.map((acc) => {
-    let rev = 0, exp = 0, moved = 0;
+    let rev = 0, exp = 0, moved = 0, opening = 0;
     list.filter((a) => a.accountId === acc.id).forEach((a) => {
       const amt = Number(a.amount || 0);
       if (isInvestmentMove(a)) { moved += a.type === 'إيراد' ? -amt : amt; return; }
+      // الرصيد الافتتاحي سابقٌ للتطبيق كله: يزيد الرصيد ولا يُحسب إيرادًا لأحد
+      if (isOpening(a)) { opening += amt; return; }
       if (a.type === 'إيراد') rev += amt; else exp += amt;
     });
     // `moved` موجب = طلع للاستثمار، وسالب = رجع منه
-    return { ...acc, revenue: rev, expenses: exp, invested: moved, balance: rev - exp - moved };
+    return { ...acc, revenue: rev, expenses: exp, invested: moved, opening, balance: opening + rev - exp - moved };
   });
 
   /** عمليات بلا موسم: قديمة أُدخلت قبل ما يصير للعملية موسم. */
-  const unTermed = data.faidAdjustments.filter((a) => !a.termKey);
+  const unTermed = data.faidAdjustments.filter((a) => !a.termKey && !isOpening(a));
   /** نطاق الشاشة: موسمك، أو كل المواسم، أو اللي بلا موسم عشان تحدّده. */
-  const faidInScope = (a) => (faidScope === 'all' ? true
+  const faidInScope = (a) => (isOpening(a) ? faidScope === 'all'
+    : faidScope === 'all' ? true
     : faidScope === 'none' ? !a.termKey : a.termKey === termKey);
   const scopedAdjustments = data.faidAdjustments.filter(faidInScope);
   const scopeName = faidScope === 'all' ? 'كل المواسم'
@@ -1344,8 +1365,11 @@ export default function App() {
   const totalExpenses = scopedStats.reduce((s, a) => s + a.expenses, 0);
   /** رصيد الفريق المتاح — ما يشمل المحوَّل للاستثمار، لأنه خرج من الحسابات. */
   const balance = accountStats.reduce((s, a) => s + a.balance, 0);
-  /** رصيد الاستثمار: مجموع اللي دخله ناقص اللي رجع منه. */
-  const investmentBalance = accountStats.reduce((s, a) => s + a.invested, 0);
+  /** رصيد الاستثمار: افتتاحيّه، ومجموع اللي دخله ناقص اللي رجع منه. */
+  const openInvest = data.faidAdjustments
+    .filter((a) => a.kind === 'openInvest')
+    .reduce((n, a) => n + Number(a.amount || 0), 0);
+  const investmentBalance = openInvest + accountStats.reduce((s, a) => s + a.invested, 0);
 
   /** العمليات اللي نقدر نرجّعها لموسمها من تاريخها، بلا تخمين مشكوك فيه. */
   const guessableFaid = (() => {
@@ -1448,18 +1472,38 @@ export default function App() {
    * للمسجّل من الرابط بالضبط، فما يصير عندنا قاعدتان بطريقتين.
    * يرجّع { next, studentId }: `next` بيانات فيها ولي الأمر وابنه، أو null لو ما فيه رقم.
    */
+  /**
+   * كل من يُضاف يدخل قاعدة المشتركين — بجوال أو بلا.
+   *
+   * كان الجوال شرط الدخول، فاللي تضيفه بلا جوال يحضر ويدفع وما له سجل: ما
+   * يطلع في المشتركين، ولا تجيه حالة، ولا يتجمّع تاريخه عبر المواسم. والجوال
+   * تفصيلٌ يُكمَّل بعدين، لا بوّابة.
+   */
   const linkByPhone = (base) => {
+    if (form.studentId) return { next: base, studentId: form.studentId };
+    // «فك» قرارٌ صريح من المستخدم، فما نلتف عليه بسجلّ جديد
+    if (form.unlinked) return { next: base, studentId: null };
+    const name = (form.name || '').trim();
+    if (!name) return { next: base, studentId: null };
     const phone = (form.gPhone || '').trim();
-    if (!phone || !isValidPhone(phone)) return { next: base, studentId: form.studentId };
-    const res = upsertRegistration(
-      { guardians: base.guardians, students: base.students, newId: uid },
-      { guardian: { name: '', phone }, kids: [{ name: form.name.trim() }] },
-      Date.now(),
-    );
-    return {
-      next: { ...base, guardians: res.guardians, students: res.students },
-      studentId: res.linked[0]?.student?.id || form.studentId,
-    };
+
+    if (phone && isValidPhone(phone)) {
+      const res = upsertRegistration(
+        { guardians: base.guardians, students: base.students, newId: uid },
+        { guardian: { name: '', phone }, kids: [{ name }] },
+        Date.now(),
+      );
+      return {
+        next: { ...base, guardians: res.guardians, students: res.students },
+        studentId: res.linked[0]?.student?.id || null,
+      };
+    }
+
+    // بلا جوال: سجلّ طالب بلا ولي أمر، ويُربط بأهله يوم يُعرف رقمهم
+    const existing = (base.students || []).find((s) => !s.guardianId && sameName(s.name, name));
+    if (existing) return { next: base, studentId: existing.id };
+    const created = { id: uid(), guardianId: '', name, createdAt: Date.now() };
+    return { next: { ...base, students: [...(base.students || []), created] }, studentId: created.id };
   };
 
   /** نموذج تعديل المشارك، وفيه جوال ولي أمره إن كان مربوطًا بسجلّه. */
@@ -1676,6 +1720,26 @@ export default function App() {
     closeModal();
   };
 
+  /**
+   * تسجيل رصيد افتتاحي: للحساب أو للاستثمار. بلا موسم، وبلا احتساب في الإيراد.
+   * يُسجَّل مرة وحدة وأنت تجهّز التطبيق على ما هو قائم عندك فعلًا.
+   */
+  const addOpening = () => {
+    const amount = Number(form.amount || 0);
+    const toInvest = form.target === 'invest';
+    if (!(amount > 0)) { setForm({ ...form, error: 'اكتب المبلغ' }); return; }
+    if (!toInvest && !form.accountId) { setForm({ ...form, error: 'اختر الحساب' }); return; }
+    save({
+      ...data,
+      faidAdjustments: [...data.faidAdjustments, {
+        id: uid(), accountId: toInvest ? '' : form.accountId, date: '', termKey: '',
+        type: 'إيراد', amount, kind: toInvest ? 'openInvest' : 'opening',
+        note: (form.note || '').trim() || 'رصيد افتتاحي',
+      }],
+    });
+    closeModal();
+  };
+
   /** القيم المستخدمة سابقًا تُقترح عند الكتابة عشان الأسماء تتوحّد. */
   const faidValues = (key) => [...new Set(data.faidAdjustments.map((a) => (a[key] || '').trim()).filter(Boolean))].sort();
 
@@ -1841,39 +1905,39 @@ export default function App() {
   };
   const removeTool = (id) => setForm({ ...form, tools: (form.tools || []).filter((t) => t.id !== id) });
 
-  /** الصور تُصغَّر قبل الحفظ لأن التخزين محلي ومحدود. */
+  /**
+   * صور المسابقات تروح للخادم مثل صور البرامج، وما ينحفظ في البيانات إلا معرّفها.
+   *
+   * كانت تنحفظ داخل ملف البيانات نفسه، فتثقله وتقرّبه من سقف الطلب — والصورة
+   * الواحدة تعادل آلاف الأسماء. وبعد الآن ما فيه سقف عمليًا مهما كثرت الصور.
+   */
   const addPhotos = async (files) => {
-    const shrink = (file) => new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const img = new Image();
-        img.onload = () => {
-          const max = 1000;
-          const scale = Math.min(1, max / Math.max(img.width, img.height));
-          const c = document.createElement('canvas');
-          c.width = Math.round(img.width * scale);
-          c.height = Math.round(img.height * scale);
-          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-          resolve(c.toDataURL('image/jpeg', 0.72));
-        };
-        img.onerror = () => resolve(null);
-        img.src = reader.result;
-      };
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(file);
-    });
+    setForm((f) => ({ ...f, imgBusy: true, imgError: '' }));
     const added = [];
+    let failed = 0;
     for (const f of Array.from(files).slice(0, 6)) {
-      const src = await shrink(f);
-      if (src) added.push({ id: uid(), src });
+      try {
+        const dataUrl = await readImage(f, GALLERY);
+        const r = await api('img_put', { token: sess.current.token, data: dataUrl });
+        if (r.status !== 200 || !r.body?.id) throw new Error('ما وصلت الصورة');
+        added.push({ id: uid(), key: r.body.id });
+      } catch { failed += 1; }
     }
-    setForm((prev) => ({ ...prev, photos: [...(prev.photos || []), ...added] }));
+    setForm((prev) => ({
+      ...prev,
+      photos: [...(prev.photos || []), ...added],
+      imgBusy: false,
+      imgError: failed ? `ما قدرنا نرفع ${failed} صورة. جرّب مرة ثانية.` : '',
+    }));
   };
+
+  /** مصدر عرض صورة المسابقة: الجديدة بمعرّفها، والقديمة بما انحفظ داخل الملف. */
+  const photoSrc = (ph) => (ph.key ? `/api/img/${ph.key}` : ph.src);
   const removePhoto = (id) => setForm({ ...form, photos: (form.photos || []).filter((p) => p.id !== id) });
 
   const addTrip = () => {
     if (!form.name) return;
-    save({ ...data, trips: [...data.trips, { id: uid(), name: form.name.trim(), date: form.date || '', incomeItems: [], expenseItems: [] }] });
+    save({ ...data, trips: [...data.trips, { id: uid(), termKey, name: form.name.trim(), date: form.date || '', incomeItems: [], expenseItems: [] }] });
     closeModal();
   };
   const patchTrip = (patch) => save({ ...data, trips: data.trips.map((t) => (t.id !== selectedTripId ? t : { ...t, ...patch })) });
@@ -2386,9 +2450,14 @@ export default function App() {
   /** اللي ما دفعوا: في برامج الموسم، وعبر المواسم كلها لو طلبها. */
   const termUnpaid = unpaidRows(termPrograms);
   const allUnpaid = unpaidRows(visiblePrograms);
-  /** أيام المستخدم المحدود عبر كل البرامج — عشان يوصل لها من الرئيسية مباشرة. */
-  const myWeeks = !limitedScope ? [] : termPrograms.flatMap((p) =>
-    p.weeks.filter((w) => canSeeWeek(p.id, w.id)).map((w) => ({ program: p, week: w })));
+  /**
+   * الأيام المفتوحة اللي يملكها: هي شغل اليوم، فتتصدّر الرئيسية.
+   * ما نسأل «وش تاريخ اليوم؟» — تاريخ اليوم يُكتب يدويًا وأغلبه فاضٍ، والأصدق
+   * أن نعرض اللي فتحه هو بنفسه.
+   */
+  const myOpenDays = !canAttend ? [] : termPrograms.flatMap((p) =>
+    p.weeks.filter((w) => w.status === 'مفتوح' && canSeeWeek(p.id, w.id))
+      .map((w) => ({ program: p, week: w })));
   const canTransfer = can('فيض - الإيرادات والمصروفات') && canMoney;
   /**
    * جوالات الأهالي وأعمار الأطفال وملاحظاتهم الصحية بيانات حسّاسة، فلها صلاحية
@@ -2757,15 +2826,27 @@ export default function App() {
               </div>
             </div>
             {/*
-              الأرقام تخص من يملك أقسامها: مسؤول المسابقات ما له علاقة بعدد
-              برامجك ولا أيامك المفتوحة، فما نعرضها له أصلًا.
+              الرئيسية للشغل لا للأرقام: الرصيد رقم حسّاس يبين لكل من يطالع
+              جوالك، ومكانه داخل فيض. وعدّاد البرامج انتقل لصفحة البرامج.
+              اللي يبقى هنا هو اللي تحتاج تفتحه اليوم.
             */}
-            {(canAttend || can('فيض - الإيرادات والمصروفات')) && (
-              <div className="grid grid-cols-2 gap-3 mb-5">
-                {canAttend && <MiniStat label="برامج الترم" value={termPrograms.length} icon={BookOpen} />}
-                {can('فيض - الإيرادات والمصروفات')
-                  ? <MiniStat label="رصيد فيض" value={fmt(balance)} icon={Wallet} tone={balance >= 0 ? 'green' : 'red'} />
-                  : canAttend && <MiniStat label="أيام مفتوحة" value={termPrograms.flatMap((p) => p.weeks).filter((w) => w.status === 'مفتوح').length} icon={Calendar} />}
+            {canAttend && myOpenDays.length > 0 && (
+              <div className="mb-5">
+                <div className="text-sm font-bold text-slate-700 mb-2">أيام مفتوحة ({myOpenDays.length})</div>
+                <div className="space-y-2.5">
+                  {myOpenDays.slice(0, 4).map(({ program: pr, week: w }) => (
+                    <button key={w.id}
+                      onClick={() => { setSelectedProgramId(pr.id); setSelectedWeekId(w.id); setWeekTab(pr.type === 'مجمع' ? 'attendance' : 'overview'); goto('weekDetail'); }}
+                      className="w-full bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3 text-right hover:shadow-md transition-shadow">
+                      <span className="w-11 h-11 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center shrink-0"><Calendar size={20} /></span>
+                      <span className="flex-1 min-w-0">
+                        <span className="block font-bold text-slate-800">{w.name}</span>
+                        <span className="block text-xs text-slate-400 mt-0.5">{pr.name}{w.date ? ` · ${w.date}` : ''}</span>
+                      </span>
+                      <ChevronLeft size={18} className="text-slate-300 shrink-0" />
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
             {/* تسجيلات الرابط ما تنفع تنتظر بصمت داخل برنامج ما فتحته */}
@@ -2798,25 +2879,6 @@ export default function App() {
               );
             })()}
 
-            {limitedScope && myWeeks.length > 0 && (
-              <div className="mb-5">
-                <div className="text-sm font-bold text-slate-700 mb-2">أيامك</div>
-                <div className="space-y-2.5">
-                  {myWeeks.map(({ program: pr, week: w }) => (
-                    <button key={w.id}
-                      onClick={() => { setSelectedProgramId(pr.id); setSelectedWeekId(w.id); setWeekTab(pr.type === 'مجمع' ? 'attendance' : 'overview'); goto('weekDetail'); }}
-                      className="w-full bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3 text-right hover:shadow-md transition-shadow">
-                      <span className="w-11 h-11 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center shrink-0"><Calendar size={20} /></span>
-                      <span className="flex-1 min-w-0">
-                        <span className="block font-bold text-slate-800">{w.name}</span>
-                        <span className="block text-xs text-slate-400 mt-0.5">{pr.name}{w.date ? ` · ${w.date}` : ''}</span>
-                      </span>
-                      <ChevronLeft size={18} className="text-slate-300 shrink-0" />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
             <div className="space-y-3">
               {sections.map((c) => (
                 <PickCard key={c.id} icon={c.icon} title={c.label} note={c.desc} chevron onClick={() => goto(c.id)} />
@@ -2828,6 +2890,13 @@ export default function App() {
         {/* ------------------------------ قائمة البرامج ------------------------------ */}
         {view === 'programs' && (
           <div>
+            {/* العدّادات للمدير وحده: الموظف يشتغل على يومه، لا على حجم الموسم */}
+            {isAdmin && (
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <MiniStat label="برامج الترم" value={termPrograms.length} icon={BookOpen} />
+                <MiniStat label="أيام الترم" value={termPrograms.reduce((n, p) => n + (p.weeks || []).length, 0)} icon={Calendar} />
+              </div>
+            )}
             <div className="flex items-center justify-between mb-5 gap-3">
               <h2 className="text-xl font-extrabold text-slate-800">البرامج</h2>
               {can('البرامج') && <button className={btnPrimary} onClick={() => { setForm({}); setModal('pickProgramType'); }}><Plus size={16} /> برنامج جديد</button>}
@@ -2992,7 +3061,7 @@ export default function App() {
                 {can('البرامج') && (
                   <>
                     <button onClick={() => { setForm({ name: program.name, dayPrice: program.dayPrice || '' }); setModal('editProgram'); }} className="text-slate-300 hover:text-brand-600"><Pencil size={15} /></button>
-                    <button onClick={() => askConfirm(`حذف برنامج «${program.name}» وكل أيامه وبياناته؟`, () => removeProgram(program.id))} className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>
+                    {isAdmin && <button onClick={() => askConfirm(`حذف برنامج «${program.name}» وكل أيامه وبياناته؟`, () => removeProgram(program.id))} className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>}
                   </>
                 )}
               </div>
@@ -3094,7 +3163,7 @@ export default function App() {
                     weeks={program.weeks}
                     locked={ledgerLocked}
                     onEdit={canMoney ? (p) => { setForm(participantForm(p, program.weeks)); setModal('editParticipant'); } : null}
-                    onRemove={canMoney ? (p) => askConfirm(`حذف المشترك «${p.name}»؟`, () => removeParticipant(p.id)) : null}
+                    onRemove={isAdmin ? (p) => askConfirm(`حذف المشترك «${p.name}»؟`, () => removeParticipant(p.id)) : null}
                   />
                 )}
                 <div className="mt-3 text-sm text-slate-500 flex flex-wrap items-center justify-between gap-2 px-1">
@@ -3226,20 +3295,34 @@ export default function App() {
                             <Field label="الباقات" hint="سعر مقطوع لعدد أيام. تنعرض جنب اليومي، وولي الأمر يختار وحدة.">
                             {(s.packages || []).length > 0 && (
                               <div className="space-y-2 mb-3">
-                                {s.packages.map((pk) => (
-                                  <div key={pk.id} className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2.5">
+                                {s.packages.map((pk) => {
+                                  const off = pk.hidden === true;
+                                  return (
+                                  <div key={pk.id} className={`flex items-center justify-between rounded-lg px-3 py-2.5 ${off ? 'bg-slate-50/60' : 'bg-slate-50'}`}>
                                     <div className="min-w-0">
-                                      <div className="text-sm font-semibold text-slate-800 truncate">{pk.name}</div>
+                                      <div className={`text-sm font-semibold truncate ${off ? 'text-slate-400' : 'text-slate-800'}`}>{pk.name}</div>
                                       <div className="text-[11px] text-slate-400">
                                         {fmt(pk.price)} ر.س · {Number(pk.dayCount) ? `${pk.dayCount} أيام` : 'كل الأيام المتاحة'}
+                                        {off && ' · مخفية'}
                                       </div>
                                     </div>
-                                    <button className="text-red-400 p-1 shrink-0"
-                                      onClick={() => patchSignup({ packages: s.packages.filter((x) => x.id !== pk.id) })}>
-                                      <Trash2 size={15} />
-                                    </button>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      {/*
+                                        بعد ما يمشي البرنامج أسبوعين، «الموسم كامل» ظلمٌ لمن جاء
+                                        اليوم الثاني — تخفيها وتبقى محفوظة للموسم الجاي.
+                                      */}
+                                      <button className="text-slate-400 p-1" title={off ? 'أظهرها لولي الأمر' : 'أخفها عن ولي الأمر'}
+                                        onClick={() => patchSignup({ packages: s.packages.map((x) => (x.id !== pk.id ? x : { ...x, hidden: !off })) })}>
+                                        {off ? <EyeOff size={15} /> : <Eye size={15} />}
+                                      </button>
+                                      <button className="text-red-400 p-1"
+                                        onClick={() => patchSignup({ packages: s.packages.filter((x) => x.id !== pk.id) })}>
+                                        <Trash2 size={15} />
+                                      </button>
+                                    </div>
                                   </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                             )}
                             <button className={btnGhost + ' w-full border border-dashed border-slate-300'}
@@ -3422,6 +3505,23 @@ export default function App() {
                           )}
                         </Field>
 
+                        <div className="border-t border-slate-100 mt-4 pt-4">
+                          <div className="text-xs text-slate-400 mb-3 leading-6">
+                            نصوص صفحة الرابط المنتهي. الرابط المنتهي ما عاد يدلّ على برنامج،
+                            فهي واحدة لكل الروابط.
+                          </div>
+                          <Field label="عنوان صفحة «التسجيل مقفل»">
+                            <input className={inputCls} value={data.closedTitle ?? ''}
+                              onChange={(e) => saveTyping({ ...data, closedTitle: e.target.value })}
+                              placeholder={CLOSED.title} />
+                          </Field>
+                          <Field label="الشرح تحته" hint="فرّغه لو ما تبي شرحًا.">
+                            <textarea className={inputCls} rows={2} value={data.closedText ?? ''}
+                              onChange={(e) => saveTyping({ ...data, closedText: e.target.value })}
+                              placeholder={CLOSED.text} />
+                          </Field>
+                        </div>
+
                         <Toggle label="زر «تواصل معنا» في صفحة التسجيل" on={s.waContact !== false}
                           onChange={(v) => patchSignup({ waContact: v })} />
                         <Toggle label="التحويل لواتساب بعد التسجيل"
@@ -3556,7 +3656,7 @@ export default function App() {
                 {can('البرامج') && (
                   <>
                     <button onClick={() => { setForm({ name: week.name, date: week.date || '' }); setModal('editWeek'); }} className="text-slate-300 hover:text-brand-600"><Pencil size={15} /></button>
-                    <button onClick={() => askConfirm(`حذف «${week.name}» وكل بياناته؟`, () => removeWeek(week.id))} className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>
+                    {isAdmin && <button onClick={() => askConfirm(`حذف «${week.name}» وكل بياناته؟`, () => removeWeek(week.id))} className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>}
                   </>
                 )}
               </div>
@@ -3741,7 +3841,7 @@ export default function App() {
                         onSetAttendance={(p, s) => setAttendance(p.id, s)}
                         locked={ledgerLocked}
                         onEdit={canMoney ? (p) => { setForm(participantForm(p)); setModal('editParticipant'); } : null}
-                        onRemove={canMoney ? (p) => askConfirm(`حذف «${p.name}»؟`, () => removeParticipant(p.id)) : null}
+                        onRemove={isAdmin ? (p) => askConfirm(`حذف «${p.name}»؟`, () => removeParticipant(p.id)) : null}
                       />
                     )}
                     {/* الانتظار: تحت قائمة الحضور مباشرة، في نفس الأسبوع اللي سجّلوا فيه */}
@@ -3766,7 +3866,14 @@ export default function App() {
         {/* --------------------------------- فيض --------------------------------- */}
         {view === 'faid' && (
           <div>
-            <h2 className="text-lg sm:text-xl font-bold text-slate-800 mb-1">فيض</h2>
+            <div className="flex items-start justify-between gap-3 mb-1">
+              <h2 className="text-lg sm:text-xl font-bold text-slate-800">فيض</h2>
+              {/* الأرقام تبين لكل من يطالع جوالك، فتنطمس بضغطة وتبقى العمليات */}
+              <button onClick={() => setHideMoney(!hideMoney)} title={hideMoney ? 'أظهر الأرقام' : 'أخفِ الأرقام'}
+                className="shrink-0 text-slate-400 hover:text-brand-700 p-1">
+                {hideMoney ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
             <div className="text-sm text-slate-400 mb-4">رصيد الفريق — يتغيّر فقط بالعمليات اليدوية أو بترحيل نصيب فيض من البرامج.</div>
 
             {/* الرصيد والاستثمار ما لهما موسم، والإيراد والمصروف يتبعان هذا الاختيار */}
@@ -3781,9 +3888,9 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-              <StatCard label="الرصيد الحالي — كل المواسم" value={fmt(balance) + ' ر.س'} icon={Wallet} tone={balance >= 0 ? 'green' : 'red'} />
-              <StatCard label={`إيراد ${scopeName}`} value={fmt(totalRevenue) + ' ر.س'} icon={TrendingUp} tone="brand" />
-              <StatCard label={`مصروفات ${scopeName}`} value={fmt(totalExpenses) + ' ر.س'} icon={TrendingDown} tone="red" />
+              <StatCard label="الرصيد الحالي — كل المواسم" value={riyal(balance)} icon={Wallet} tone={balance >= 0 ? 'green' : 'red'} />
+              <StatCard label={`إيراد ${scopeName}`} value={riyal(totalRevenue)} icon={TrendingUp} tone="brand" />
+              <StatCard label={`مصروفات ${scopeName}`} value={riyal(totalExpenses)} icon={TrendingDown} tone="red" />
             </div>
 
             {/*
@@ -3822,7 +3929,7 @@ export default function App() {
                   <div className="text-sm text-slate-500 mb-1 flex items-center gap-1.5">
                     <Layers size={15} className="text-brand-500" /> الاستثمار
                   </div>
-                  <div className="text-2xl font-extrabold text-brand-700">{fmt(investmentBalance)} ر.س</div>
+                  <div className="text-2xl font-extrabold text-brand-700">{riyal(investmentBalance)}</div>
                   <div className="text-[11px] text-slate-400 mt-1">محجوز على أمد بعيد — ما يُحسب ضمن رصيد الفريق.</div>
                 </div>
                 {canTransfer && (
@@ -3837,6 +3944,10 @@ export default function App() {
                         سحب منه
                       </button>
                     )}
+                    <button className="bg-slate-100 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg whitespace-nowrap"
+                      onClick={() => { setForm({ target: 'invest' }); setModal('opening'); }}>
+                      + رصيد افتتاحي
+                    </button>
                   </div>
                 )}
               </div>
@@ -3847,7 +3958,7 @@ export default function App() {
                     {accountStats.filter((a) => a.invested !== 0).map((a) => (
                       <div key={a.id} className="flex items-center justify-between text-xs">
                         <span className="text-slate-600">{a.name}</span>
-                        <span className="text-slate-800 font-semibold">{fmt(a.invested)} ر.س</span>
+                        <span className="text-slate-800 font-semibold">{riyal(a.invested)}</span>
                       </div>
                     ))}
                   </div>
@@ -3855,9 +3966,15 @@ export default function App() {
               )}
             </div>
 
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
               <h3 className="font-bold text-slate-700">الحسابات</h3>
-              <button onClick={() => { setForm({ value: '' }); setModal('addFaidAccount'); }} className="text-xs text-brand-600 flex items-center gap-1"><Plus size={14} /> حساب جديد</button>
+              <div className="flex items-center gap-3">
+                {canTransfer && (
+                  <button onClick={() => { setForm({ target: 'account', accountId: data.faidAccounts[0]?.id }); setModal('opening'); }}
+                    className="text-xs text-slate-500 flex items-center gap-1"><Plus size={14} /> رصيد افتتاحي</button>
+                )}
+                <button onClick={() => { setForm({ value: '' }); setModal('addFaidAccount'); }} className="text-xs text-brand-600 flex items-center gap-1"><Plus size={14} /> حساب جديد</button>
+              </div>
             </div>
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
               {accountStats.map((a) => {
@@ -3866,8 +3983,8 @@ export default function App() {
                 return (
                 <div key={a.id} className={cardCls + ' relative group'}>
                   <div className="text-sm text-slate-500 mb-1">{a.name}</div>
-                  <div className={`text-lg sm:text-xl font-bold ${a.balance >= 0 ? 'text-slate-800' : 'text-red-600'}`}>{fmt(a.balance)} ر.س</div>
-                  <div className="text-[11px] text-slate-400 mt-1">وارد {fmt(s.revenue)} · صادر {fmt(s.expenses)}</div>
+                  <div className={`text-lg sm:text-xl font-bold ${a.balance >= 0 ? 'text-slate-800' : 'text-red-600'}`}>{riyal(a.balance)}</div>
+                  <div className="text-[11px] text-slate-400 mt-1">{hideMoney ? '••• · •••' : `وارد ${fmt(s.revenue)} · صادر ${fmt(s.expenses)}`}</div>
                   {isAdmin && (
                     <button className="text-[11px] text-brand-600 mt-2 block"
                       onClick={() => { setForm({ id: a.id, transferInfo: a.transferInfo || '', publicName: a.publicName || '', needsReceipt: !!a.needsReceipt, name: a.name }); setModal('transferInfo'); }}>
@@ -4050,8 +4167,8 @@ export default function App() {
               <div className="flex items-center gap-1 shrink-0">
                 <button onClick={() => { setForm({ ...competition, tools: competition.tools || [], photos: competition.photos || [] }); setModal('editCompetition'); }}
                   className="text-slate-400 hover:text-brand-700"><Pencil size={16} /></button>
-                <button onClick={() => askConfirm(`حذف مسابقة «${competition.name}»؟`, () => { removeCompetition(competition.id); goto('competitions'); })}
-                  className="text-slate-300 hover:text-red-500"><Trash2 size={16} /></button>
+                {isAdmin && <button onClick={() => askConfirm(`حذف مسابقة «${competition.name}»؟`, () => { removeCompetition(competition.id); goto('competitions'); })}
+                  className="text-slate-300 hover:text-red-500"><Trash2 size={16} /></button>}
               </div>
             </div>
 
@@ -4084,7 +4201,7 @@ export default function App() {
               ) : (
                 <div className="grid grid-cols-2 gap-2">
                   {competition.photos.map((ph) => (
-                    <img key={ph.id} src={ph.src} alt="" className="w-full h-32 object-cover rounded-xl border border-slate-100" />
+                    <img key={ph.id} src={photoSrc(ph)} alt="" className="w-full h-32 object-cover rounded-xl border border-slate-100" />
                   ))}
                 </div>
               )}
@@ -4339,15 +4456,43 @@ export default function App() {
           );
         })()}
 
-        {view === 'trips' && can('السفرات') && (
+        {view === 'trips' && can('السفرات') && (() => {
+          const income = tripsInScope.reduce((n, t) => n + tripIncome(t), 0);
+          const spent = tripsInScope.reduce((n, t) => n + tripExpenses(t), 0);
+          const net = income - spent;
+          return (
           <div>
             <div className="flex items-center justify-between mb-1 gap-3">
               <h3 className="font-bold text-slate-700">السفرات</h3>
               <button className={btnPrimary} onClick={() => { setForm({}); setModal('addTrip'); }}><Plus size={16} /> سفرة جديدة</button>
             </div>
-            <div className="text-sm text-slate-400 mb-5">إيرادات ومصروفات كل سفرة على حدة - مستقلة عن فيض</div>
-            {data.trips.length === 0 ? (
-              <div className={emptyCls}>لا توجد سفرات بعد. أضف أول سفرة.</div>
+            <div className="text-sm text-slate-400 mb-4">إيرادات ومصروفات كل سفرة على حدة - مستقلة عن فيض</div>
+
+            <FilterChips
+              options={[
+                { id: 'term', label: `الترم ${data.currentTerm} ${data.currentYear} هـ`, count: data.trips.filter((t) => t.termKey === termKey).length },
+                { id: 'all', label: 'كل المواسم', count: data.trips.length },
+                ...(data.trips.some((t) => !t.termKey)
+                  ? [{ id: 'none', label: 'بلا موسم', count: data.trips.filter((t) => !t.termKey).length }] : []),
+              ]}
+              value={tripScope} onChange={setTripScope} />
+
+            {/* الصافي كلمة قبل أن يكون رقمًا: فائض أو عجز */}
+            <div className="grid grid-cols-3 gap-2 my-4">
+              <MiniStat label="الإيرادات" value={fmt(income)} icon={TrendingUp} tone="green" />
+              <MiniStat label="المصروفات" value={fmt(spent)} icon={TrendingDown} tone="red" />
+              <MiniStat label={net < 0 ? 'عجز' : 'فائض'} value={fmt(Math.abs(net))} icon={Wallet} tone={net < 0 ? 'red' : 'green'} />
+            </div>
+
+            {tripScope === 'none' && tripsInScope.length > 0 && (
+              <button className="w-full text-right bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 mb-4 text-sm text-amber-900"
+                onClick={() => save({ ...data, trips: data.trips.map((t) => (t.termKey ? t : { ...t, termKey })) })}>
+                حدّد موسم هذي السفرات كلها: <b>الترم {data.currentTerm} {data.currentYear} هـ</b>
+              </button>
+            )}
+
+            {tripsInScope.length === 0 ? (
+              <div className={emptyCls}>{data.trips.length === 0 ? 'لا توجد سفرات بعد. أضف أول سفرة.' : 'ما فيه سفرات في هذا النطاق.'}</div>
             ) : (
               <div className="bg-white rounded-2xl border border-slate-100 overflow-x-auto">
                 <table className="w-full text-sm min-w-[620px]">
@@ -4360,7 +4505,7 @@ export default function App() {
                     <th className="text-right px-4 py-3 font-medium"></th>
                   </tr></thead>
                   <tbody>
-                    {data.trips.map((t) => (
+                    {tripsInScope.map((t) => (
                       <tr key={t.id} className="border-t border-slate-50 hover:bg-slate-50/50 cursor-pointer" onClick={() => { setSelectedTripId(t.id); goto('tripDetail'); }}>
                         <td className="px-4 py-3 font-semibold text-slate-800">{t.name}</td>
                         <td className="px-4 py-3 text-slate-500">{t.date || '-'}</td>
@@ -4375,14 +4520,15 @@ export default function App() {
               </div>
             )}
           </div>
-        )}
+          );
+        })()}
 
         {view === 'tripDetail' && trip && (
           <div>
             <Breadcrumb items={[{ label: 'السفرات', onClick: () => goto('trips') }, { label: trip.name }]} />
             <div className="flex items-center gap-2 mb-5 mt-2">
               <h2 className="text-lg sm:text-xl font-bold text-slate-800">{trip.name}</h2>
-              <button onClick={() => askConfirm(`حذف سفرة «${trip.name}»؟`, () => removeTrip(trip.id))} className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>
+              {isAdmin && <button onClick={() => askConfirm(`حذف سفرة «${trip.name}»؟`, () => removeTrip(trip.id))} className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>}
             </div>
             <div className={cardCls + ' mb-3'}>
               <div className="text-sm text-slate-500 mb-2">التاريخ (هـ)</div>
@@ -4556,7 +4702,7 @@ export default function App() {
                               <option value="req">مطلوب</option>
                               <option value="opt">اختياري</option>
                             </select>
-                            {!locked && (
+                            {!locked && isAdmin && (
                               <button className="text-red-400 p-1"
                                 onClick={() => askConfirm(`حذف خانة «${f.label}» من كل الروابط؟`, () => save({
                                   ...data, signupFields: data.signupFields.filter((x) => x.id !== f.id),
@@ -4768,15 +4914,21 @@ export default function App() {
           const q = normalizeName(guardianSearch);
           const digits = normalizePhone(guardianSearch);
           // القائمة بأسماء الطلاب — هم اللي تشتغل عليهم، وولي الأمر تفصيل تحت الاسم
+          /**
+           * البحث بالكلمات: «عبدالعزيز القاسم» تلقى «عبدالعزيز محمد القاسم».
+           * المقارنة النصّية كانت تخفيه لأن «محمد» واقفة بينهما.
+           */
           const list = data.students.filter((s) => {
+            if (statusFilter !== 'الكل' && studentState(data.programs, s.id) !== statusFilter) return false;
             if (!guardianSearch.trim()) return true;
             const g = data.guardians.find((x) => x.id === s.guardianId);
-            if (q && normalizeName(s.name).includes(q)) return true;
-            if (q && g && normalizeName(g.name).includes(q)) return true;
+            if (nameMatches(s.name, guardianSearch)) return true;
+            if (g && nameMatches(g.name, guardianSearch)) return true;
             if (digits && g && normalizePhone(g.phone).includes(digits)) return true;
             if (q && normalizeName(s.school || '').includes(q)) return true;
             return false;
           }).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+          const counts = stateCounts(data.students, data.programs);
 
           return (
             <div>
@@ -4809,11 +4961,17 @@ export default function App() {
                 </button>
               )}
 
-              <div className="relative mb-4">
+              <div className="relative mb-3">
                 <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input className={inputCls + ' pr-9'} value={guardianSearch} onChange={(e) => setGuardianSearch(e.target.value)}
                   placeholder="ابحث باسم الطالب أو ولي أمره أو الجوال" />
               </div>
+
+              {/* التصفية بالحالة، ومعها عدد كل حالة عشان تعرف توزيعهم بلا ما تفتحها */}
+              <select className={inputCls + ' mb-4'} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                <option value="الكل">الكل ({counts['الكل']})</option>
+                {STATES.map((st) => <option key={st} value={st}>{st} ({counts[st]})</option>)}
+              </select>
 
               {list.length === 0 ? (
                 <div className={emptyCls}>
@@ -4826,30 +4984,40 @@ export default function App() {
                   {list.map((s) => {
                     const g = data.guardians.find((x) => x.id === s.guardianId);
                     const regs = historyOf(s.id);
+                    const state = studentState(data.programs, s.id);
+                    const wa = waLink(g?.phone, '');
                     return (
-                      <button key={s.id} className="w-full text-right bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3"
-                        onClick={() => { setSelectedGuardianId(s.guardianId); goto('guardianDetail'); }}>
-                        <div className="w-10 h-10 rounded-full bg-brand-100 text-brand-800 font-bold flex items-center justify-center shrink-0">
-                          {(s.name || '؟').slice(0, 1)}
+                      <div key={s.id} className="bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3">
+                        <button className="min-w-0 flex-1 text-right flex items-center gap-3"
+                          onClick={() => { setSelectedGuardianId(s.guardianId); goto('guardianDetail'); }}>
+                          <span className="w-10 h-10 rounded-full bg-brand-100 text-brand-800 font-bold flex items-center justify-center shrink-0">
+                            {(s.name || '؟').slice(0, 1)}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block font-semibold text-slate-800 truncate">{s.name}</span>
+                            <span className="block text-xs text-slate-400 truncate">
+                              {[s.age && `${s.age} سنة`, s.grade, s.school].filter(Boolean).join(' · ') || 'بلا تفاصيل'}
+                            </span>
+                            {g && (
+                              <span className="block text-xs text-slate-500 mt-1 truncate">
+                                {g.name} · <span dir="ltr">{formatPhone(g.phone)}</span>
+                              </span>
+                            )}
+                            {s.health && <span className="block text-[11px] text-amber-700 mt-1 truncate">⚠ {s.health}</span>}
+                          </span>
+                        </button>
+                        <div className="shrink-0 text-left flex flex-col items-end gap-1">
+                          <Badge tone={TONES[state]}>{state}</Badge>
+                          {regs.length > 0 && <span className="text-[10px] text-slate-400">{regs.length} تسجيل</span>}
                         </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="font-semibold text-slate-800 truncate">{s.name}</div>
-                          <div className="text-xs text-slate-400 truncate">
-                            {[s.age && `${s.age} سنة`, s.grade, s.school].filter(Boolean).join(' · ') || 'بلا تفاصيل'}
-                          </div>
-                          {g && (
-                            <div className="text-xs text-slate-500 mt-1 truncate">
-                              {g.name} · <span dir="ltr">{formatPhone(g.phone)}</span>
-                            </div>
-                          )}
-                          {s.health && <div className="text-[11px] text-amber-700 mt-1 truncate">⚠ {s.health}</div>}
-                        </div>
-                        <div className="shrink-0 text-left">
-                          {regs.length > 0
-                            ? <Badge tone="brand">{regs.length} تسجيل</Badge>
-                            : <Badge tone="slate">جديد</Badge>}
-                        </div>
-                      </button>
+                        {/* المطالبة والسؤال عن الغائب يحتاجان طريقًا له، لا رقمًا يُقرأ */}
+                        {wa && (
+                          <a href={wa} target="_blank" rel="noreferrer" title="واتساب"
+                            className="w-9 h-9 rounded-lg bg-[#25D366] text-white flex items-center justify-center shrink-0">
+                            <Send size={15} />
+                          </a>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -4876,12 +5044,12 @@ export default function App() {
                   </div>
                   <div className="flex gap-1 shrink-0">
                     <button className="text-slate-400 p-1.5" onClick={() => { setForm({ ...g }); setModal('editGuardian'); }}><Pencil size={16} /></button>
-                    <button className="text-red-400 p-1.5"
+                    {isAdmin && <button className="text-red-400 p-1.5"
                       onClick={() => askConfirm(
                         regs.length > 0
                           ? `حذف «${g.name}» وأبناءه من قاعدة أولياء الأمور؟ تسجيلاتهم في البرامج ومبالغها تبقى كما هي.`
                           : `حذف «${g.name}» وأبناءه؟`,
-                        () => removeGuardian(g.id))}><Trash2 size={16} /></button>
+                        () => removeGuardian(g.id))}><Trash2 size={16} /></button>}
                   </div>
                 </div>
                 <div className="grid grid-cols-3 gap-2 mt-4 pt-4 border-t border-slate-100 text-center">
@@ -4918,8 +5086,10 @@ export default function App() {
                           </div>
                           <div className="flex gap-1 shrink-0">
                             <button className="text-slate-400 p-1.5" onClick={() => { setForm({ ...s }); setModal('editStudent'); }}><Pencil size={16} /></button>
-                            <button className="text-red-400 p-1.5"
-                              onClick={() => askConfirm(`حذف «${s.name}» من قاعدة البيانات؟ تسجيلاته في البرامج تبقى كما هي.`, () => removeStudent(s.id))}><Trash2 size={16} /></button>
+                            {isAdmin && (
+                              <button className="text-red-400 p-1.5"
+                                onClick={() => askConfirm(`حذف «${s.name}» من قاعدة البيانات؟ تسجيلاته في البرامج تبقى كما هي.`, () => removeStudent(s.id))}><Trash2 size={16} /></button>
+                            )}
                           </div>
                         </div>
                         {hist.length > 0 && (
@@ -5070,7 +5240,7 @@ export default function App() {
           <Field label="اسم الطالب"
             hint={form.studentId ? undefined : (canGuardians ? 'اكتب الاسم — لو مسجّل عندك من قبل بيطلع لك.' : undefined)}>
             <input className={inputCls} value={form.name || ''} autoComplete="off"
-              onChange={(e) => setForm({ ...form, name: e.target.value, studentId: null, error: '' })} />
+              onChange={(e) => setForm({ ...form, name: e.target.value, studentId: null, unlinked: false, error: '' })} />
           </Field>
 
           {form.studentId && (() => {
@@ -5083,16 +5253,13 @@ export default function App() {
                   {g && <span className="text-brand-700"> · ولي الأمر: {g.name}</span>}
                   {s?.health && <span className="block text-amber-700 mt-0.5">⚠ {s.health}</span>}
                 </div>
-                <button type="button" className="text-xs text-slate-500 shrink-0" onClick={() => setForm({ ...form, studentId: null })}>فك</button>
+                <button type="button" className="text-xs text-slate-500 shrink-0" onClick={() => setForm({ ...form, studentId: null, unlinked: true })}>فك</button>
               </div>
             );
           })()}
 
           {canGuardians && !form.studentId && (form.name || '').trim().length >= 2 && (() => {
-            const q = normalizeName(form.name);
-            const hits = data.students
-              .filter((s) => normalizeName(s.name).includes(q))
-              .slice(0, 5);
+            const hits = searchStudents(data.students, form.name, 5);
             if (!hits.length) return null;
             return (
               <div className="-mt-2 mb-4 border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
@@ -5100,7 +5267,7 @@ export default function App() {
                   const g = data.guardians.find((x) => x.id === s.guardianId);
                   return (
                     <button key={s.id} type="button" className="w-full text-right px-3 py-2.5 hover:bg-slate-50"
-                      onClick={() => setForm({ ...form, name: s.name, studentId: s.id, error: '' })}>
+                      onClick={() => setForm({ ...form, name: s.name, studentId: s.id, unlinked: false, error: '' })}>
                       <div className="text-sm font-semibold text-slate-800">{s.name}</div>
                       <div className="text-[11px] text-slate-400">
                         {[g?.name, s.school, s.age && `${s.age} سنة`].filter(Boolean).join(' · ') || 'بلا تفاصيل'}
@@ -5494,14 +5661,17 @@ export default function App() {
             )}
           </Field>
 
-          <Field label="صور مرجعية" hint="تُصغَّر تلقائيًا قبل الحفظ. خلّها في حدود ٦ صور للمسابقة عشان التخزين المحلي.">
-            <input type="file" accept="image/*" multiple onChange={(e) => { addPhotos(e.target.files); e.target.value = ''; }}
-              className="block w-full text-sm text-slate-500 file:mr-0 file:ml-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-brand-50 file:text-brand-800" />
+          <Field label="صور مرجعية" hint="تُصغَّر وتُرفع للخادم، فما تثقّل بيانات الفريق.">
+            <input type="file" accept="image/*" multiple disabled={form.imgBusy}
+              onChange={(e) => { addPhotos(e.target.files); e.target.value = ''; }}
+              className="block w-full text-sm text-slate-500 file:mr-0 file:ml-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-brand-50 file:text-brand-800 disabled:opacity-50" />
+            {form.imgBusy && <div className="text-xs text-slate-400 mt-2">جاري الرفع…</div>}
+            {form.imgError && <div className="text-xs text-red-500 mt-2">{form.imgError}</div>}
             {(form.photos || []).length > 0 && (
               <div className="grid grid-cols-3 gap-2 mt-3">
                 {form.photos.map((ph) => (
                   <div key={ph.id} className="relative">
-                    <img src={ph.src} alt="" className="w-full h-20 object-cover rounded-lg border border-slate-100" />
+                    <img src={photoSrc(ph)} alt="" className="w-full h-20 object-cover rounded-lg border border-slate-100" />
                     <button type="button" onClick={() => removePhoto(ph.id)}
                       className="absolute top-1 left-1 bg-white/90 rounded-full p-1 text-slate-500 hover:text-red-500"><X size={12} /></button>
                   </div>
@@ -5751,6 +5921,39 @@ export default function App() {
           </div>
         </Modal>
       )}
+
+      {modal === 'opening' && (() => {
+        const toInvest = form.target === 'invest';
+        return (
+          <Modal title={toInvest ? 'رصيد الاستثمار الافتتاحي' : 'رصيد الحساب الافتتاحي'} onClose={closeModal}>
+            <div className="text-sm text-slate-500 mb-4">
+              اللي كان موجودًا عندك قبل التطبيق. يزيد الرصيد، و<b>ما يُحسب إيرادًا</b> في أي موسم —
+              فتقارير المواسم تبقى صادقة.
+            </div>
+            {!toInvest && (
+              <Field label="الحساب">
+                <select className={inputCls} value={form.accountId || ''}
+                  onChange={(e) => setForm({ ...form, accountId: e.target.value, error: '' })}>
+                  {accountStats.map((a) => <option key={a.id} value={a.id}>{a.name} — {fmt(a.balance)} ر.س</option>)}
+                </select>
+              </Field>
+            )}
+            <Field label="المبلغ (ر.س)">
+              <input type="number" className={inputCls} value={form.amount ?? ''}
+                onChange={(e) => setForm({ ...form, amount: e.target.value, error: '' })} placeholder="1000" />
+            </Field>
+            <Field label="ملاحظة (اختياري)">
+              <input className={inputCls} value={form.note || ''} onChange={(e) => setForm({ ...form, note: e.target.value })}
+                placeholder="رصيد افتتاحي" />
+            </Field>
+            {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+            <div className="flex gap-2 mt-2">
+              <button className={btnPrimary + ' flex-1'} onClick={addOpening}>حفظ</button>
+              <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {modal === 'investment' && (() => {
         const dirIn = (form.dir || 'in') === 'in';

@@ -64,7 +64,8 @@ export const publicView = (data, program) => {
     ...(perDayOn ? [{
       id: '__perday', name: 'يومي', price: perDayPrice, dayCount: 0, perDay: true,
     }] : []),
-    ...(s.packages || []).map((p) => ({
+    // المخفية ما تنزل الصفحة أصلًا، فما ينفع أحد يسجّل فيها ولو حاول
+    ...(s.packages || []).filter((p) => p.hidden !== true).map((p) => ({
       id: p.id,
       name: p.name,
       price: Number(p.price || 0),
@@ -149,6 +150,15 @@ export const TEXTS = {
   refLabel: 'الرقم المرجعي',
   redirectNote: 'نحوّلك الآن لواتساب الفريق…',
   openWa: 'افتح واتساب',
+};
+
+/**
+ * نصوص صفحة الرابط المنتهي. عامة لا برنامجية: الرابط المنتهي ما عاد يدلّ على
+ * برنامج، فما فيه إعدادات برنامجٍ نقرأ منها.
+ */
+export const CLOSED = {
+  title: 'التسجيل مقفل',
+  text: 'هذا الرابط ما عاد شغّالًا. تواصل مع الفريق للحصول على رابط جديد.',
 };
 
 /** نص الصفحة بعد تبديل المتغيّرات: ما كتبه صاحب البرنامج، وإلا الافتراضي. */
