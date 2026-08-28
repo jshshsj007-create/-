@@ -23,7 +23,7 @@ import {
   SURAHS, PARTS, emptyWird, rangeText, carryAfter, studentTotals,
   studentSessions, studentOfUser, khayrRows, khayrReportText,
   PAGES_PER_PART, toPages, partsText, memorizedPages, memRangeText,
-  reviewCycles, cycleTarget, cycleDrift, stopsOf, stopText,
+  reviewCycles, cycleTarget, cycleDrift, stopsOf, stopText, pagesBetween,
 } from './khayr.js';
 import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 
@@ -3067,12 +3067,20 @@ export default function App() {
    */
   const roster = allParticipants.filter((p) => !p.pending);
   const waiting = allParticipants.filter((p) => p.pending);
+  /**
+   * البحث يشمل الانتظار كذلك: عشرون منتظرًا وأنت تدوّر واحدًا فيهم لفّةٌ طويلة.
+   * ونقصره على الاسم — فلترة طريقة الدفع تخص الحاضرين، ولو طبّقناها هنا
+   * اختفى المنتظر لأن مبلغه ما دخل بعد.
+   */
+  const waitingHit = (p) => !search || nameMatches(p.name, search);
+  const visibleWaiting = waiting.filter(waitingHit);
   const visibleParticipants = roster.filter(matches);
 
   /** حضور يوم معيّن في المجمّع يخص المسجّلين في ذاك اليوم فقط. */
   const dayEnrolled = isGrouped && week ? enrolledIn(program.participants, week.id) : [];
   const dayRoster = dayEnrolled.filter((p) => !p.pending);
   const dayWaiting = dayEnrolled.filter((p) => p.pending);
+  const visibleDayWaiting = dayWaiting.filter(waitingHit);
   const visibleDayRoster = dayRoster.filter(matches);
 
   // التبويبات تتغيّر حسب نوع البرنامج وصلاحية المستخدم، فنرجع للتبويب الأول لو المختار غير متاح.
@@ -4066,12 +4074,13 @@ export default function App() {
                 </div>
                 {/* الانتظار: تحت قائمة الحضور مباشرة، في نفس اليوم اللي سجّلوا فيه */}
                 <WaitingList
-                  items={dayWaiting}
+                  items={visibleDayWaiting}
+                  hidden={dayWaiting.length - visibleDayWaiting.length}
                   accounts={data.faidAccounts}
                   canMoney={canMoney}
                   locked={week.status === 'مغلق'}
                   onConfirm={(p) => confirmPending(p.id)}
-                  onConfirmAll={() => confirmMany(dayWaiting)}
+                  onConfirmAll={() => confirmMany(visibleDayWaiting)}
                   onReceipt={(p) => { setForm({ receipt: p.receipt, who: p.name }); setModal('viewReceipt'); }}
                   onDrop={(p) => askDropPending(p, week.name, null)}
                   arrearsOf={(p) => arrearsOf(p.studentId, p.name, program.id)}
@@ -4197,12 +4206,13 @@ export default function App() {
                     )}
                     {/* الانتظار: تحت قائمة الحضور مباشرة، في نفس الأسبوع اللي سجّلوا فيه */}
                     <WaitingList
-                      items={waiting}
+                      items={visibleWaiting}
+                      hidden={waiting.length - visibleWaiting.length}
                       accounts={data.faidAccounts}
                       canMoney={canMoney}
                       locked={ledgerLocked}
                       onConfirm={(p) => confirmPending(p.id)}
-                      onConfirmAll={() => confirmMany(waiting)}
+                      onConfirmAll={() => confirmMany(visibleWaiting)}
                       onReceipt={(p) => { setForm({ receipt: p.receipt, who: p.name }); setModal('viewReceipt'); }}
                       onDrop={(p) => askDropPending(p, isGrouped ? 'البرنامج' : week.name,
                         activeRef.kind === 'week' ? activeRef.weekId : null)}
@@ -6400,7 +6410,26 @@ export default function App() {
             ) : (
               PARTS.map((p) => {
                 const val = form[p.id] || {};
-                const set = (patch) => setForm({ ...form, [p.id]: { ...val, ...patch } });
+                /**
+                 * يختار المدى فيُكتب العدد من نفسه: «من الناس إلى المسد» = وجهان.
+                 * وما نلمسه بعد ما يكتبه الشيخ بيده — رقمه أصدق من حسابنا، لأن
+                 * السور ما تبدأ عند حواف الصفحات وهو يعرف وين وقف بالضبط.
+                 */
+                const set = (patch) => {
+                  const next = { ...val, ...patch };
+                  const movedRange = 'from' in patch || 'to' in patch;
+                  let unit = null;
+                  if (movedRange && !next.pagesTouched) {
+                    const auto = pagesBetween(next.from, next.to);
+                    if (auto !== null) {
+                      next.pages = auto;
+                      next.auto = true;
+                      // المحسوب أوجه بطبعه، فنقلب الوحدة له بدل ما يُقرأ أجزاءً
+                      if (p.id === 'review') unit = 'pages';
+                    }
+                  }
+                  setForm({ ...form, [p.id]: next, ...(unit ? { reviewUnit: unit } : {}) });
+                };
                 return (
                   <div key={p.id} className="border border-slate-100 rounded-2xl p-4 mb-3">
                     <div className="flex items-center justify-between mb-3">
@@ -6431,11 +6460,17 @@ export default function App() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-[11px] text-slate-400 shrink-0">{p.id === 'review' ? 'سمّع' : 'عدد الأوجه'}</span>
                       <input type="number" className={inputCls + ' text-center'} style={{ maxWidth: 90 }}
-                        value={val.pages ?? ''} onChange={(e) => set({ pages: e.target.value })} placeholder="0" />
+                        value={val.pages ?? ''} placeholder="0"
+                        onChange={(e) => set({ pages: e.target.value, pagesTouched: true, auto: false })} />
                       {p.id === 'review' && (
                         <UnitPick value={form.reviewUnit || 'parts'} onChange={(u) => setForm({ ...form, reviewUnit: u })} />
                       )}
                     </div>
+                    {val.auto && (
+                      <div className="text-[10.5px] text-slate-400 mt-1.5">
+                        محسوبة من المدى — عدّلها لو وقف في نص وجه.
+                      </div>
+                    )}
                     {/* رقم واحد ووحدته — والباقي يُحسب: كم يعني بالأوجه، وكم قطع من دورته */}
                     {p.id === 'review' && Number(val.pages || 0) > 0 && (() => {
                       const said = toPages(val.pages, form.reviewUnit || 'parts');
@@ -7087,28 +7122,36 @@ function WaitingChip({ count }) {
  * قائمة الحضور، وتأكيد وصول مبلغه ينقله فوق فورًا — بلا ما تطلع من الشاشة
  * ولا تنشغل عن التحضير.
  */
-function WaitingList({ items, accounts, canMoney, locked, onConfirm, onConfirmAll, onReceipt, onDrop, arrearsOf, arrearsText }) {
-  if (!items.length) return null;
+function WaitingList({ items, accounts, canMoney, locked, onConfirm, onConfirmAll, onReceipt, onDrop, arrearsOf, arrearsText, hidden = 0 }) {
+  // ما فيه منتظر أصلًا: نختفي. حجبهم البحثُ: نبقى ونقول ذلك — وإلا ظنّ إنه ما فيه أحد
+  if (!items.length && !hidden) return null;
   const accountName = (id) => accounts.find((a) => a.id === id)?.name || 'بلا حساب';
   return (
     <div id="waiting-list" className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
       <div className="flex items-center justify-between gap-2 mb-1">
         <div className="font-bold text-slate-800 flex items-center gap-1.5">
           <Clock size={16} className="text-amber-600" /> الانتظار
-          <span className="text-xs font-semibold text-amber-800 bg-amber-100 rounded-full px-2 py-0.5">{items.length}</span>
+          <span className="text-xs font-semibold text-amber-800 bg-amber-100 rounded-full px-2 py-0.5">
+            {items.length}{hidden ? ` من ${items.length + hidden}` : ''}
+          </span>
         </div>
         {canMoney && items.length > 1 && (
           <button onClick={onConfirmAll} disabled={locked}
             className="bg-white border border-amber-300 text-amber-800 text-xs font-semibold px-3 py-2 rounded-lg shrink-0 disabled:opacity-40">
-            تأكيد الكل
+            {hidden ? `تأكيد الظاهرين (${items.length})` : 'تأكيد الكل'}
           </button>
         )}
       </div>
-      <div className="text-xs text-slate-500 mb-3 leading-relaxed">
-        {canMoney
-          ? 'الإيصال قدامك. «وصل» ينقله لقائمة الحضور فوق، و«ما وصل» يحذف تسجيله — ويقعد شهرًا في صندوق المحذوفات لو غلطت.'
-          : 'سجّلوا من الرابط، وينتظرون تأكيد المسؤول عشان يدخلون قائمة الحضور.'}
-      </div>
+      {!items.length && (
+        <div className="text-xs text-slate-500 py-2">ما فيه منتظر بهذا الاسم — امسح البحث تشوف {hidden}.</div>
+      )}
+      {items.length > 0 && (
+        <div className="text-xs text-slate-500 mb-3 leading-relaxed">
+          {canMoney
+            ? 'الإيصال قدامك. «وصل» ينقله لقائمة الحضور فوق، و«ما وصل» يحذف تسجيله — ويقعد شهرًا في صندوق المحذوفات لو غلطت.'
+            : 'سجّلوا من الرابط، وينتظرون تأكيد المسؤول عشان يدخلون قائمة الحضور.'}
+        </div>
+      )}
       <div className="space-y-2.5">
         {items.map((p) => {
           const late = arrearsOf ? arrearsOf(p) : [];

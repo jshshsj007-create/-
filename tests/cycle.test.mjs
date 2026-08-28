@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import {
   PAGES_PER_PART, toPages, partsText, memorizedPages, memRangeText,
   reviewCycles, cycleTarget, cycleDrift, lastStop, stopText, stopsOf,
+  SURAHS, SURAH_PAGE, pageOfSurah, pagesBetween,
 } from '../src/khayr.js';
 
 let passed = 0;
@@ -209,6 +210,43 @@ test('أول جلسة للطالب: ما فيه موضع، والخانة تُف
 test('الآية صفرًا ما تُلحق بالسورة', () => {
   assert.equal(stopText({ from: 'الحديد', fromAya: 0 }), 'الحديد');
   assert.equal(stopText({ from: 'الحديد', fromAya: '' }), 'الحديد');
+});
+
+/* ---------------------- أوجه المدى تلقائيًا ---------------------- */
+
+test('لكل سورة صفحتها، والمصحف 604', () => {
+  assert.equal(SURAHS.length, SURAH_PAGE.length, 'ما فيه سورة بلا صفحة');
+  assert.equal(SURAH_PAGE[0], 1, 'الفاتحة أولها');
+  assert.equal(SURAH_PAGE[SURAH_PAGE.length - 1], 604, 'والناس آخرها');
+  // مرتّبة تصاعديًا، وإلا انقلب حساب المدى كله
+  for (let i = 1; i < SURAH_PAGE.length; i++) {
+    assert.ok(SURAH_PAGE[i] >= SURAH_PAGE[i - 1], `صفحة ${SURAHS[i]} قبل اللي قبلها`);
+  }
+});
+
+test('«من الناس إلى المسد» = وجهان — بلا ما يعدّها بيده', () => {
+  assert.equal(pagesBetween('الناس', 'المسد'), 2);
+  assert.equal(partsText(pagesBetween('الناس', 'المسد')), 'وجهان');
+});
+
+test('المدى مقلوبًا هو نفسه — الطالب يحفظ من آخر المصحف لأوله', () => {
+  assert.equal(pagesBetween('المسد', 'الناس'), pagesBetween('الناس', 'المسد'));
+});
+
+test('الحدّان داخلان: سورة مع نفسها وجه لا صفر', () => {
+  assert.equal(pagesBetween('البقرة', 'البقرة'), 1);
+});
+
+test('مدى المصحف كله، ومدى محفوظ سعد', () => {
+  assert.equal(pagesBetween('الفاتحة', 'الناس'), 604);
+  assert.equal(pagesBetween('الناس', 'الروم'), 201, 'عشرة أجزاء تقريبًا — كما كتبها الشيخ');
+  assert.equal(partsText(pagesBetween('المرسلات', 'الواقعة')), 'جزءان و7 أوجه');
+});
+
+test('سورة ما نعرفها ما نخمّن لها رقمًا', () => {
+  assert.equal(pagesBetween('الناس', ''), null);
+  assert.equal(pagesBetween('سورة ما وجدت', 'الناس'), null);
+  assert.equal(pageOfSurah('  الناس  '), 604, 'والمسافات ما تعمينا عنها');
 });
 
 console.log(`\n✅ ${passed} اختبارًا لدورة المراجعة وموضع الطالب\n`);
