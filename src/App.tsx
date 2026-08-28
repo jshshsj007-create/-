@@ -2842,7 +2842,8 @@ export default function App() {
       if (!u || u.password !== loginForm.password) { setLoginError('اسم المستخدم أو كلمة المرور غير صحيحة'); return; }
       if (u.status !== 'نشط') { setLoginError('هذا الحساب غير مفعّل. راجع المدير.'); return; }
       setCurrentUser(u); setLoginError(''); setLoginForm({ username: '', password: '' });
-      setStage('year');
+      setStage(landingStage(u));
+      goto('home');
       return;
     }
     // في الوضع المشترك التحقق يصير في الخادم، فكلمات المرور ما تنزل للمتصفح أصلًا
@@ -2859,8 +2860,19 @@ export default function App() {
     const me = ((pending || r.body.data).users || []).find((x) => (x.username || '').toLowerCase() === entered);
     setCurrentUser(me || null);
     setLoginError(''); setLoginForm({ username: '', password: '' });
-    setStage('year');
+    setStage(landingStage(me));
+    goto('home');
   };
+  /**
+   * وين يروح بعد الدخول.
+   *
+   * المدير يختار السنة والترم لأنه يتنقّل بينها: يقفل موسمًا، يفتح ثانيًا،
+   * يقارن. أمّا من عنده صلاحية واحدة — المسابقات مثلًا — فما له في المواسم
+   * شغل: يجي كل يوم ليشتغل في الموسم القائم، فاختياره مرتين كل مرة ضريبةٌ
+   * بلا مقابل. فندخله على طول، ويبقى مبدّل الموسم في الأعلى لو احتاجه.
+   */
+  const landingStage = (u) => (u?.role === 'مدير' ? 'year' : 'app');
+
   const doLogout = () => {
     if (cloudOn) {
       clearSession();
@@ -3080,8 +3092,18 @@ export default function App() {
   const dayEnrolled = isGrouped && week ? enrolledIn(program.participants, week.id) : [];
   const dayRoster = dayEnrolled.filter((p) => !p.pending);
   const dayWaiting = dayEnrolled.filter((p) => p.pending);
-  const visibleDayWaiting = dayWaiting.filter(waitingHit);
   const visibleDayRoster = dayRoster.filter(matches);
+  const visibleDayWaiting = dayWaiting.filter(waitingHit);
+
+  /**
+   * وأنت تبحث في شاشة التحضير، تدوّر طالبًا لا قائمةً: فما يهمّك أمؤكَّدٌ هو
+   * أم لا يزال ينتظر — يهمّك أنه مسجّل. فنجمعهم في نتيجة واحدة ما دام البحث
+   * شغّالًا، ونعلّم المنتظر بعلامته. وبلا بحثٍ يبقى الفصل: قائمة حضور صافية،
+   * والانتظار تحتها في بطاقته.
+   */
+  const withWaiting = (list, pend) => (!search ? list : [...list, ...pend.map((p) => ({ ...p, _waiting: true }))]);
+  const dayAttendanceRows = withWaiting(visibleDayRoster, visibleDayWaiting);
+  const weekAttendanceRows = withWaiting(visibleParticipants, visibleWaiting);
 
   // التبويبات تتغيّر حسب نوع البرنامج وصلاحية المستخدم، فنرجع للتبويب الأول لو المختار غير متاح.
   // من صلاحيته الحضور فقط ما يشوف إلا الأيام: لا مبالغ، لا مشتركين، لا تقارير
@@ -4047,9 +4069,10 @@ export default function App() {
                 {dayRoster.length > 0 && canMoney && (
                   <div className="mb-3"><FilterChips options={payOptions(dayRoster)} value={payFilter} onChange={setPayFilter} /></div>
                 )}
-                {dayRoster.length === 0 ? (
+                {dayAttendanceRows.length === 0 ? (
                   <div className={emptyCls}>
-                    {dayWaiting.length > 0
+                    {search ? 'ما فيه نتائج بهذا الاسم.'
+                      : dayWaiting.length > 0
                       ? 'ما فيه أحد في الحضور بعد. تحت في «الانتظار» اللي سجّلوا من الرابط — أكّدهم وينتقلون هنا.'
                       : (program.participants || []).length === 0
                         ? 'ما فيه مشتركون بعد. سجّلهم من تبويب «المشتركون» في صفحة البرنامج.'
@@ -4057,7 +4080,8 @@ export default function App() {
                   </div>
                 ) : (
                   <AttendanceTable
-                    participants={visibleDayRoster}
+                    participants={dayAttendanceRows}
+                    onConfirmWaiting={canMoney ? (p) => confirmPending(p.id) : null}
                     statusOf={(p) => attendanceOf(p, week.id)}
                     subscriptionOf={(p) => enrolledDays(p, program.weeks).length}
                     totalDays={program.weeks.length}
@@ -4177,23 +4201,26 @@ export default function App() {
                         أول ما تسجّل طالبًا باسمه يتحوّل للأسماء، والمبلغ ينتقل لبند «تحصيل إضافي».
                       </div>
                     )}
-                    {!roster.length ? (
+                    {!weekAttendanceRows.length ? (
                       <div className={emptyCls}>
-                        {waiting.length > 0
+                        {search ? 'ما فيه نتائج بهذا الاسم.'
+                          : waiting.length > 0
                           ? 'ما فيه أحد في الحضور بعد. تحت في «الانتظار» اللي سجّلوا من الرابط — أكّدهم وينتقلون هنا.'
                           : canEnroll ? 'ما فيه طلاب بعد. اضغط «+ مشارك» وسجّل أول واحد.' : 'ما فيه طلاب بعد.'}
                       </div>
                     ) : !canMoney ? (
                       // بلا صلاحية مالية: واجهة تحضير صرفة، نفس تجربة البرنامج المجمّع
                       <AttendanceTable
-                        participants={visibleParticipants}
+                        participants={weekAttendanceRows}
+                        onConfirmWaiting={canMoney ? (p) => confirmPending(p.id) : null}
                         statusOf={(p) => p.attendance || 'معلق'}
                         locked={ledgerLocked}
                         onSet={(p, st) => setAttendance(p.id, st)}
                       />
                     ) : (
                       <ParticipantsTable
-                        participants={visibleParticipants}
+                        participants={weekAttendanceRows}
+                        onConfirmWaiting={canMoney ? (p) => confirmPending(p.id) : null}
                         accounts={data.faidAccounts}
                         showAttendance
                         showMoney={canMoney}
@@ -6999,7 +7026,7 @@ function LedgerFinance({ ledger, accounts, locked, canTransfer, onAdd, onRemove,
   );
 }
 
-function ParticipantsTable({ participants, accounts, showAttendance, statusOf, onSetAttendance, onEdit, onRemove, locked, weeks, showMoney = true }) {
+function ParticipantsTable({ participants, accounts, showAttendance, statusOf, onSetAttendance, onEdit, onRemove, locked, weeks, showMoney = true, onConfirmWaiting }) {
   if (!participants.length) {
     return <div className={emptyCls}>ما فيه نتائج.</div>;
   }
@@ -7016,7 +7043,7 @@ function ParticipantsTable({ participants, accounts, showAttendance, statusOf, o
         </tr></thead>
         <tbody>
           {participants.map((p) => (
-            <tr key={p.id} className="border-t border-slate-50">
+            <tr key={p.id} className={`border-t border-slate-50 ${p._waiting ? 'bg-amber-50/60' : ''}`}>
               <td className="px-4 py-3 font-semibold text-slate-800">
                 {p.name}
                 {/* سجّل نفسه من الرابط ولسه ما تأكّد وصول مبلغه */}
@@ -7042,17 +7069,30 @@ function ParticipantsTable({ participants, accounts, showAttendance, statusOf, o
               )}
               {showAttendance && (
                 <td className="px-4 py-3">
-                  <div className="flex items-center gap-1.5">
-                    {['حاضر', 'غائب'].map((st) => {
-                      const on = statusOf(p) === st;
-                      return (
-                        <button key={st} onClick={() => onSetAttendance(p, on ? 'معلق' : st)} disabled={locked}
-                          className={`text-xs font-semibold px-3 py-1.5 rounded-lg border whitespace-nowrap disabled:opacity-40 ${
-                            on ? (st === 'حاضر' ? 'bg-green-600 text-white border-green-600' : 'bg-red-500 text-white border-red-500')
-                               : 'border-slate-200 text-slate-500'}`}>{st}</button>
-                      );
-                    })}
-                  </div>
+                  {/*
+                    المنتظر ما يُحضَّر: ما تأكّد وصول مبلغه، ولو حضّرناه دخل
+                    الإيراد على وعدٍ لا على وصول. فمكان الزرّين هنا «وصل».
+                  */}
+                  {p._waiting ? (
+                    onConfirmWaiting && !locked ? (
+                      <button onClick={() => onConfirmWaiting(p)}
+                        className="bg-green-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg whitespace-nowrap flex items-center gap-1">
+                        <Check size={13} /> وصل
+                      </button>
+                    ) : <span className="text-xs text-slate-400">ينتظر التأكيد</span>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      {['حاضر', 'غائب'].map((st) => {
+                        const on = statusOf(p) === st;
+                        return (
+                          <button key={st} onClick={() => onSetAttendance(p, on ? 'معلق' : st)} disabled={locked}
+                            className={`text-xs font-semibold px-3 py-1.5 rounded-lg border whitespace-nowrap disabled:opacity-40 ${
+                              on ? (st === 'حاضر' ? 'bg-green-600 text-white border-green-600' : 'bg-red-500 text-white border-red-500')
+                                 : 'border-slate-200 text-slate-500'}`}>{st}</button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </td>
               )}
               <td className="px-4 py-3 text-left whitespace-nowrap">
@@ -7068,11 +7108,31 @@ function ParticipantsTable({ participants, accounts, showAttendance, statusOf, o
 }
 
 /** جدول حضور يوم واحد في البرنامج المجمّع. */
-function AttendanceTable({ participants, statusOf, onSet, locked, subscriptionOf, totalDays, onEdit }) {
+function AttendanceTable({ participants, statusOf, onSet, locked, subscriptionOf, totalDays, onEdit, onConfirmWaiting }) {
   if (!participants.length) return <div className={emptyCls}>ما فيه نتائج.</div>;
   return (
     <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden divide-y divide-slate-50">
       {participants.map((p) => {
+        /*
+         * المنتظر يطلع في البحث لأنه مسجّل، لكن ما نعطيه «حاضر/غائب»:
+         * ما تأكّد وصول مبلغه بعد، ولو حضّرناه دخل الإيراد على وعدٍ لا على وصول.
+         */
+        if (p._waiting) {
+          return (
+            <div key={p.id} className="flex items-center justify-between px-4 py-3 gap-3 bg-amber-50/60">
+              <span className="min-w-0">
+                <span className="font-semibold text-slate-800 text-sm truncate block">{p.name}</span>
+                <span className="text-[11px] text-amber-700 font-semibold">مسجّل — ينتظر تأكيد وصول مبلغه</span>
+              </span>
+              {onConfirmWaiting && !locked && (
+                <button onClick={() => onConfirmWaiting(p)}
+                  className="bg-green-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg shrink-0 flex items-center gap-1">
+                  <Check size={13} /> وصل
+                </button>
+              )}
+            </div>
+          );
+        }
         const st = statusOf(p);
         const subDays = subscriptionOf?.(p);
         return (
