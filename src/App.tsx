@@ -4073,6 +4073,9 @@ export default function App() {
                   onConfirm={(p) => confirmPending(p.id)}
                   onConfirmAll={() => confirmMany(dayWaiting)}
                   onReceipt={(p) => { setForm({ receipt: p.receipt, who: p.name }); setModal('viewReceipt'); }}
+                  onDrop={(p) => askDropPending(p, week.name, null)}
+                  arrearsOf={(p) => arrearsOf(p.studentId, p.name, program.id)}
+                  arrearsText={arrearsText}
                 />
               </div>
             ) : (
@@ -4201,6 +4204,10 @@ export default function App() {
                       onConfirm={(p) => confirmPending(p.id)}
                       onConfirmAll={() => confirmMany(waiting)}
                       onReceipt={(p) => { setForm({ receipt: p.receipt, who: p.name }); setModal('viewReceipt'); }}
+                      onDrop={(p) => askDropPending(p, isGrouped ? 'البرنامج' : week.name,
+                        activeRef.kind === 'week' ? activeRef.weekId : null)}
+                      arrearsOf={(p) => arrearsOf(p.studentId, p.name, program.id)}
+                      arrearsText={arrearsText}
                     />
                   </div>
                 )}
@@ -7080,7 +7087,7 @@ function WaitingChip({ count }) {
  * قائمة الحضور، وتأكيد وصول مبلغه ينقله فوق فورًا — بلا ما تطلع من الشاشة
  * ولا تنشغل عن التحضير.
  */
-function WaitingList({ items, accounts, canMoney, locked, onConfirm, onConfirmAll, onReceipt }) {
+function WaitingList({ items, accounts, canMoney, locked, onConfirm, onConfirmAll, onReceipt, onDrop, arrearsOf, arrearsText }) {
   if (!items.length) return null;
   const accountName = (id) => accounts.find((a) => a.id === id)?.name || 'بلا حساب';
   return (
@@ -7097,38 +7104,64 @@ function WaitingList({ items, accounts, canMoney, locked, onConfirm, onConfirmAl
           </button>
         )}
       </div>
-      <div className="text-xs text-slate-500 mb-3">
+      <div className="text-xs text-slate-500 mb-3 leading-relaxed">
         {canMoney
-          ? 'سجّلوا من الرابط. أكّد وصول المبلغ وينتقل اسمه لقائمة الحضور فوق.'
+          ? 'الإيصال قدامك. «وصل» ينقله لقائمة الحضور فوق، و«ما وصل» يحذف تسجيله — ويقعد شهرًا في صندوق المحذوفات لو غلطت.'
           : 'سجّلوا من الرابط، وينتظرون تأكيد المسؤول عشان يدخلون قائمة الحضور.'}
       </div>
-      <div className="space-y-2">
-        {items.map((p) => (
-          <div key={p.id} className="bg-white border border-amber-100 rounded-xl px-3 py-2.5 flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <div className="font-semibold text-sm text-slate-800 truncate">{p.name}</div>
-              {canMoney && (
-                <div className="text-[11px] text-slate-500">
-                  {p.accountId === 'unpaid' ? 'ما دفع' : `${fmt(p.amount)} ر.س · ${accountName(p.accountId)}`}
+      <div className="space-y-2.5">
+        {items.map((p) => {
+          const late = arrearsOf ? arrearsOf(p) : [];
+          const old = p.submittedAt && Date.now() - p.submittedAt > 14 * 24 * 3600 * 1000;
+          return (
+            <div key={p.id}
+              className={`rounded-xl border p-3 ${late.length ? 'border-red-200 bg-red-50' : old ? 'border-orange-200 bg-orange-50' : 'border-amber-100 bg-white'}`}>
+              <div className="flex gap-3">
+                {/* الإيصال ظاهر لا مخبّى خلف زر: القرار يُؤخذ عليه */}
+                {canMoney && (
+                  <button type="button" onClick={() => p.receipt && onReceipt?.(p)}
+                    className="w-14 h-[4.5rem] rounded-lg overflow-hidden shrink-0 border border-slate-200 bg-white flex items-center justify-center">
+                    {!p.receipt ? (
+                      <span className="text-[9.5px] text-slate-400 leading-tight text-center px-1">بلا<br />إيصال</span>
+                    ) : p.receipt.type === 'application/pdf' ? (
+                      <FileText size={20} className="text-slate-400" />
+                    ) : (
+                      <img src={p.receipt.data} alt="الإيصال" className="w-full h-full object-cover" />
+                    )}
+                  </button>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold text-sm text-slate-800 truncate">{p.name}</div>
+                  {late.length > 0 && (
+                    <div className="text-[11px] text-red-600 font-bold mt-0.5">
+                      ⚠️ عليه {arrearsText(late)} من {late.map((r) => r.label).join(' · ')}
+                    </div>
+                  )}
+                  {canMoney && (
+                    <div className="text-[11px] text-slate-500 mt-0.5">
+                      {p.accountId === 'unpaid' ? 'ما دفع' : `${fmt(p.amount)} ر.س · ${accountName(p.accountId)}`}
+                    </div>
+                  )}
+                  <div className={`text-[11px] mt-0.5 ${old ? 'text-orange-600 font-bold' : 'text-slate-400'}`}>
+                    سجّل {agoText(p.submittedAt) || '— بلا تاريخ'}
+                  </div>
+                  {canMoney && (
+                    <div className="flex gap-1.5 mt-2">
+                      <button onClick={() => onConfirm(p)} disabled={locked}
+                        className="flex-1 bg-green-600 text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center justify-center gap-1 disabled:opacity-40">
+                        <Check size={14} /> وصل
+                      </button>
+                      <button onClick={() => onDrop?.(p)} disabled={locked}
+                        className="flex-1 bg-white border border-red-200 text-red-600 text-xs font-bold px-3 py-2 rounded-lg flex items-center justify-center gap-1 disabled:opacity-40">
+                        <X size={14} /> ما وصل
+                      </button>
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              {p.receipt && onReceipt && (
-                <button onClick={() => onReceipt(p)}
-                  className="bg-white border border-slate-200 text-slate-600 text-xs font-semibold px-2.5 py-2 rounded-lg flex items-center gap-1">
-                  <FileText size={14} /> الإيصال
-                </button>
-              )}
-              {canMoney && (
-                <button onClick={() => onConfirm(p)} disabled={locked}
-                  className="bg-green-600 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1 disabled:opacity-40">
-                  <Check size={14} /> تأكيد
-                </button>
-              )}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
