@@ -3,7 +3,7 @@ import {
   Home, BookOpen, Wallet, Settings, Plus, X, Check, ChevronLeft, Trash2, Pencil,
   Users as UsersIcon, Calendar, TrendingUp, TrendingDown, Layers, ShieldCheck,
   Lock, Unlock, Trophy, LogOut, KeyRound, Plane, Search, AlertTriangle, Send,
-  RotateCcw, Wand2, CalendarDays, FileText, Copy, Clock, BookMarked, Eye, EyeOff,
+  RotateCcw, Wand2, CalendarDays, FileText, Copy, Clock, BookMarked, Eye, EyeOff, Link2,
 } from 'lucide-react';
 import { api, clone, merge3, readSession, writeSession, clearSession, readPending, writePending, clearPending } from './cloud.js';
 import {
@@ -16,6 +16,7 @@ import { stamped, traceText, agoText } from './trace.js';
 import { trashed, pruned, sortedTrash, leftText, kindLabel, TRASH_DAYS } from './trash.js';
 import { makeToken as makeSignupToken, TEXTS, CLOSED, waIntl, waLink, varNames, fieldsFor, dayLabel, DEFAULT_WA_TEMPLATE } from './signup.js';
 import { readImage, POSTER, GALLERY } from './img.js';
+import { qrDataUrl, qrSvg } from './qr.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
 import { DAY_NAMES, hourLabel, scheduleOf } from './schedule.js';
 import { readTheme, writeTheme, applyTheme, readHideMoney, writeHideMoney } from './theme.js';
@@ -23,14 +24,14 @@ import {
   SURAHS, PARTS, emptyWird, rangeText, carryAfter, studentTotals,
   studentSessions, studentOfUser, khayrRows, khayrReportText,
   PAGES_PER_PART, toPages, partsText, memorizedPages, memRangeText,
-  reviewCycles, cycleTarget, cycleDrift, stopsOf, stopText, pagesBetween,
+  reviewCycles, cycleTarget, cycleDrift, stopsOf, stopText, pagesBetween, pagesOf,
 } from './khayr.js';
 import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v5.9';
+const APP_VERSION = 'v5.10';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'معلّم خيركم', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -403,6 +404,14 @@ const defaultData = () => ({
   settings: { stateNear: NEAR, stateFar: FAR },
   /** المحذوف يقعد هنا شهرًا قبل ما يمضي — الغلط له رجعة. */
   trash: [],
+  /**
+   * الرابط العام: عنوان واحد للفريق لا يتغيّر أبدًا، وأنت تحدّد أي برنامج
+   * يفتح عليه. فولي الأمر يحفظه مرة، والباركود يُطبع مرة — ويوم يجي موسم
+   * جديد تبدّل الوجهة لا الرابط.
+   *
+   * وفراغه معناه «ما يفتح على شي»، فيشوف الزائر صفحة «التسجيل مقفل».
+   */
+  publicLink: { programId: '' },
   users: [],
   // قاعدة العملاء: ولي الأمر ← أبناؤه. تعيش عبر المواسم كلها، مو داخل ترم واحد.
   guardians: [],
@@ -479,6 +488,11 @@ export function migrate(loaded) {
   d.khayr.sessions = (d.khayr.sessions || []).map((se) => ({ entries: {}, ...se }));
   d.settings = { stateNear: NEAR, stateFar: FAR, ...(d.settings || {}) };
   d.trash = pruned(d.trash || []);
+  d.publicLink = { programId: '', ...(d.publicLink || {}) };
+  // البرنامج المحذوف ما يبقى وجهةً معلّقة: الرابط يرجع مقفلًا بدل ما يشير لعدم
+  if (d.publicLink.programId && !d.programs.some((p) => p.id === d.publicLink.programId)) {
+    d.publicLink = { programId: '' };
+  }
   d.trips = (d.trips || []).map((t) => {
     const trip = { incomeItems: [], expenseItems: [], ...t };
     // الأرقام المجملة القديمة تتحول لبند واحد باسم واضح
@@ -632,6 +646,8 @@ const TEXT_LABELS = [
 const inputCls = 'w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent';
 const btnPrimary = 'bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors flex items-center gap-1.5 justify-center disabled:opacity-40 disabled:cursor-not-allowed';
 const btnGhost = 'text-slate-500 hover:text-slate-800 text-sm font-medium px-4 py-2.5 rounded-lg transition-colors';
+/** زر ثانوي بإطار — يقف جنب الأساسي بلا ما ينافسه. */
+const btnGhostBox = 'bg-white border border-brand-200 text-brand-700 text-sm font-semibold px-4 py-2.5 rounded-lg flex items-center gap-1.5 justify-center';
 const btnDanger = 'bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors flex items-center gap-1.5 justify-center';
 const cardCls = 'bg-white rounded-2xl border border-slate-100 p-5';
 const emptyCls = 'bg-white rounded-2xl border border-dashed border-slate-200 p-10 text-center text-slate-400';
@@ -2262,13 +2278,27 @@ export default function App() {
       : {
         present: true,
         note: (form.note || '').trim(),
-        ...Object.fromEntries(PARTS.map((p) => [p.id, {
-          from: form[p.id]?.from || '', fromAya: form[p.id]?.fromAya || '',
-          to: form[p.id]?.to || '', toAya: form[p.id]?.toAya || '',
-          // المراجعة وحدها تُدخَل بالأجزاء أو بالأوجه؛ المخزَّن أوجه دائمًا
-          pages: p.id === 'review' ? toPages(form.review?.pages, form.reviewUnit || 'parts') : Number(form[p.id]?.pages || 0),
-          ...(p.id === 'review' ? { unit: form.reviewUnit || 'parts' } : {}),
-        }])),
+        ...Object.fromEntries(PARTS.map((p) => {
+          const v = form[p.id] || {};
+          const x = v.extra;
+          // المدى الثاني للمراجعة وحدها، وما يُخزَّن إلا لو كُتب فعلًا —
+          // فسجلّ عامّة الطلاب يبقى كما كان، بلا خانة فاضية تثقله
+          const hasExtra = p.id === 'review' && !!(x && (x.from || x.to || Number(x.pages)));
+          return [p.id, {
+            from: v.from || '', fromAya: v.fromAya || '',
+            to: v.to || '', toAya: v.toAya || '',
+            // المراجعة وحدها تُدخَل بالأجزاء أو بالأوجه؛ المخزَّن أوجه دائمًا
+            pages: p.id === 'review' ? toPages(v.pages, form.reviewUnit || 'parts') : Number(v.pages || 0),
+            ...(p.id === 'review' ? { unit: form.reviewUnit || 'parts' } : {}),
+            ...(hasExtra ? {
+              extra: {
+                from: x.from || '', fromAya: x.fromAya || '',
+                to: x.to || '', toAya: x.toAya || '',
+                pages: Number(x.pages || 0),
+              },
+            } : {}),
+          }];
+        })),
       };
     patchKhayr({
       sessions: data.khayr.sessions.map((se) => (se.id !== selectedKhayrSessionId ? se
@@ -2311,6 +2341,38 @@ export default function App() {
   };
 
   const regenerateToken = () => { patchSignup({ token: makeSignupToken() }); closeModal(); };
+
+  /* ---------------------------- الرابط العام ---------------------------- */
+
+  /**
+   * عنوان واحد للفريق لا يتغيّر، وأنت تحدّد أي برنامج يفتح عليه.
+   * فولي الأمر يحفظه مرة، والباركود يُطبع مرة — والوجهة وحدها تتبدّل.
+   */
+  const publicUrl = `${location.origin}/r`;
+  const publicProgramId = data.publicLink?.programId || '';
+  const publicTarget = data.programs.find((p) => p.id === publicProgramId) || null;
+
+  /**
+   * التحويل يقفل التسجيل الذاتي عن السابق: الرابط ما يفتح إلا على واحد،
+   * وتركُ القديم مفتوحًا يخلّي بابًا ما أحد ينتبه له.
+   */
+  const setPublicTarget = (pid) => save({
+    ...data,
+    publicLink: { programId: pid },
+    programs: data.programs.map((p) => (p.id === publicProgramId && p.id !== pid && p.signup
+      ? { ...p, signup: { ...p.signup, enabled: false } } : p)),
+  });
+  const clearPublicTarget = () => save({ ...data, publicLink: { programId: '' } });
+
+  /** الباركود ملفًّا في جهازك — يمشي للمطبعة بلا وسيط. */
+  const downloadQr = () => {
+    const blob = new Blob([qrSvg(publicUrl)], { type: 'image/svg+xml' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'faydh-qr.svg';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  };
 
   /** نص من نصوص الصفحة. الفاضي معناه «شِله»، فنفرّق بين المكتوب والمتروك. */
   const patchText = (key, value) => {
@@ -2983,7 +3045,7 @@ export default function App() {
         <PickHeader title="اختيار السنة الهجرية" subtitle="اختر السنة اللي تبي تشتغل عليها" />
         <div className="px-5 space-y-3">
           {data.years.map((y, i) => (
-            <PickCard key={y} icon={Calendar} title={`${y} هـ`} note={i === 0 ? 'السنة الجالية' : 'السنة القادمة'}
+            <PickCard key={y} icon={Calendar} title={`${y} هـ`} note={i === 0 ? 'السنة الحالية' : 'السنة القادمة'}
               onClick={() => { save({ ...data, currentYear: y }); setStage('term'); }} />
           ))}
           {isAdmin && (
@@ -3465,7 +3527,9 @@ export default function App() {
                       const waitingHere = inDay.filter((p) => p.pending).length;
                       const note = (isGrouped
                         ? (roster.length ? `${present} حاضر من ${roster.length} مسجّل` : 'ما فيه مسجّلين في هذا اليوم')
-                        : (st === 'لم يبدأ' ? 'لم يبدأ بعد' : `${headcount(w)} طالب · ${fmt(L.revenue(w))} ر.س`))
+                        // الجدول اللي فوق محروس بـ`canMoney`، وهذا السطر كان منسيًّا
+                        : (st === 'لم يبدأ' ? 'لم يبدأ بعد'
+                          : `${headcount(w)} طالب${canMoney ? ` · ${fmt(L.revenue(w))} ر.س` : ''}`))
                         + (waitingHere ? ` · ${waitingHere} بالانتظار` : '');
                       return (
                         <button key={w.id} onClick={() => { setSelectedWeekId(w.id); setWeekTab(isGrouped ? 'attendance' : 'overview'); goto('weekDetail'); }}
@@ -3631,6 +3695,78 @@ export default function App() {
                           onClick={() => askConfirm('نولّد رابطًا جديدًا؟ القديم بيتوقف فورًا، فمن عنده الرابط القديم ما راح يقدر يسجّل.', regenerateToken, 'نعم، ولّد رابطًا جديدًا')}>
                           رابط جديد (يبطّل القديم)
                         </button>
+                      </div>
+
+                      {/*
+                        الرابط العام: عنوان الفريق الثابت. الرمز فوق للدعوة
+                        الخاصة، وهذا للوحة والباركود — يُطبع مرة وتبدّل وجهته.
+                      */}
+                      <div className="bg-white rounded-2xl border-[1.5px] border-brand-700 p-5">
+                        <div className="flex items-center gap-2 mb-3">
+                          <span className="w-7 h-7 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center shrink-0"><Link2 size={15} /></span>
+                          <span className="font-bold text-slate-800 text-sm">الرابط العام</span>
+                        </div>
+
+                        <div className="bg-white border border-slate-200 rounded-xl px-3.5 py-3 mb-3">
+                          <div className="text-[10.5px] text-slate-400">يفتح الآن على</div>
+                          {/* وأنت في برنامج غير الوجهة، الاسم وحده يلبس — فنقولها صريحة */}
+                          <div className={`text-sm font-extrabold mt-0.5 ${
+                            publicProgramId === program.id ? 'text-brand-700' : 'text-amber-700'}`}>
+                            {!publicTarget ? 'ما يفتح على شي'
+                              : publicProgramId === program.id ? `${publicTarget.name} ✓`
+                                : `${publicTarget.name} — لا هذا البرنامج`}
+                          </div>
+                        </div>
+
+                        {publicProgramId === program.id ? (
+                          <>
+                            <div className="bg-slate-50 rounded-xl px-3 py-2.5 text-sm text-slate-700 break-all mb-3" dir="ltr">{publicUrl}</div>
+                            <div className="flex gap-2">
+                              <button className={btnGhostBox + ' flex-1'}
+                                onClick={() => { navigator.clipboard?.writeText(publicUrl); setSavedAt(Date.now()); }}>
+                                <Copy size={16} /> نسخ
+                              </button>
+                              <a className={btnPrimary + ' flex-1'} target="_blank" rel="noreferrer"
+                                href={`https://wa.me/?text=${encodeURIComponent(`التسجيل في ${program.name}:\n${publicUrl}`)}`}>
+                                <Send size={16} /> واتساب
+                              </a>
+                            </div>
+
+                            <div className="flex items-center gap-3 border border-slate-100 rounded-xl p-3 mt-3">
+                              <img src={qrDataUrl(publicUrl, { size: 128 })} alt="الباركود"
+                                className="w-14 h-14 rounded-lg border border-slate-200 shrink-0" />
+                              <span className="flex-1 min-w-0">
+                                <span className="block text-xs font-bold text-slate-800">الباركود</span>
+                                <span className="block text-[10.5px] text-slate-400 mt-0.5 leading-relaxed">
+                                  اطبعه مرة — يشير لهذا الرابط أبدًا.
+                                </span>
+                              </span>
+                              <button onClick={downloadQr}
+                                className="bg-slate-100 text-slate-700 text-[11.5px] font-bold px-3 py-2 rounded-lg shrink-0">حمّله</button>
+                            </div>
+
+                            <button className="w-full text-center text-[11.5px] font-bold text-red-600 bg-white border border-red-200 rounded-xl py-2.5 mt-3"
+                              onClick={() => askConfirm(
+                                'نوقف الرابط العام؟ يبقى هو والباركود كما هما، بس ما يفتحان على برنامج — فيشوف ولي الأمر صفحة «التسجيل مقفل».',
+                                clearPublicTarget, 'نعم، أوقفه')}>
+                              أوقف الرابط العام
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button className={btnPrimary + ' w-full'}
+                              onClick={() => (publicTarget
+                                ? askConfirm(
+                                  `رابط «${publicTarget.name}» ينتقل إلى «${program.name}». من عنده الرابط أو الباركود بيوصل لهذا البرنامج، و«${publicTarget.name}» بيوقف تسجيله الذاتي.`,
+                                  () => setPublicTarget(program.id), 'نعم، انقله')
+                                : setPublicTarget(program.id))}>
+                              اجعله يفتح على «{program.name}»
+                            </button>
+                            <div className="text-[10.5px] text-slate-400 mt-2 leading-relaxed">
+                              الرابط ما يتغيّر ولا الباركود — يتغيّر البرنامج اللي يفتح عليه فقط.
+                            </div>
+                          </>
+                        )}
                       </div>
 
                       <div className={cardCls}>
@@ -4840,7 +4976,8 @@ export default function App() {
                         <span className="block text-xs text-slate-400 mt-0.5">
                           {!entry ? 'ما سُجّل بعد'
                             : entry.present === false ? `غائب · حُمّل ${Number(entry.due || 0)} وجهًا`
-                              : PARTS.map((p) => `${p.label} ${Number(entry[p.id]?.pages || 0)}`).join(' · ')}
+                              // `pagesOf` تجمع المدى الثاني، فالبطاقة تقول ما تقوله بقية الشاشات
+                              : PARTS.map((p) => `${p.label} ${pagesOf(entry, p.id)}`).join(' · ')}
                         </span>
                       </button>
                       {entry && (
@@ -6439,15 +6576,16 @@ export default function App() {
                 const val = form[p.id] || {};
                 /**
                  * يختار المدى فيُكتب العدد من نفسه: «من الناس إلى المسد» = وجهان.
-                 * وما نلمسه بعد ما يكتبه الشيخ بيده — رقمه أصدق من حسابنا، لأن
-                 * السور ما تبدأ عند حواف الصفحات وهو يعرف وين وقف بالضبط.
+                 * والآيتان تدخلان الحساب، فـ«النساء ١ إلى النساء ٥٢» أحد عشر
+                 * وجهًا لا واحدًا — كان الحساب بحدود السور، فيبلع نصف السورة.
+                 * وما نلمس رقمًا كتبه الشيخ بيده: هو يعرف وين وقف بالضبط.
                  */
                 const set = (patch) => {
                   const next = { ...val, ...patch };
-                  const movedRange = 'from' in patch || 'to' in patch;
+                  const movedRange = ['from', 'to', 'fromAya', 'toAya'].some((k) => k in patch);
                   let unit = null;
                   if (movedRange && !next.pagesTouched) {
-                    const auto = pagesBetween(next.from, next.to);
+                    const auto = pagesBetween(next.from, next.to, next.fromAya, next.toAya);
                     if (auto !== null) {
                       next.pages = auto;
                       next.auto = true;
@@ -6456,6 +6594,16 @@ export default function App() {
                     }
                   }
                   setForm({ ...form, [p.id]: next, ...(unit ? { reviewUnit: unit } : {}) });
+                };
+                /** المدى الثاني: نفس الحساب التلقائي، وأوجهه دائمًا أوجه. */
+                const x = val.extra;
+                const setExtra = (patch) => {
+                  const next = { ...(x || {}), ...patch };
+                  if (['from', 'to', 'fromAya', 'toAya'].some((k) => k in patch) && !next.pagesTouched) {
+                    const auto = pagesBetween(next.from, next.to, next.fromAya, next.toAya);
+                    if (auto !== null) { next.pages = auto; next.auto = true; }
+                  }
+                  setForm({ ...form, [p.id]: { ...val, extra: next } });
                 };
                 return (
                   <div key={p.id} className="border border-slate-100 rounded-2xl p-4 mb-3">
@@ -6498,15 +6646,65 @@ export default function App() {
                         محسوبة من المدى — عدّلها لو وقف في نص وجه.
                       </div>
                     )}
+
+                    {/*
+                      الأصل موضع واحد، وبعضهم يسمّع من موضعين. فالزر رمادي صغير
+                      ما يضغطه إلا صاحب الحالة، والبطاقة تبقى كما هي عند الباقين.
+                    */}
+                    {p.id === 'review' && !x && (
+                      <button type="button" onClick={() => setExtra({ from: '', to: '' })}
+                        className="text-[11px] font-semibold text-slate-400 hover:text-brand-700 mt-2.5">
+                        + مدى ثانٍ
+                      </button>
+                    )}
+                    {p.id === 'review' && x && (
+                      <div className="mt-3 pt-3 border-t border-dashed border-slate-200">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[11px] font-bold text-slate-500">المدى الثاني</span>
+                          <button type="button" className="text-[11px] text-red-400"
+                            onClick={() => setForm({ ...form, [p.id]: { ...val, extra: undefined } })}>شِله</button>
+                        </div>
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-[11px] text-slate-400 w-8 shrink-0">من</span>
+                          <select className={inputCls} value={x.from || ''} onChange={(e) => setExtra({ from: e.target.value })}>
+                            <option value="">— السورة —</option>
+                            {SURAHS.map((n) => <option key={n} value={n}>{n}</option>)}
+                          </select>
+                          <input type="number" className={inputCls + ' text-center'} style={{ maxWidth: 76 }}
+                            value={x.fromAya ?? ''} onChange={(e) => setExtra({ fromAya: e.target.value })} placeholder="آية" />
+                        </div>
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-[11px] text-slate-400 w-8 shrink-0">إلى</span>
+                          <select className={inputCls} value={x.to || ''} onChange={(e) => setExtra({ to: e.target.value })}>
+                            <option value="">— السورة —</option>
+                            {SURAHS.map((n) => <option key={n} value={n}>{n}</option>)}
+                          </select>
+                          <input type="number" className={inputCls + ' text-center'} style={{ maxWidth: 76 }}
+                            value={x.toAya ?? ''} onChange={(e) => setExtra({ toAya: e.target.value })} placeholder="آية" />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] text-slate-400 shrink-0">سمّع</span>
+                          <input type="number" className={inputCls + ' text-center'} style={{ maxWidth: 90 }}
+                            value={x.pages ?? ''} placeholder="0"
+                            onChange={(e) => setExtra({ pages: e.target.value, pagesTouched: true, auto: false })} />
+                          <span className="text-[11px] text-slate-400">وجهًا</span>
+                        </div>
+                        {x.auto && <div className="text-[10.5px] text-slate-400 mt-1.5">محسوبة من المدى.</div>}
+                      </div>
+                    )}
                     {/* رقم واحد ووحدته — والباقي يُحسب: كم يعني بالأوجه، وكم قطع من دورته */}
-                    {p.id === 'review' && Number(val.pages || 0) > 0 && (() => {
-                      const said = toPages(val.pages, form.reviewUnit || 'parts');
+                    {p.id === 'review' && (Number(val.pages || 0) > 0 || Number(x?.pages || 0) > 0) && (() => {
+                      const first = toPages(val.pages, form.reviewUnit || 'parts');
+                      const second = Number(x?.pages || 0);
+                      const said = first + second;
                       const total = memorizedPages(st);
-                      const cyc = reviewCycles(st, khayr.sessions.filter((x) => String(x.date || '') < String(khayrSession.date || '')));
+                      const cyc = reviewCycles(st, khayr.sessions.filter((y) => String(y.date || '') < String(khayrSession.date || '')));
                       const pct = total ? Math.min(100, Math.round(((cyc.current.pages + said) / total) * 100)) : 0;
                       return (
                         <div className="mt-2 bg-green-50 text-green-700 rounded-lg px-3 py-2 text-[11.5px] font-bold">
-                          = {partsText(said)}
+                          {/* المديان يُجمعان قبل كل شي: الدورة والمتراكم يقرآن المجموع */}
+                          {second > 0 && `${first} + ${second} = `}
+                          {partsText(said)}
                           {total > 0 && ` · قطع ${pct}% من دورته`}
                         </div>
                       );

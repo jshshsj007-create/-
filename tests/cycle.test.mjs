@@ -9,8 +9,9 @@ import assert from 'node:assert/strict';
 import {
   PAGES_PER_PART, toPages, partsText, memorizedPages, memRangeText,
   reviewCycles, cycleTarget, cycleDrift, lastStop, stopText, stopsOf,
-  SURAHS, SURAH_PAGE, pageOfSurah, pagesBetween,
+  SURAHS, SURAH_PAGE, pageOfSurah, pagesBetween, pageOfAyah, pagesOf, rangeText,
 } from '../src/khayr.js';
+import { PAGE_STARTS } from '../src/pages.js';
 
 let passed = 0;
 const test = (name, fn) => { fn(); passed++; console.log('  ✓ ' + name); };
@@ -247,6 +248,84 @@ test('سورة ما نعرفها ما نخمّن لها رقمًا', () => {
   assert.equal(pagesBetween('الناس', ''), null);
   assert.equal(pagesBetween('سورة ما وجدت', 'الناس'), null);
   assert.equal(pageOfSurah('  الناس  '), 604, 'والمسافات ما تعمينا عنها');
+});
+
+/* ------------------ الحساب بالآية — لا بحدود السور ------------------ */
+
+test('فهرس الأوجه ستمئة وأربعة، مرتّب، ويبدأ بالفاتحة', () => {
+  assert.equal(PAGE_STARTS.length, 604 * 2, 'زوجان لكل وجه: سورة وآية');
+  assert.equal(PAGE_STARTS[0], 1);
+  assert.equal(PAGE_STARTS[1], 1, 'الوجه الأول: الفاتحة ١');
+  // مرتّب تصاعديًا، وإلا انهار البحث الثنائي في صمت
+  for (let i = 1; i < 604; i++) {
+    const a = [PAGE_STARTS[(i - 1) * 2], PAGE_STARTS[(i - 1) * 2 + 1]];
+    const b = [PAGE_STARTS[i * 2], PAGE_STARTS[i * 2 + 1]];
+    assert.ok(b[0] > a[0] || (b[0] === a[0] && b[1] > a[1]), `الوجه ${i + 1} ما جاء بعد اللي قبله`);
+  }
+});
+
+test('كل سورة تبدأ في الوجه اللي يقوله جدول السور', () => {
+  // التحققان يسندان بعضهما: لو غلط أحدهما بانت المخالفة
+  SURAHS.forEach((name, i) => {
+    assert.equal(pageOfAyah(name, 1), SURAH_PAGE[i], `بداية ${name}`);
+  });
+});
+
+test('الآية تدخل الحساب — وهذي هي اللي كانت تُهمَل', () => {
+  // «النساء ١ إلى النساء ٥٢» كان يعطي وجهًا واحدًا لأن السورة واحدة
+  assert.equal(pagesBetween('النساء', 'النساء', 1, 52), 11);
+  assert.equal(pageOfAyah('النساء', 19), 80);
+  assert.equal(pageOfAyah('النساء', 1), 77);
+  assert.equal(pageOfAyah('النساء', 52), 87);
+});
+
+test('وبلا آية يبقى الحساب كما كان — من أول السورة', () => {
+  assert.equal(pagesBetween('الناس', 'المسد'), 2);
+  assert.equal(pagesBetween('المرسلات', 'الواقعة'), 47);
+  assert.equal(pagesBetween('الفاتحة', 'الناس'), 604);
+});
+
+test('المدى مقلوبًا هو نفسه، والموضع الواحد وجه لا صفر', () => {
+  assert.equal(pagesBetween('المسد', 'الناس'), pagesBetween('الناس', 'المسد'));
+  assert.equal(pagesBetween('النساء', 'النساء', 19, 19), 1);
+});
+
+test('سورة ما نعرفها ما نخمّن لها موضعًا', () => {
+  assert.equal(pageOfAyah('سورة ما وجدت', 1), null);
+  assert.equal(pagesBetween('الناس', ''), null);
+});
+
+test('آية خارج حدود المعقول ما تكسر البحث', () => {
+  assert.equal(pageOfAyah('الفاتحة', 0), 1, 'الصفر يُقرأ أول السورة');
+  assert.equal(pageOfAyah('الناس', 9999), 604, 'وما بعد آخر آية يبقى في آخر وجه');
+});
+
+/* ---------------------- المدى الثاني في المراجعة ---------------------- */
+
+test('المديان يُجمعان في `pagesOf`، فيدخلان كل حساب فوقه', () => {
+  const entry = { present: true, review: { from: 'الناس', to: 'المجادلة', pages: 60, extra: { from: 'النساء', to: 'هود', pages: 48 } } };
+  assert.equal(pagesOf(entry, 'review'), 108);
+});
+
+test('وبلا مدى ثانٍ ما يتغيّر شي', () => {
+  assert.equal(pagesOf({ review: { pages: 60 } }, 'review'), 60);
+  assert.equal(pagesOf({ hifz: { pages: 4 } }, 'hifz'), 4);
+  assert.equal(pagesOf({}, 'review'), 0);
+});
+
+test('المدى الثاني يدخل الدورة كما يدخل المجموع', () => {
+  const ss = [session('01', { s1: { present: true, review: { pages: 120, extra: { pages: 80 } } } })];
+  const c = reviewCycles(saad, ss);
+  assert.equal(c.done.length, 1, '120 + 80 = 200 فأتمّ دورته');
+  assert.equal(c.done[0].pages, 200);
+});
+
+test('ونصّ المدى يذكر الموضعين', () => {
+  assert.equal(
+    rangeText({ from: 'الناس', to: 'المجادلة', extra: { from: 'النساء', to: 'هود' } }),
+    'من الناس إلى المجادلة · ومن النساء إلى هود',
+  );
+  assert.equal(rangeText({ from: 'الناس', to: 'النبأ' }), 'من الناس إلى النبأ');
 });
 
 console.log(`\n✅ ${passed} اختبارًا لدورة المراجعة وموضع الطالب\n`);

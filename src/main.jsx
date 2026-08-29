@@ -6,17 +6,23 @@ import './index.css';
 import { readTheme, applyTheme } from './theme.js';
 
 /**
- * /r/<رمز> هي صفحة ولي الأمر: تُعرض وحدها بلا تسجيل دخول وبلا تحميل التطبيق،
- * فما توصلها بيانات الفريق أصلًا. وأي مسار غيرها يفتح التطبيق.
+ * صفحة ولي الأمر: تُعرض وحدها بلا تسجيل دخول وبلا تحميل التطبيق، فما توصلها
+ * بيانات الفريق أصلًا. وأي مسار غيرها يفتح التطبيق.
+ *
+ *  /r/<رمز>  رابط برنامج بعينه — للدعوة الخاصة.
+ *  /r        الرابط العام — عنوان واحد للفريق، وجهته تُختار من التطبيق.
+ *            وهو اللي يُطبع باركودًا، فما يتغيّر أبدًا.
  */
-const m = window.location.pathname.match(/^\/r\/([A-Za-z0-9]{4,32})\/?$/);
+const path = window.location.pathname;
+const m = path.match(/^\/r\/([A-Za-z0-9]{4,32})\/?$/);
+const isPublic = /^\/r\/?$/.test(path);
 
 // نلوّن قبل أول رسمة، وإلا ومض الأبيض في وجه من اختار الداكن.
 // وصفحة ولي الأمر خارج هذا: تبقى فاتحة دائمًا.
-if (!m) applyTheme(readTheme());
+if (!m && !isPublic) applyTheme(readTheme());
 
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    {m ? <SignupPage token={m[1]} /> : <App />}
+    {m ? <SignupPage token={m[1]} /> : isPublic ? <SignupPage token="" /> : <App />}
   </React.StrictMode>
 );

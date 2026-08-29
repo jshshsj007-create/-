@@ -10,10 +10,11 @@
     "test": "./tests/run.sh"
   },
   "dependencies": {
+    "@netlify/blobs": "^8.1.0",
     "lucide-react": "^0.460.0",
+    "qrcode-generator": "^1.4.4",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "@netlify/blobs": "^8.1.0"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",

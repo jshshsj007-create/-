@@ -21,6 +21,23 @@ export const programByToken = (programs, token) => {
   return (programs || []).find((p) => p.signup?.enabled && p.signup?.token === token) || null;
 };
 
+/**
+ * البرنامج اللي يفتح عليه الرابط العام.
+ *
+ * الرابط العام عنوان واحد بلا رمز، والوجهة تُختار من التطبيق. ونشترط
+ * `signup.enabled` مثل الرمز تمامًا: إقفال التسجيل الذاتي يقفل البابين معًا،
+ * فما يصير برنامج مقفولًا من بابه مفتوحًا من الباركود.
+ */
+export const publicProgram = (data) => {
+  const id = data?.publicLink?.programId;
+  if (!id) return null;
+  return (data.programs || []).find((p) => p.id === id && p.signup?.enabled) || null;
+};
+
+/** الطلب العام لا يحمل رمزًا، فيُميَّز به عن رابط البرنامج الخاص. */
+export const programFor = (data, token) =>
+  (token ? programByToken(data?.programs, token) : publicProgram(data));
+
 /** خانات النموذج لهذا البرنامج: العامة + أسئلته الخاصة. */
 export const fieldsFor = (data, program) => [
   ...(data?.signupFields || []),

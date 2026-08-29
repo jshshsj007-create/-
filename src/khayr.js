@@ -8,6 +8,8 @@
  * البرامج ولا بأولياء الأمور.
  */
 
+import { PAGE_STARTS } from './pages.js';
+
 /** سور القرآن بترتيب المصحف — تُعرض قائمةً يختار منها الشيخ بدل ما يكتب. */
 export const SURAHS = [
   'الفاتحة', 'البقرة', 'آل عمران', 'النساء', 'المائدة', 'الأنعام', 'الأعراف', 'الأنفال',
@@ -27,11 +29,10 @@ export const SURAHS = [
 ];
 
 /**
- * أول صفحة لكل سورة في مصحف المدينة (٦٠٤ صفحات)، بترتيب `SURAHS`.
+ * أول وجه لكل سورة في مصحف المدينة، بترتيب `SURAHS`.
  *
- * منها نحسب أوجه المدى بدل ما يعدّها الشيخ بيده: يختار «من الناس إلى المسد»
- * فيكتب التطبيق «وجهان». والحساب تقديري بطبعه — السور ما تبدأ عند حواف
- * الصفحات، وثلاث سور قد تجتمع في وجه واحد. فهو رقم يُقترح ويُعدَّل، لا يُقفل.
+ * يبقى للعرض السريع وللتحقق من فهرس الأوجه — طابقه في السور المئة والأربع
+ * عشرة كلها. أمّا حساب المدى فيمرّ على `PAGE_STARTS` لأنه يعرف الآيات.
  */
 export const SURAH_PAGE = [
   1, 2, 50, 77, 106, 128, 151, 177, 187, 208, 221, 235, 249, 255, 262, 267, 282,
@@ -58,7 +59,7 @@ const num = (v) => {
 };
 
 /** «من الناس إلى النبأ» و«من المرسلات إلى الواقعة ٤٠» — الآية تُذكر لما تُكتب فقط. */
-export const rangeText = (part) => {
+const oneRange = (part) => {
   const from = String(part?.from || '').trim();
   const to = String(part?.to || '').trim();
   if (!from && !to) return '';
@@ -67,8 +68,25 @@ export const rangeText = (part) => {
   return from ? `من ${side(from, part.fromAya)}` : `إلى ${side(to, part.toAya)}`;
 };
 
-/** أوجه هذا القسم في هذي الجلسة. */
-export const pagesOf = (entry, partId) => num(entry?.[partId]?.pages);
+/**
+ * مدى القسم معروضًا. وبعض الطلاب يسمّعون من موضعين في الجلسة الواحدة، فيُكتب
+ * الثاني في `extra` ويُعرض معه — والأصل موضع واحد، فالثاني يبقى فارغًا عند
+ * عامّتهم ولا يظهر أثره أصلًا.
+ */
+export const rangeText = (part) => {
+  const main = oneRange(part);
+  const extra = oneRange(part?.extra);
+  return main && extra ? `${main} · و${extra}` : main || extra;
+};
+
+/**
+ * أوجه هذا القسم في هذي الجلسة — المديان مجموعان.
+ *
+ * الجمع هنا عمدًا: كل ما فوقه (المتراكم، الدورة، التقرير) يقرأ من هذي الدالة،
+ * فبجمعها في مكان واحد يدخل المدى الثاني الحساب كله بلا ما نلمس شيئًا غيرها.
+ */
+export const pagesOf = (entry, partId) =>
+  num(entry?.[partId]?.pages) + num(entry?.[partId]?.extra?.pages);
 
 /**
  * المتراكم بعد جلسة واحدة.
@@ -262,14 +280,36 @@ export const pageOfSurah = (name) => {
 };
 
 /**
- * كم وجهًا بين سورتين. الطالب يحفظ من آخر المصحف لأوله، فالمدى يجي مقلوبًا —
+ * وجه أي موضع من المصحف: نبحث في فهرس الأوجه عن آخر وجه بدايته قبل الموضع
+ * أو عنده. بحث ثنائي لأن الفهرس مرتّب، فما نمرّ على ستمئة وأربعة في كل ضغطة.
+ *
+ * بلا آية نأخذ أول السورة — وهو ما كان يفعله الحساب القديم كله.
+ */
+export const pageOfAyah = (surah, ayah) => {
+  const s = SURAHS.indexOf(String(surah || '').trim()) + 1;
+  if (s < 1) return null;
+  const a = Math.max(1, num(ayah) || 1);
+  let lo = 0;
+  let hi = PAGE_STARTS.length / 2 - 1;
+  let page = 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const ms = PAGE_STARTS[mid * 2];
+    const ma = PAGE_STARTS[mid * 2 + 1];
+    if (ms < s || (ms === s && ma <= a)) { page = mid + 1; lo = mid + 1; } else hi = mid - 1;
+  }
+  return page;
+};
+
+/**
+ * كم وجهًا بين موضعين. الطالب يحفظ من آخر المصحف لأوله، فالمدى يجي مقلوبًا —
  * ولذلك نأخذ الفرق مطلقًا: «من الناس إلى المسد» و«من المسد إلى الناس» سواء.
  *
- * والحدّان داخلان في العدّ (+1)، لأن من سمّع صفحةً واحدة سمّع وجهًا لا صفرًا.
+ * والحدّان داخلان في العدّ (+1)، لأن من سمّع وجهًا واحدًا سمّع وجهًا لا صفرًا.
  */
-export const pagesBetween = (from, to) => {
-  const a = pageOfSurah(from);
-  const b = pageOfSurah(to);
+export const pagesBetween = (from, to, fromAya, toAya) => {
+  const a = pageOfAyah(from, fromAya);
+  const b = pageOfAyah(to, toAya);
   if (a === null || b === null) return null;
   return Math.abs(b - a) + 1;
 };
