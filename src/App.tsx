@@ -16,7 +16,7 @@ import { stamped, traceText, agoText } from './trace.js';
 import { trashed, pruned, sortedTrash, leftText, kindLabel, TRASH_DAYS } from './trash.js';
 import { makeToken as makeSignupToken, TEXTS, CLOSED, waIntl, waLink, varNames, fieldsFor, dayLabel, DEFAULT_WA_TEMPLATE } from './signup.js';
 import { readImage, POSTER, GALLERY } from './img.js';
-import { qrDataUrl, qrSvg } from './qr.js';
+import { qrDataUrl, qrPngUrl } from './qr.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
 import { DAY_NAMES, hourLabel, scheduleOf } from './schedule.js';
 import { readTheme, writeTheme, applyTheme, readHideMoney, writeHideMoney } from './theme.js';
@@ -2364,14 +2364,15 @@ export default function App() {
   });
   const clearPublicTarget = () => save({ ...data, publicLink: { programId: '' } });
 
-  /** الباركود ملفًّا في جهازك — يمشي للمطبعة بلا وسيط. */
+  /**
+   * الباركود صورةً في جهازك — تنفتح في الاستوديو، وتنرسل في واتساب،
+   * وتمشي للمطبعة بلا وسيط.
+   */
   const downloadQr = () => {
-    const blob = new Blob([qrSvg(publicUrl)], { type: 'image/svg+xml' });
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'faydh-qr.svg';
+    a.href = qrPngUrl(publicUrl);
+    a.download = 'faydh-qr.png';
     a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   };
 
   /** نص من نصوص الصفحة. الفاضي معناه «شِله»، فنفرّق بين المكتوب والمتروك. */

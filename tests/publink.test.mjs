@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import { publicProgram, programByToken, programFor } from '../src/signup.js';
-import { qrSvg, qrDataUrl } from '../src/qr.js';
+import { qrSvg, qrDataUrl, qrMatrix, QUIET } from '../src/qr.js';
 
 let passed = 0;
 const test = (name, fn) => { fn(); passed++; console.log('  ✓ ' + name); };
@@ -101,10 +101,26 @@ test('اختلاف الرابط يغيّر الباركود، وتكراره ي�
   assert.notEqual(a, c);
 });
 
-test('و data URI جاهز للعرض والتحميل', () => {
+test('و data URI جاهز للعرض في الشاشة', () => {
   const u = qrDataUrl('https://faydh2030.netlify.app/r');
   assert.match(u, /^data:image\/svg\+xml;charset=utf-8,/);
   assert.ok(u.length > 200);
+});
+
+test('الشبكة مربّعة، وفيها مربّعات الزوايا الثلاثة', () => {
+  // الصورتان — المعروضة والمحمَّلة — تُبنيان من هذي الشبكة، فتحقّقها يكفيهما
+  const m = qrMatrix('https://faydh2030.netlify.app/r');
+  assert.ok(m.length >= 21, 'أصغر رمز إحدى وعشرون وحدة');
+  m.forEach((row) => assert.equal(row.length, m.length, 'مربّعة الشكل'));
+  // مربّع التموضع في كل زاوية: إطار ممتلئ سبع في سبع
+  const finder = (r0, c0) => [0, 6].every((d) => m[r0][c0 + d] && m[r0 + 6][c0 + d]);
+  assert.ok(finder(0, 0), 'الزاوية الأولى');
+  assert.ok(finder(0, m.length - 7), 'الثانية');
+  assert.ok(finder(m.length - 7, 0), 'الثالثة');
+});
+
+test('والهامش أربع وحدات — بلاه يصعب على الكاميرا', () => {
+  assert.equal(QUIET, 4);
 });
 
 console.log(`\n✅ ${passed} اختبارًا للرابط العام والباركود\n`);
