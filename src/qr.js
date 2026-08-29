@@ -42,7 +42,7 @@ export const qrDataUrl = (text, opts) =>
   `data:image/svg+xml;charset=utf-8,${encodeURIComponent(qrSvg(text, opts))}`;
 
 /**
- * صورة PNG للتحميل.
+ * صورة PNG.
  *
  * كانت SVG أول الأمر — أحدّ في الطباعة نظريًّا، لكنها على الجوال ملف ميّت:
  * ما يفتح في الاستوديو، ولا ينرسل صورةً في واتساب، وبعض المطابع تردّه. و
@@ -51,7 +51,7 @@ export const qrDataUrl = (text, opts) =>
  * ونرسم كل وحدة بعدد صحيح من البكسلات، وإلا وقعت حوافّها بين بكسلين فتشوّشت
  * وصعبت على الكاميرا.
  */
-export const qrPngUrl = (text, { target = 2048, quiet = QUIET } = {}) => {
+const qrCanvas = (text, { target = 2048, quiet = QUIET } = {}) => {
   const m = qrMatrix(text);
   const total = m.length + quiet * 2;
   const scale = Math.max(1, Math.floor(target / total));
@@ -67,5 +67,19 @@ export const qrPngUrl = (text, { target = 2048, quiet = QUIET } = {}) => {
   m.forEach((row, r) => row.forEach((on, c) => {
     if (on) ctx.fillRect((c + quiet) * scale, (r + quiet) * scale, scale, scale);
   }));
-  return canvas.toDataURL('image/png');
+  return canvas;
 };
+
+/**
+ * الصورة ملفًّا — لا نصًّا في العنوان.
+ *
+ * كانت `data:` أوّلًا فما نزل شيء على الآيفون: سفاري لا يحترم طلب التحميل مع
+ * عنوان `data:`، فيُضغط الزر ولا يصير شي. والملف يُحترم.
+ */
+export const qrPngBlob = (text, opts) =>
+  new Promise((resolve, reject) => {
+    qrCanvas(text, opts).toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error('ما تولّدت الصورة'))),
+      'image/png',
+    );
+  });

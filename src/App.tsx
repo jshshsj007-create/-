@@ -16,7 +16,7 @@ import { stamped, traceText, agoText } from './trace.js';
 import { trashed, pruned, sortedTrash, leftText, kindLabel, TRASH_DAYS } from './trash.js';
 import { makeToken as makeSignupToken, TEXTS, CLOSED, waIntl, waLink, varNames, fieldsFor, dayLabel, DEFAULT_WA_TEMPLATE } from './signup.js';
 import { readImage, POSTER, GALLERY } from './img.js';
-import { qrDataUrl, qrPngUrl } from './qr.js';
+import { qrDataUrl, qrPngBlob } from './qr.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
 import { DAY_NAMES, hourLabel, scheduleOf } from './schedule.js';
 import { readTheme, writeTheme, applyTheme, readHideMoney, writeHideMoney } from './theme.js';
@@ -2367,12 +2367,31 @@ export default function App() {
   /**
    * الباركود صورةً في جهازك — تنفتح في الاستوديو، وتنرسل في واتساب،
    * وتمشي للمطبعة بلا وسيط.
+   *
+   * وعلى الجوال نعرض لوحة المشاركة: منها تحفظه في الصور أو ترسله للمطبعة
+   * مباشرةً، وهذا الذي يُراد منه أصلًا. وإن ما كانت، نزّلناه ملفًّا.
+   *
+   * والوصلة تُضاف للصفحة قبل ضغطها: بعض المتصفّحات تتجاهل وصلةً ما هي فيها.
    */
-  const downloadQr = () => {
+  const downloadQr = async () => {
+    const blob = await qrPngBlob(publicUrl);
+    const file = new File([blob], 'faydh-qr.png', { type: 'image/png' });
+    if (navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: 'باركود التسجيل' });
+        return;
+      } catch (e) {
+        if (e?.name === 'AbortError') return; // ألغاها بنفسه
+      }
+    }
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = qrPngUrl(publicUrl);
+    a.href = url;
     a.download = 'faydh-qr.png';
+    document.body.appendChild(a);
     a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
   };
 
   /** نص من نصوص الصفحة. الفاضي معناه «شِله»، فنفرّق بين المكتوب والمتروك. */
