@@ -38,6 +38,37 @@ export const publicProgram = (data) => {
 export const programFor = (data, token) =>
   (token ? programByToken(data?.programs, token) : publicProgram(data));
 
+/**
+ * رابط خريطة صالح للفتح.
+ *
+ * يدخل الرابط في `href` في صفحةٍ عامة، فما نقبل إلا الويب: `javascript:` وما
+ * شابهه يُرَدّ. ومن ألصق العنوان بلا بادئة كمّلناها له بدل ما نرمي لصقته.
+ */
+export const mapHref = (url) => {
+  const u = String(url || '').trim();
+  if (!u) return '';
+  if (/^https?:\/\//i.test(u)) return u;
+  return /^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(u) ? 'https://' + u : '';
+};
+
+/**
+ * مكان اللقاء.
+ *
+ * مكان الفريق ثابت، فيُكتب مرة في الإعدادات ويجري على كل رابط. والبرنامج الذي
+ * يقع في غيره يكتب مكانه فيغلب — والفاضي معناه «خذ مكان الفريق»، فما يُعاد
+ * كتابته مع كل برنامج، ولو بدّلتم الجامع بدّلتموه في موضع واحد.
+ *
+ * والاسم هو ما يُرجَّح به: مكانٌ بلا اسمٍ لا يُقرأ، فلا يصلح أن يغلب.
+ */
+export const placeOf = (data, program) => {
+  const own = program?.signup?.place;
+  const pick = String(own?.name || '').trim() ? own : data?.place;
+  return {
+    name: String(pick?.name || '').trim(),
+    map: mapHref(pick?.map),
+  };
+};
+
 /** خانات النموذج لهذا البرنامج: العامة + أسئلته الخاصة. */
 export const fieldsFor = (data, program) => [
   ...(data?.signupFields || []),
@@ -126,6 +157,8 @@ export const publicView = (data, program) => {
         needsReceipt: !!a.needsReceipt,
       })),
     fields: fieldsFor(data, program),
+    // أول سؤالين عند ولي الأمر: «وين» و«متى». والثاني في التفاصيل، وهذا الأول
+    place: placeOf(data, program),
 
     /* ------- المحتوى اللي يكتبه صاحب البرنامج: صور ونصوص، كلها اختيارية ------- */
     poster: s.poster || '',
@@ -225,6 +258,9 @@ export const signupVars = (view, body, extra = {}) => {
     'المبلغ': String(totalDue(view, kids)),
     'الرقم المرجعي': String(extra.ref || ''),
     'طريقة الدفع': acc?.name || '',
+    // ولي الأمر يوم البرنامج يرجع للرسالة لا للرابط، فالمكان يلزمه فيها
+    'المكان': view.place?.name || '',
+    'رابط الخريطة': view.place?.map || '',
   };
   // بقية الخانات بمسمياتها: العمر، الصف، المدرسة، وأي سؤال أضافه صاحب البرنامج
   for (const f of view.fields || []) {
@@ -245,7 +281,7 @@ export const waLink = (number, text) => {
 
 /** أسماء المتغيّرات المتاحة لهذا البرنامج — تُعرض لصاحبه وهو يكتب الرسالة. */
 export const varNames = (view) => [
-  'الطالب', 'البرنامج', 'الأيام', 'المبلغ', 'الرقم المرجعي', 'طريقة الدفع', 'الجوال',
+  'الطالب', 'البرنامج', 'المكان', 'رابط الخريطة', 'الأيام', 'المبلغ', 'الرقم المرجعي', 'طريقة الدفع', 'الجوال',
   ...(view?.fields || []).filter((f) => f.id !== 'name' && !isGuardianField(f)).map((f) => f.label),
 ];
 

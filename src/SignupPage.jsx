@@ -3,7 +3,7 @@
  * وما تعرف شيئًا عن بقية البيانات — تستقبل فقط.
  */
 import React, { useState, useEffect } from 'react';
-import { Check, AlertTriangle, Plus, X, Copy, Upload, MessageCircle, Share2 } from 'lucide-react';
+import { Check, AlertTriangle, Plus, X, Copy, Upload, MessageCircle, Share2, MapPin, ChevronLeft } from 'lucide-react';
 import { api } from './cloud.js';
 import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 import { isValidPhone } from './people.js';
@@ -109,6 +109,34 @@ function WaButton({ href, children }) {
       <MessageCircle size={19} /> {children}
     </a>
   );
+}
+
+/**
+ * مكان اللقاء.
+ *
+ * «وين؟» أول ما يسأل عنه ولي الأمر، فيُجاب قبل النموذج لا بعده. ويُضغط السطر
+ * فتنفتح الخريطة — نصٌّ يُنسخ ويُدوَّر عليه في الخريطة لا أحد يسويه.
+ *
+ * وبلا رابط يبقى السطر معلومةً تُقرأ، فما نعده بضغطةٍ ما تعطي شيئًا.
+ */
+function Place({ place }) {
+  if (!place?.name) return null;
+  const box = 'mt-4 border border-slate-200 rounded-2xl p-3 flex items-center gap-3 bg-white';
+  const body = (
+    <>
+      <div className="w-9 h-9 rounded-xl bg-brand-50 flex items-center justify-center shrink-0">
+        <MapPin size={18} className="text-brand-700" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="font-bold text-[13.5px] text-slate-800 leading-6">{place.name}</div>
+        {place.map && <div className="text-[11.5px] text-brand-600 font-semibold mt-0.5">اضغط ليفتح لك الخريطة</div>}
+      </div>
+      {place.map && <ChevronLeft size={18} className="text-slate-300 shrink-0" />}
+    </>
+  );
+  return place.map
+    ? <a href={place.map} target="_blank" rel="noreferrer" className={box}>{body}</a>
+    : <div className={box}>{body}</div>;
 }
 
 /**
@@ -457,6 +485,7 @@ export default function SignupPage({ token }) {
       <div className="bg-white rounded-2xl p-5 mb-4">
         {txt(view, 'intro') && <div className="text-xs text-slate-400 mb-1">{txt(view, 'intro')}</div>}
         <div className="font-extrabold text-xl text-slate-800">{view.programName}</div>
+        <Place place={view.place} />
         {details.length > 0 && (
           <ul className="mt-3 space-y-2">
             {details.map((line, i) => (

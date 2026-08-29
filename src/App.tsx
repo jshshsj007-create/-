@@ -3,7 +3,7 @@ import {
   Home, BookOpen, Wallet, Settings, Plus, X, Check, ChevronLeft, Trash2, Pencil,
   Users as UsersIcon, Calendar, TrendingUp, TrendingDown, Layers, ShieldCheck,
   Lock, Unlock, Trophy, LogOut, KeyRound, Plane, Search, AlertTriangle, Send,
-  RotateCcw, Wand2, CalendarDays, FileText, Copy, Clock, BookMarked, Eye, EyeOff, Link2,
+  RotateCcw, Wand2, CalendarDays, FileText, Copy, Clock, BookMarked, Eye, EyeOff, Link2, MapPin,
 } from 'lucide-react';
 import { api, clone, merge3, readSession, writeSession, clearSession, readPending, writePending, clearPending } from './cloud.js';
 import {
@@ -14,7 +14,7 @@ import {
 import { STATES, TONES, studentState, stateCounts, stateOpts, NEAR, FAR } from './status.js';
 import { stamped, traceText, agoText } from './trace.js';
 import { trashed, pruned, sortedTrash, leftText, kindLabel, TRASH_DAYS } from './trash.js';
-import { makeToken as makeSignupToken, TEXTS, CLOSED, waIntl, waLink, varNames, fieldsFor, dayLabel, DEFAULT_WA_TEMPLATE } from './signup.js';
+import { makeToken as makeSignupToken, TEXTS, CLOSED, waIntl, waLink, varNames, fieldsFor, dayLabel, mapHref, DEFAULT_WA_TEMPLATE } from './signup.js';
 import { readImage, POSTER, GALLERY } from './img.js';
 import { qrDataUrl, qrPngBlob } from './qr.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
@@ -31,7 +31,7 @@ import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v5.10';
+const APP_VERSION = 'v5.11';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'معلّم خيركم', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -421,6 +421,8 @@ const defaultData = () => ({
    * الجوال واسم الطالب مقفولان — الأول يمنع التكرار، والثاني هو المشترك نفسه.
    */
   signupFields: defaultSignupFields(),
+  /** مكان الفريق: ثابت، فيُكتب مرة ويجري على كل رابط ورسالة. */
+  place: { name: '', map: '' },
 });
 
 export const LOCKED_FIELDS = ['gPhone', 'name'];
@@ -532,6 +534,8 @@ export function migrate(loaded) {
     if (LOCKED_FIELDS.includes(f.id) && !d.signupFields.some((x) => x.id === f.id)) d.signupFields.push(f);
   }
   d.faidAccounts = d.faidAccounts.map((a) => ({ transferInfo: '', publicName: '', needsReceipt: false, ...a }));
+  // مكان الفريق أُضيف بعد ما مشت البيانات، فنعطي القديم موضعًا فاضيًا
+  d.place = { name: '', map: '', ...(d.place || {}) };
   // التسعير كان خيارًا واحدًا لا غير؛ صار اليومي والباقات يتعايشان
   d.programs = d.programs.map((p) => {
     if (!p.signup || p.signup.allowPerDay !== undefined) return p;
@@ -549,6 +553,8 @@ export const emptySignup = () => ({
   // محتوى الصفحة اللي يكتبه صاحب البرنامج: صورة إعلان ومعرض ونقاط ونصوص
   poster: '', gallery: [], details: '', notice: '', texts: {},
   waContact: true, waRedirect: true, waTemplate: '',
+  // فاضٍ = خذ مكان الفريق. ولا يُكتب هنا إلا برنامجٌ في مكان آخر
+  place: { name: '', map: '' },
 });
 
 /* ------------------------------ عناصر واجهة عامة ------------------------------ */
@@ -1130,6 +1136,9 @@ export default function App() {
   const [khayrMsg, setKhayrMsg] = useState('');
   const [weekTab, setWeekTab] = useState('finance');
   const [programTab, setProgramTab] = useState('days');
+  // البرنامج اللي فُتحت له خانات «مكان ثاني». معرّفٌ لا `true` عشان ما تبقى
+  // مفتوحة على البرنامج اللي بعده وهي فاضية.
+  const [ownPlace, setOwnPlace] = useState('');
   const [settingsTab, setSettingsTab] = useState('users');
   const [setupLevel, setSetupLevel] = useState('الكل');
   const [payFilter, setPayFilter] = useState('all');   // فلترة الطلاب حسب طريقة الدفع
@@ -4005,6 +4014,58 @@ export default function App() {
                             onChange={(e) => typeSignup({ notice: e.target.value })}
                             placeholder="مثال: جهّز إيصال التحويل قبل ما تبدأ" />
                         </Field>
+                      </div>
+
+                      <div className={cardCls}>
+                        <div className="font-bold text-slate-800 mb-1">المكان</div>
+                        <div className="text-xs text-slate-400 mb-4">
+                          مكان واحد للفريق، يطلع في كل رابط وكل رسالة. تكتبه مرة، ولو بدّلتم الجامع تعدّله هنا وحده.
+                        </div>
+                        <Field label="اسم المكان">
+                          <input className={inputCls} value={data.place?.name || ''}
+                            onChange={(e) => saveTyping({ ...data, place: { ...(data.place || {}), name: e.target.value } })}
+                            placeholder="جامع الأمير سلطان — حي النهضة" />
+                        </Field>
+                        <Field label="رابط الخريطة — اختياري" hint="افتح قوقل ماب، اضغط «مشاركة»، وألصق الرابط هنا.">
+                          <input className={inputCls} dir="ltr" value={data.place?.map || ''}
+                            onChange={(e) => saveTyping({ ...data, place: { ...(data.place || {}), map: e.target.value } })}
+                            placeholder="https://maps.app.goo.gl/…" />
+                          {data.place?.map && !mapHref(data.place.map) && (
+                            <div className="text-red-500 text-xs mt-1.5">الرابط مو واضح. ألصق رابط قوقل ماب كما هو.</div>
+                          )}
+                        </Field>
+
+                        {/* البرنامج الذي يقع في غير مكان الفريق يكتب مكانه، ويغلب */}
+                        <div className="border-t border-slate-100 pt-4">
+                          {(ownPlace === program.id || s.place?.name || s.place?.map) ? (
+                            <>
+                              <div className="flex items-center justify-between mb-3">
+                                <div className="text-sm font-semibold text-slate-700">وهذا البرنامج في مكان ثاني</div>
+                                <button className="text-xs text-red-500 font-semibold"
+                                  onClick={() => { setOwnPlace(''); patchSignup({ place: { name: '', map: '' } }); }}>
+                                  شِله
+                                </button>
+                              </div>
+                              <Field label="اسم المكان">
+                                <input className={inputCls} value={s.place?.name || ''}
+                                  onChange={(e) => typeSignup({ place: { ...(s.place || {}), name: e.target.value } })}
+                                  placeholder="جامع آخر — حي آخر" />
+                              </Field>
+                              <Field label="رابط الخريطة — اختياري">
+                                <input className={inputCls} dir="ltr" value={s.place?.map || ''}
+                                  onChange={(e) => typeSignup({ place: { ...(s.place || {}), map: e.target.value } })}
+                                  placeholder="https://maps.app.goo.gl/…" />
+                              </Field>
+                              <div className="text-xs text-slate-400">
+                                يغلب على مكان الفريق في هذا البرنامج وحده. واتركه فاضيًا فيرجع لمكان الفريق.
+                              </div>
+                            </>
+                          ) : (
+                            <button className={btnGhostBox + ' w-full'} onClick={() => setOwnPlace(program.id)}>
+                              <MapPin size={15} /> هذا البرنامج في مكان ثاني
+                            </button>
+                          )}
+                        </div>
                       </div>
 
                       <div className={cardCls}>
