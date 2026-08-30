@@ -57,20 +57,23 @@ function Gallery({ ids, alt }) {
 
   return (
     <>
-      <div className="bg-white rounded-2xl p-2.5 mb-4">
+      <div className="bg-white rounded-2xl p-2.5 mb-3">
         <button type="button" onClick={() => setFull(true)} {...swipe}
-          className="w-full h-[46vh] min-h-[220px] max-h-[420px] rounded-xl bg-slate-100 flex items-center justify-center overflow-hidden">
+          className="w-full h-[38vh] min-h-[190px] max-h-[330px] rounded-xl bg-slate-100 flex items-center justify-center overflow-hidden">
           <img src={src(ids[at])} alt={alt || ''} className="max-w-full max-h-full object-contain block" />
         </button>
 
+        {/*
+          كان تحتها شريط مصغّرات يأكل ستين بكسل من الشاشة الأولى. والنقاط
+          والعدّاد يقولان نفس الشيء — «فيه غيرها، اسحب» — في عُشر المساحة.
+        */}
         {ids.length > 1 && (
-          <div className="flex gap-2 mt-2.5 overflow-x-auto">
+          <div className="flex items-center justify-center gap-2 pt-2 pb-0.5">
             {ids.map((id, i) => (
-              <button key={id} type="button" onClick={() => setAt(i)}
-                className={`w-[70px] h-[52px] rounded-lg overflow-hidden shrink-0 border-2 bg-slate-100 ${i === at ? 'border-brand-700' : 'border-transparent'}`}>
-                <img src={src(id)} alt="" className={`w-full h-full block ${i === at ? 'object-contain' : 'object-cover'}`} />
-              </button>
+              <button key={id} type="button" onClick={() => setAt(i)} aria-label={`صورة ${i + 1}`}
+                className={`h-1.5 rounded-full transition-all ${i === at ? 'w-5 bg-brand-700' : 'w-1.5 bg-slate-300'}`} />
             ))}
+            <span className="text-[11px] text-slate-400 mr-1.5">{at + 1} من {ids.length}</span>
           </div>
         )}
       </div>
@@ -121,22 +124,58 @@ function WaButton({ href, children }) {
  */
 function Place({ place }) {
   if (!place?.name) return null;
-  const box = 'mt-4 border border-slate-200 rounded-2xl p-3 flex items-center gap-3 bg-white';
+  // سطرٌ داخل البطاقة لا صندوقٌ فوقها: صار محتوى المكان أهمّ من إطاره
+  const box = 'mt-3 pt-3 border-t border-slate-100 flex items-center gap-2.5';
   const body = (
     <>
-      <div className="w-9 h-9 rounded-xl bg-brand-50 flex items-center justify-center shrink-0">
-        <MapPin size={18} className="text-brand-700" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="font-bold text-[13.5px] text-slate-800 leading-6">{place.name}</div>
-        {place.map && <div className="text-[11.5px] text-brand-600 font-semibold mt-0.5">اضغط ليفتح لك الخريطة</div>}
-      </div>
-      {place.map && <ChevronLeft size={18} className="text-slate-300 shrink-0" />}
+      <MapPin size={15} className="text-brand-700 shrink-0" />
+      <span className="font-semibold text-[12.5px] text-slate-700 leading-5 min-w-0">{place.name}</span>
+      {place.map && (
+        <span className="text-[11.5px] text-brand-600 font-bold mr-auto shrink-0 flex items-center">
+          الخريطة <ChevronLeft size={13} />
+        </span>
+      )}
     </>
   );
   return place.map
     ? <a href={place.map} target="_blank" rel="noreferrer" className={box}>{body}</a>
     : <div className={box}>{body}</div>;
+}
+
+/** الحقائق الثلاث: شريط واحد مقسوم — لا ثلاث بطاقات ولا ثلاثة أسطر. */
+function Facts({ facts }) {
+  if (!facts?.length) return null;
+  return (
+    <div className="mt-3 flex rounded-xl border border-slate-100 bg-slate-50 overflow-hidden">
+      {facts.map((f, i) => (
+        <div key={f.id} className={`flex-1 py-2 px-1 text-center ${i ? 'border-r border-slate-100' : ''}`}>
+          <div className="text-[13px] font-extrabold text-slate-800 whitespace-nowrap">{f.value}</div>
+          <div className="text-[9.5px] text-slate-400 mt-px">{f.label}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * الأنشطة.
+ *
+ * كانت نقاطًا رمادية بجانب «يوم الجمعة» و«من ٧ إلى ١٤» — فبطولة الكرة والملعب
+ * الصابوني، وهي التي تُقنع الولد، تُقرأ كما يُقرأ جدول مواعيد. شاراتٌ تُمسح
+ * بالعين، وفي صفّين بدل ستة.
+ */
+function Chips({ chips }) {
+  if (!chips?.length) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {chips.map((c, i) => (
+        <span key={i} className="bg-white border border-slate-200 rounded-xl px-2.5 py-[7px] text-[12.5px] font-semibold text-slate-800 flex items-center gap-1.5">
+          {c.icon && <span className="text-[14px] leading-none">{c.icon}</span>}
+          {c.text}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 /**
@@ -280,6 +319,23 @@ export default function SignupPage({ token }) {
   const [result, setResult] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [openMore, setOpenMore] = useState([]);   // أبناءٌ فُتحت تفاصيلهم الاختيارية
+  const [atForm, setAtForm] = useState(false);    // وصل النموذج، فالزر الثابت ما عاد له معنى
+  const formTop = React.useRef(null);
+
+  /**
+   * الزر الثابت يختفي عند النموذج: ما فيه معنى لزرٍّ يوعد بنقلك إلى مكانٍ
+   * أنت واقفٌ فيه. وبلا `IntersectionObserver` يبقى ظاهرًا — ظهورٌ زائد
+   * أهون من زرٍّ لا يظهر أصلًا.
+   */
+  useEffect(() => {
+    const el = formTop.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return undefined;
+    const io = new IntersectionObserver(([e]) => setAtForm(e.isIntersecting), { threshold: 0 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [state]);
+
   const [goWa, setGoWa] = useState('');
   const [closedWa, setClosedWa] = useState('');
   const [closedTexts, setClosedTexts] = useState({ title: '', text: '' });
@@ -408,6 +464,15 @@ export default function SignupPage({ token }) {
   const fields = view.fields;
   const guardianFields = fields.filter(isGuardianField);
   const kidFields = fields.filter((f) => f.id !== 'name' && !isGuardianField(f));
+  /**
+   * المطلوب ظاهر، والاختياري مطويّ خلف سطر.
+   *
+   * ستّ خانات مفتوحة تُقرأ عبئًا وإن كان نصفها ما يلزم. ومن أراد أن يكتب الصف
+   * والمدرسة فتحها، ومن لم يُرد مرّ. والقرار في أيّها مطلوب يبقى لصاحب
+   * التطبيق في شاشة الخانات — ما غيّرناه، إنما أخفينا ما قال هو إنه اختياري.
+   */
+  const mustFields = kidFields.filter((f) => f.required);
+  const moreFields = kidFields.filter((f) => !f.required);
   // شبكة أمان: أي خطأ ما لقى خانة يعرضها ما ينفع يختفي بصمت
   const shownKeys = new Set([
     ...guardianFields.map((f) => f.id), 'accountId', 'kids', '_', 'receipt',
@@ -451,9 +516,16 @@ export default function SignupPage({ token }) {
   };
 
   const total = totalDue(view, kids);
-  // كل سطر يكتبه صاحب البرنامج يصير نقطة
-  const details = String(view.details || '').split('\n').map((l) => l.trim()).filter(Boolean);
-  const contactHref = waLink(view.wa.number, '');
+  const contactHref = view.wa.contactUrl || waLink(view.wa.number, '');
+
+  /**
+   * السعر في الرأس. والبرنامج المُباع باقاتٍ له أسعار، فنعرض أرخصها مسبوقًا
+   * بـ«من» — رقمٌ واحدٌ مطلقٌ يكذب على من اختار الأغلى.
+   */
+  const prices = (view.usePackages ? view.packages.map((p) => Number(p.price || 0)) : [Number(view.price || 0)])
+    .filter((n) => n > 0);
+  const headline = prices.length ? Math.min(...prices) : 0;
+  const fromPrice = prices.length > 1 && Math.max(...prices) !== headline;
 
   /**
    * خانات ولي الأمر تنزل داخل بطاقة الابن الأول، تحت اسمه مباشرة — لأنها
@@ -482,28 +554,50 @@ export default function SignupPage({ token }) {
       {/* الصور أولًا: يشوف قبل ما يقرأ. ثم النص، وفي ذيله زر المشاركة */}
       <Gallery ids={[view.poster, ...(view.gallery || [])].filter(Boolean)} alt={view.programName} />
 
-      <div className="bg-white rounded-2xl p-5 mb-4">
-        {txt(view, 'intro') && <div className="text-xs text-slate-400 mb-1">{txt(view, 'intro')}</div>}
-        <div className="font-extrabold text-xl text-slate-800">{view.programName}</div>
+      <div className="bg-white rounded-2xl p-4 mb-3">
+        {txt(view, 'intro') && <div className="text-[11.5px] text-slate-400 mb-0.5">{txt(view, 'intro')}</div>}
+        <div className="flex items-start gap-2.5">
+          <div className="font-extrabold text-[19px] text-slate-800 leading-[1.4] flex-1 min-w-0">{view.programName}</div>
+          {/* السعر يُعرف قبل ما يعبّي، فما يقف في نص النموذج */}
+          {headline > 0 && (
+            <span className="shrink-0 bg-green-50 border border-green-200 text-green-900 rounded-lg px-2 py-1 text-[13px] font-extrabold">
+              {fromPrice && <span className="font-bold">من </span>}
+              <span dir="ltr">{fmt(headline)}</span> ر.س
+            </span>
+          )}
+        </div>
+        <Facts facts={view.facts} />
         <Place place={view.place} />
-        {details.length > 0 && (
-          <ul className="mt-3 space-y-2">
-            {details.map((line, i) => (
-              <li key={i} className="flex gap-2.5 text-[13.5px] text-slate-600 leading-6">
-                <span className="w-1.5 h-1.5 rounded-full bg-brand-600 shrink-0 mt-2.5" />
-                <span>{line}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-        <ShareButton title={shareTitle} label={txt(view, 'share')} />
       </div>
 
-      {view.notice && <div className="mb-4"><Note tone="amber">{view.notice}</Note></div>}
-
-      {view.wa.contact && contactHref && (
-        <div className="mb-4"><WaButton href={contactHref}>{txt(view, 'contact')}</WaButton></div>
+      {view.chips?.length > 0 && (
+        <div className="mb-3">
+          {txt(view, 'activities') && (
+            <div className="text-[12px] font-extrabold text-slate-400 px-1 mb-1.5">{txt(view, 'activities')}</div>
+          )}
+          <Chips chips={view.chips} />
+        </div>
       )}
+
+      {/* الطمأنة تهمس ولا تصيح: هي جواب أبٍ متردّد، لا إعلانٌ يُزاحم الأنشطة */}
+      {view.trust && (
+        <div className="text-[11.5px] text-slate-500 leading-6 px-1 mb-3 flex gap-1.5">
+          <Check size={14} className="text-brand-600 shrink-0 mt-1" />
+          <span>{view.trust}</span>
+        </div>
+      )}
+
+      {view.notice && <div className="mb-3"><Note tone="amber">{view.notice}</Note></div>}
+
+      {/* أنحف مما كان: هو ثانويٌّ للتسجيل، وكان أعرض منه وأبرز */}
+      {view.wa.contact && contactHref && (
+        <a href={contactHref} target="_blank" rel="noreferrer"
+          className="w-full bg-[#25D366] text-white font-bold rounded-xl py-2.5 mb-3 flex items-center justify-center gap-2 text-[13.5px]">
+          <MessageCircle size={17} /> {txt(view, 'contact')}
+        </a>
+      )}
+
+      <div ref={formTop} />
 
       {kids.map((kid, i) => (
         <div key={i} className="bg-white rounded-2xl p-5 mb-4">
@@ -527,7 +621,7 @@ export default function SignupPage({ token }) {
           {/* الجوال تحت اسم الابن الأول، ويُسأل مرة وحدة للعائلة كلها */}
           {i === 0 && guardianBlock}
 
-          {kidFields.map((f) => (
+          {mustFields.map((f) => (
             <div key={f.id} data-bad={errors[`kid${i}.${f.id}`] ? '1' : undefined}>
               <Row label={f.label} required={f.required} error={errors[`kid${i}.${f.id}`]}>
                 <FieldInput field={f} value={kid[f.id]} bad={!!errors[`kid${i}.${f.id}`]}
@@ -535,6 +629,25 @@ export default function SignupPage({ token }) {
               </Row>
             </div>
           ))}
+
+          {moreFields.length > 0 && (
+            (openMore.includes(i) || moreFields.some((f) => errors[`kid${i}.${f.id}`])) ? (
+              moreFields.map((f) => (
+                <div key={f.id} data-bad={errors[`kid${i}.${f.id}`] ? '1' : undefined}>
+                  <Row label={f.label} required={f.required} error={errors[`kid${i}.${f.id}`]}>
+                    <FieldInput field={f} value={kid[f.id]} bad={!!errors[`kid${i}.${f.id}`]}
+                      onChange={(v) => { setKid(i, { [f.id]: v }); setErrors({ ...errors, [`kid${i}.${f.id}`]: null }); }} />
+                  </Row>
+                </div>
+              ))
+            ) : (
+              <button type="button" onClick={() => setOpenMore([...openMore, i])}
+                className="w-full mb-4 border border-slate-200 rounded-xl px-3.5 py-3 flex items-center justify-between text-[13px] font-semibold text-slate-600">
+                <span>{txt(view, 'moreFields')}</span>
+                <span className="text-slate-300 text-lg leading-none">+</span>
+              </button>
+            )
+          )}
 
           {view.usePackages && (
             <div data-bad={errors[`kid${i}.package`] ? '1' : undefined}>
@@ -741,6 +854,31 @@ export default function SignupPage({ token }) {
         {state === 'sending' ? 'جاري الإرسال...' : txt(view, 'submit')}
       </button>
       <div className="text-center text-[11px] text-slate-400 mt-3">بياناتك تُستخدم لتنظيم البرنامج فقط.</div>
+      <div className="mt-4"><ShareButton title={shareTitle} label={txt(view, 'share')} wide /></div>
+
+      {/*
+        من اقتنع من أول شاشة يسجّل من موضعه، فما ينزل الصفحة كلها يدوّر أين
+        يبدأ. و«تواصل معنا» أيقونة: هو ثانويٌّ، وكان أعرض من التسجيل نفسه.
+      */}
+      {!atForm && (txt(view, 'goForm') || contactHref) && (
+        <div className="fixed bottom-0 inset-x-0 z-40 bg-white/96 backdrop-blur border-t border-slate-200 px-4 py-2.5">
+          <div className="max-w-lg mx-auto flex items-center gap-2.5">
+            {view.wa.contact && contactHref && (
+              <a href={contactHref} target="_blank" rel="noreferrer" aria-label={txt(view, 'contact')}
+                className="w-12 h-12 rounded-2xl bg-[#25D366] text-white flex items-center justify-center shrink-0">
+                <MessageCircle size={21} />
+              </a>
+            )}
+            {txt(view, 'goForm') && (
+              <button type="button" className="flex-1 bg-brand-900 text-white font-extrabold rounded-2xl py-3.5 text-[15px]"
+                onClick={() => formTop.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+                {txt(view, 'goForm')}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {!atForm && <div className="h-16" />}
     </Shell>
   );
 }

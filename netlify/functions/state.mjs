@@ -244,7 +244,9 @@ export default async (req) => {
       data: enforceOnePerPhone(next.data),
       signupLog: [...recent, { at: now, phone: String(body.answers?.gPhone || '') }],
     });
-    return json({ ok: true, count: next.count, ref: String(doc.rev + 1).padStart(4, '0') });
+    // الرقم صار مختومًا على التسجيل نفسه، فما يعود يُشتقّ من رقم النسخة:
+    // ذاك كان يقفز مع كل تعديل ولا يبقى عند أحد، فما ينفع مرجعًا لإيصال
+    return json({ ok: true, count: next.count, ref: next.refs.join(' · ') });
   }
 
   // أول مدير: يُسمح فيه مرة وحدة بس، وبعدها يُقفل الباب.

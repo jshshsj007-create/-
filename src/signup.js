@@ -6,6 +6,7 @@
  * يستخدمه مرة ثانية لأن ما يجي من الشبكة لا يُوثق به أبدًا.
  */
 import { isValidPhone, normalizePhone, upsertRegistration } from './people.js';
+import { nextRef, refPrefix, yearOf } from './receipt.js';
 
 /** رمز قصير للرابط: سهل يُقرأ ويُنسخ، وعشوائي بما يكفي إنه ما ينحزر. */
 export const makeToken = (rand = Math.random) => {
@@ -68,6 +69,61 @@ export const placeOf = (data, program) => {
     map: mapHref(pick?.map),
   };
 };
+
+/**
+ * رابط مجموعة واتساب.
+ *
+ * زر «تواصل معنا» أخضر وعليه علامة واتساب، فما نقبل فيه غير واتساب: من ألصق
+ * فيه موقعًا آخر — عن غلط أو عبث — أرسل ولي الأمر إلى غير ما وعده الزر.
+ * ويرجّع فاضيًا فيرجع الزر إلى رقم الفريق، فلا يبقى بلا وجهة.
+ */
+export const waGroupLink = (url) => {
+  const u = String(url || '').trim().replace(/^https?:\/\//i, '');
+  return /^(chat\.whatsapp\.com|wa\.me|api\.whatsapp\.com)\/\S+$/i.test(u) ? 'https://' + u : '';
+};
+
+/**
+ * وجهة زر «تواصل معنا»: رقم الفريق، أو مجموعة هذا البرنامج.
+ *
+ * كل برنامج ومجموعته، فالوجهة على البرنامج لا على الفريق. والرابط الساقط
+ * يرجع للرقم بدل ما يصير الزر ميتًا.
+ */
+export const contactUrl = (data, program) => {
+  const c = program?.signup?.contact;
+  const group = c?.mode === 'group' ? waGroupLink(c?.link) : '';
+  return group || waLink(data?.waNumber, '');
+};
+
+/**
+ * سطر من «وش يصير في اليوم؟».
+ *
+ * يبدأ الكاتب سطره بإيموجي إن شاء فيصير أيقونة الشارة، وإلا نزلت الشارة بلا
+ * صورة. ولا نخمّن نحن أيقونةً من الكلام: تخمينٌ يخطئ مرة فيبقى الخطأ معروضًا
+ * على كل من فتح الرابط.
+ */
+const ICON_AT_START = /^(\p{Extended_Pictographic}️?(?:‍\p{Extended_Pictographic}️?)*)\s*/u;
+export const parseChip = (line) => {
+  const s = String(line || '').trim();
+  const m = ICON_AT_START.exec(s);
+  return m ? { icon: m[1], text: s.slice(m[0].length).trim() } : { icon: '', text: s };
+};
+
+/** أسطر «وش يصير»، كل سطر شارة. الفاضي ينشال فما تنزل شارة بيضاء. */
+export const chipsOf = (text) =>
+  String(text || '').split('\n').map((l) => parseChip(l)).filter((c) => c.text || c.icon);
+
+/**
+ * الحقائق الثلاث: اليوم والوقت والعمر.
+ *
+ * كانت تُكتب أسطرًا في التفاصيل فتضيع بين الأنشطة، وهي أول ما يُبحث عنه. فلها
+ * خاناتها، وتنزل شريطًا يُمسح بالعين في ثانية. والفاضية منها تُطوى فلا يبقى
+ * لها موضع فارغ.
+ */
+export const factsOf = (s) => [
+  { id: 'day', label: 'اليوم', value: String(s?.facts?.day || '').trim() },
+  { id: 'time', label: 'الوقت', value: String(s?.facts?.time || '').trim() },
+  { id: 'age', label: 'العمر', value: String(s?.facts?.age || '').trim() },
+].filter((f) => f.value);
 
 /** خانات النموذج لهذا البرنامج: العامة + أسئلته الخاصة. */
 export const fieldsFor = (data, program) => [
@@ -166,10 +222,17 @@ export const publicView = (data, program) => {
     details: s.details || '',
     notice: s.notice || '',
     texts: s.texts || {},
+    // الحقائق تُمسح بالعين، والأنشطة تُغري، وسطر الطمأنة يهمس — ثلاثة أدوار
+    // مختلفة كانت في قائمة نقاطٍ واحدة، فما أدّى واحدٌ منها دوره
+    facts: factsOf(s),
+    chips: chipsOf(s.details),
+    trust: String(s.trust || '').trim(),
     wa: {
       // رقم واحد للفريق كله، يُكتب مرة وحدة
       number: waIntl(data.waNumber),
       contact: s.waContact !== false,
+      // وجهة زر «تواصل معنا»: رقم الفريق أو مجموعة هذا البرنامج
+      contactUrl: contactUrl(data, program),
       redirect: s.waRedirect !== false,
       // نص هذا البرنامج، وإلا النص العام، وإلا المقترح
       template: String(s.waTemplate || data.waTemplate || DEFAULT_WA_TEMPLATE),
@@ -185,6 +248,10 @@ export const publicView = (data, program) => {
  */
 export const TEXTS = {
   intro: 'التسجيل في',
+  activities: 'وش يصير في اليوم؟',
+  goForm: 'سجّل ابنك الآن',
+  moreFields: 'تفاصيل إضافية — اختياري',
+  priceLabel: 'الاشتراك',
   guardian: 'بيانات ولي الأمر',
   guardianHint: 'جوالك هو اللي نعرفك فيه لو سجّلت مرة ثانية.',
   student: 'بيانات الطالب',
@@ -415,6 +482,15 @@ export const applySubmission = (data, program, view, body, { newId, now = Date.n
   const extras = {};
   for (const id of extraIds) if (answers[id] !== undefined) extras[id] = answers[id];
 
+  /**
+   * رقم الإيصال يُختم عند التسجيل لا عند التأكيد: ولي الأمر يشوفه في صفحة
+   * النجاح، فلازم يكون هو نفسه الذي تلقاه أنت في قائمتك. ورقمٌ لكل ابن —
+   * لأن التأكيد يمشي على المشترك لا على العائلة، فقد يُؤكَّد أحدهما دون أخيه.
+   */
+  const pre = refPrefix(yearOf(program.termKey));
+  const first = parseInt(nextRef(data, yearOf(program.termKey)).slice(pre.length), 10);
+  const refFor = (i) => pre + String(first + i).padStart(4, '0');
+
   const grouped = program.type === 'مجمع';
   const newParts = res.linked.map(({ student }, i) => {
     const kid = kids[i] || {};
@@ -422,6 +498,7 @@ export const applySubmission = (data, program, view, body, { newId, now = Date.n
     for (const id of extraIds) if (kid[id] !== undefined) kidExtras[id] = kid[id];
     return {
       id: newId(),
+      ref: refFor(i),
       name: student.name,
       studentId: student.id,
       amount: dueFor(view, kid),
@@ -463,6 +540,7 @@ export const applySubmission = (data, program, view, body, { newId, now = Date.n
     data: { ...data, guardians: res.guardians, students: res.students, programs },
     guardian: res.guardian,
     count: newParts.length,
+    refs: newParts.map((p) => p.ref),
   };
 };
 

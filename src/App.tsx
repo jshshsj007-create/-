@@ -14,24 +14,27 @@ import {
 import { STATES, TONES, studentState, stateCounts, stateOpts, NEAR, FAR } from './status.js';
 import { stamped, traceText, agoText } from './trace.js';
 import { trashed, pruned, sortedTrash, leftText, kindLabel, TRASH_DAYS } from './trash.js';
-import { makeToken as makeSignupToken, TEXTS, CLOSED, waIntl, waLink, varNames, fieldsFor, dayLabel, mapHref, DEFAULT_WA_TEMPLATE } from './signup.js';
+import { makeToken as makeSignupToken, TEXTS, CLOSED, waIntl, waLink, varNames, fieldsFor, dayLabel, mapHref, waGroupLink, placeOf, DEFAULT_WA_TEMPLATE } from './signup.js';
 import { readImage, POSTER, GALLERY } from './img.js';
 import { qrDataUrl, qrPngBlob } from './qr.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
 import { DAY_NAMES, hourLabel, scheduleOf } from './schedule.js';
 import { readTheme, writeTheme, applyTheme, readHideMoney, writeHideMoney } from './theme.js';
 import {
+  nextRef, yearOf, defaultReceipt, REC_FIELDS, recOn, receiptPngBlob, receiptFileName, hijri, shareFile,
+} from './receipt.js';
+import {
   SURAHS, PARTS, emptyWird, rangeText, carryAfter, studentTotals,
   studentSessions, studentOfUser, khayrRows, khayrReportText,
   PAGES_PER_PART, toPages, partsText, memorizedPages, memRangeText,
   reviewCycles, cycleTarget, cycleDrift, stopsOf, stopText, pagesBetween, pagesOf,
 } from './khayr.js';
-import { FaydhLogo, TEAM_NAME } from './logo.jsx';
+import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v5.11';
+const APP_VERSION = 'v5.12';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'معلّم خيركم', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -423,6 +426,8 @@ const defaultData = () => ({
   signupFields: defaultSignupFields(),
   /** مكان الفريق: ثابت، فيُكتب مرة ويجري على كل رابط ورسالة. */
   place: { name: '', map: '' },
+  /** الإيصال: عبارته وحقوله. واحدة للفريق كله. */
+  receipt: defaultReceipt(),
 });
 
 export const LOCKED_FIELDS = ['gPhone', 'name'];
@@ -536,6 +541,12 @@ export function migrate(loaded) {
   d.faidAccounts = d.faidAccounts.map((a) => ({ transferInfo: '', publicName: '', needsReceipt: false, ...a }));
   // مكان الفريق أُضيف بعد ما مشت البيانات، فنعطي القديم موضعًا فاضيًا
   d.place = { name: '', map: '', ...(d.place || {}) };
+  // والإيصال كذلك. الحقول تُدمج لا تُستبدل، فالحقل الجديد يظهر بلا ما يُطفأ
+  d.receipt = {
+    ...defaultReceipt(),
+    ...(d.receipt || {}),
+    fields: { ...defaultReceipt().fields, ...(d.receipt?.fields || {}) },
+  };
   // التسعير كان خيارًا واحدًا لا غير؛ صار اليومي والباقات يتعايشان
   d.programs = d.programs.map((p) => {
     if (!p.signup || p.signup.allowPerDay !== undefined) return p;
@@ -552,9 +563,13 @@ export const emptySignup = () => ({
   allowPerDay: true, packages: [],
   // محتوى الصفحة اللي يكتبه صاحب البرنامج: صورة إعلان ومعرض ونقاط ونصوص
   poster: '', gallery: [], details: '', notice: '', texts: {},
+  // الحقائق الثلاث وسطر الطمأنة: كانت كلها أسطرًا في «التفاصيل» فاختلطت أدوارها
+  facts: { day: '', time: '', age: '' }, trust: '',
   waContact: true, waRedirect: true, waTemplate: '',
   // فاضٍ = خذ مكان الفريق. ولا يُكتب هنا إلا برنامجٌ في مكان آخر
   place: { name: '', map: '' },
+  // وجهة زر «تواصل معنا»: رقم الفريق، أو مجموعة هذا البرنامج
+  contact: { mode: 'number', link: '' },
 });
 
 /* ------------------------------ عناصر واجهة عامة ------------------------------ */
@@ -632,6 +647,9 @@ function ImagePick({ label, onPick, busy, wide, square }) {
 /** الكلمات اللي يقدر صاحب البرنامج يغيّرها في صفحة ولي الأمر. */
 const TEXT_LABELS = [
   ['intro', 'السطر فوق اسم البرنامج'],
+  ['activities', 'عنوان «وش يصير في اليوم؟»'],
+  ['goForm', 'الزر الثابت أسفل الشاشة'],
+  ['moreFields', 'سطر «تفاصيل إضافية»'],
   ['guardian', 'عنوان قسم ولي الأمر'],
   ['guardianHint', 'الشرح تحته'],
   ['student', 'عنوان قسم الطالب'],
@@ -1139,6 +1157,7 @@ export default function App() {
   // البرنامج اللي فُتحت له خانات «مكان ثاني». معرّفٌ لا `true` عشان ما تبقى
   // مفتوحة على البرنامج اللي بعده وهي فاضية.
   const [ownPlace, setOwnPlace] = useState('');
+  const [recBusy, setRecBusy] = useState('');   // المشترك الذي يُجهَّز إيصاله الآن
   const [settingsTab, setSettingsTab] = useState('users');
   const [setupLevel, setSetupLevel] = useState('الكل');
   const [payFilter, setPayFilter] = useState('all');   // فلترة الطلاب حسب طريقة الدفع
@@ -1704,6 +1723,9 @@ export default function App() {
       const patch = {
         participants: [...(l.participants || []), mark({
           id: uid(), name: form.name.trim(),
+          // من يضيفه صاحب التطبيق بيده يستحق إيصالًا مثل من سجّل بنفسه،
+          // فالترقيم واحد مهما كان الباب
+          ref: nextRef(next, yearOf(program?.termKey)),
           amount: accountId === 'unpaid' ? 0 : Number(form.amount || 0),
           accountId, attendance: 'معلق',
           // الربط بسجلّ الطالب هو اللي يخلّي تاريخه عبر المواسم يتجمّع في مكان واحد
@@ -2462,6 +2484,91 @@ export default function App() {
       };
     }),
   });
+
+  /** أين يقع هذا المشترك: أي برنامج، وأي أسبوع إن كان البرنامج منفصلًا. */
+  const locatePart = (partId) => {
+    for (const p of data.programs) {
+      if ((p.participants || []).some((x) => x.id === partId)) return { prog: p, week: null };
+      for (const w of p.weeks || []) {
+        if ((w.participants || []).some((x) => x.id === partId)) return { prog: p, week: w };
+      }
+    }
+    return null;
+  };
+
+  /**
+   * الإيصال.
+   *
+   * البرنامج المنفصل ينزل التسجيل الواحد صفًّا لكل أسبوع، وكلها تحمل رقمًا
+   * واحدًا. فالورقة تجمعها: مبلغٌ واحد وأيامٌ مسمّاة — لا ورقة لكل أسبوع
+   * يظنّها ولي الأمر مطالبات متكرّرة.
+   *
+   * ولا تُصدر إلا لمن تأكّد وصول مبلغه: قبل ذلك ما استلمنا شيئًا نشهد به.
+   */
+  const receiptOf = (prog, part) => {
+    const mine = [];
+    const same = (x) => x.id === part.id || (part.ref && x.ref === part.ref);
+    for (const x of prog.participants || []) if (same(x)) mine.push({ part: x, week: null });
+    for (const w of prog.weeks || []) for (const x of w.participants || []) if (same(x)) mine.push({ part: x, week: w });
+    const paid = mine.filter((r) => !r.part.pending);
+    const rows = paid.length ? paid : mine;
+    const weeks = rows.map((r) => r.week).filter(Boolean);
+    const days = weeks.length
+      ? weeks.map((w) => w.name).join('، ')
+      : enrolledDays(part, prog.weeks || []).map((w) => w.name).join('، ');
+    return {
+      amount: rows.reduce((s, r) => s + (r.part.accountId === 'unpaid' ? 0 : Number(r.part.amount || 0)), 0),
+      days,
+      at: rows.map((r) => r.part.confirmedAt).filter(Boolean).sort()[0] || Date.now(),
+    };
+  };
+
+  const sendReceipt = async (part) => {
+    const at = locatePart(part.id);
+    if (!at) return;
+    const { prog } = at;
+
+    /* بياناتٌ سبقت الترقيم: نختم رقمها الآن ثم نصدر، فما يبقى مشتركٌ بلا إيصال */
+    let p = part;
+    if (!p.ref) {
+      const ref = nextRef(data, yearOf(prog.termKey));
+      p = { ...p, ref };
+      const stamp = (x) => (x.id === p.id ? { ...x, ref } : x);
+      save({
+        ...data,
+        programs: data.programs.map((x) => (x.id !== prog.id ? x : {
+          ...x,
+          participants: (x.participants || []).map(stamp),
+          weeks: (x.weeks || []).map((w) => ({ ...w, participants: (w.participants || []).map(stamp) })),
+        })),
+      });
+    }
+
+    const sum = receiptOf(prog, p);
+    const stu = (data.students || []).find((s) => s.id === p.studentId);
+    const g = stu && (data.guardians || []).find((x) => x.id === stu.guardianId);
+    const acc = data.faidAccounts.find((a) => a.id === p.accountId);
+
+    setRecBusy(p.id);
+    try {
+      const blob = await receiptPngBlob(data.receipt, {
+        team: TEAM_NAME,
+        ref: p.ref,
+        date: hijri(sum.at),
+        student: p.name,
+        guardian: g?.name || guardianNameFrom(p.name),
+        phone: g?.phone || '',
+        program: prog.name,
+        days: sum.days,
+        place: placeOf(data, prog).name,
+        amount: fmt(sum.amount),
+        pay: p.accountId === 'unpaid' ? '' : (acc?.name || ''),
+      }, { logo: LOGO_MARK_WHITE });
+      await shareFile(blob, receiptFileName(p.ref), `إيصال ${p.name}`);
+    } finally {
+      setRecBusy('');
+    }
+  };
 
   /**
    * متأخرات الطالب: ما بقي عليه في برامج سابقة عبر المواسم كلها.
@@ -3613,6 +3720,7 @@ export default function App() {
                     weeks={program.weeks}
                     locked={ledgerLocked}
                     onEdit={canMoney ? (p) => { setForm(participantForm(p, program.weeks)); setModal('editParticipant'); } : null}
+                    onReceipt={canMoney ? sendReceipt : null} recBusy={recBusy}
                     onRemove={isAdmin ? (p) => askConfirm(`حذف المشترك «${p.name}»؟`, () => removeParticipant(p.id)) : null}
                   />
                 )}
@@ -4004,16 +4112,66 @@ export default function App() {
                       {form.imgError && <div className="text-red-500 text-xs px-1">{form.imgError}</div>}
 
                       <div className={cardCls}>
-                        <Field label="تفاصيل البرنامج" hint="كل سطر يطلع نقطة عند ولي الأمر. اتركه فاضيًا فما يظهر شي.">
+                        <div className="text-sm font-medium text-slate-600 mb-1.5">الحقائق الثلاث</div>
+                        <div className="text-xs text-slate-400 mb-3 leading-6">
+                          تنزل شريطًا فوق النموذج يُمسح بالعين. الفاضية منها تُطوى.
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 mb-5">
+                          {[['day', 'اليوم', 'الجمعة'], ['time', 'الوقت', '٤ — ٨ م'], ['age', 'العمر', '٧ — ١٤']].map(([k, lab, ph]) => (
+                            <div key={k}>
+                              <label className="block text-[11px] text-slate-400 mb-1">{lab}</label>
+                              <input className={inputCls + ' text-center'} value={s.facts?.[k] || ''}
+                                onChange={(e) => typeSignup({ facts: { ...(s.facts || {}), [k]: e.target.value } })}
+                                placeholder={ph} />
+                            </div>
+                          ))}
+                        </div>
+
+                        <Field label="وش يصير في اليوم؟"
+                          hint="كل سطر شارة عند ولي الأمر. ابدأ السطر بإيموجي إن بغيت له أيقونة.">
                           <textarea className={inputCls + ' h-32 leading-7'} value={s.details || ''}
                             onChange={(e) => typeSignup({ details: e.target.value })}
-                            placeholder={'من (١/١٣) حتى (٢/١٥) = خمسة أسابيع\nمن الأحد حتى الأربعاء = ٢٠ يوم\nمن ٨ سنوات حتى ١٦ سنة'} />
+                            placeholder={'⚽ بطولة كرة قدم\n🫧 ملعب صابوني\n🏅 ميداليات ذهبية'} />
+                        </Field>
+
+                        <Field label="سطر الطمأنة — اختياري"
+                          hint="يطلع سطرًا رماديًا هامسًا تحت الأنشطة. مثال: طاقم سعودي · توجيهات تربوية · ثامن موسم">
+                          <input className={inputCls} value={s.trust || ''}
+                            onChange={(e) => typeSignup({ trust: e.target.value })}
+                            placeholder="طاقم سعودي · توجيهات تربوية" />
                         </Field>
                         <Field label="تنبيه أعلى الصفحة — اختياري" hint="يطلع في صندوق بارز قبل النموذج.">
                           <input className={inputCls} value={s.notice || ''}
                             onChange={(e) => typeSignup({ notice: e.target.value })}
                             placeholder="مثال: جهّز إيصال التحويل قبل ما تبدأ" />
                         </Field>
+                      </div>
+
+                      {/* الإيصال واحدٌ للفريق: شكله لا يتبدّل ببرنامج */}
+                      <div className={cardCls}>
+                        <div className="font-bold text-slate-800 mb-1">الإيصال</div>
+                        <div className="text-xs text-slate-400 mb-4 leading-6">
+                          يُصدر لمّا تضغط «وصل» على مشترك — لا لحظة ما يسجّل، لأن المبلغ ما وصلك بعد.
+                          وتلقاه بعدها على المشترك في القائمة، ترسله متى ما طلبه.
+                        </div>
+                        <Field label="عبارتك في ذيل الإيصال" hint="فرّغها فما تظهر.">
+                          <textarea className={inputCls + ' h-20 leading-7'} value={data.receipt?.note ?? ''}
+                            onChange={(e) => saveTyping({ ...data, receipt: { ...(data.receipt || {}), note: e.target.value } })}
+                            placeholder={defaultReceipt().note} />
+                        </Field>
+                        <div className="text-sm font-medium text-slate-600 mb-2">الحقول</div>
+                        <div className="border border-slate-100 rounded-xl divide-y divide-slate-50">
+                          {REC_FIELDS.map(([id, label]) => (
+                            <Toggle key={id} label={label} on={recOn(data.receipt, id)}
+                              onChange={(v) => save({
+                                ...data,
+                                receipt: { ...(data.receipt || {}), fields: { ...(data.receipt?.fields || {}), [id]: v } },
+                              })} />
+                          ))}
+                        </div>
+                        <div className="text-xs text-slate-400 mt-2.5 leading-6">
+                          ورقم الإيصال والتاريخ والمبلغ ثابتة ما تنشال — ورقةٌ بلا واحدٍ منها ما هي إيصالًا.
+                        </div>
                       </div>
 
                       <div className={cardCls}>
@@ -4098,6 +4256,45 @@ export default function App() {
 
                         <Toggle label="زر «تواصل معنا» في صفحة التسجيل" on={s.waContact !== false}
                           onChange={(v) => patchSignup({ waContact: v })} />
+
+                        {/* كل برنامج ومجموعته، فالوجهة على البرنامج لا على الفريق */}
+                        {s.waContact !== false && (() => {
+                          const c = s.contact || { mode: 'number', link: '' };
+                          const grp = c.mode === 'group';
+                          const pick = (mode) => patchSignup({ contact: { ...c, mode } });
+                          return (
+                            <div className="bg-slate-50 rounded-xl p-3 mb-4">
+                              <div className="text-xs text-slate-500 mb-2.5">يوديهم إلى:</div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <button onClick={() => pick('number')}
+                                  className={`rounded-lg py-2.5 text-sm font-semibold border ${grp ? 'bg-white border-slate-200 text-slate-600' : 'bg-brand-600 border-brand-600 text-white'}`}>
+                                  رقم الفريق
+                                </button>
+                                <button onClick={() => pick('group')}
+                                  className={`rounded-lg py-2.5 text-sm font-semibold border ${grp ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-slate-200 text-slate-600'}`}>
+                                  مجموعة واتساب
+                                </button>
+                              </div>
+                              {grp ? (
+                                <div className="mt-3">
+                                  <input className={inputCls} dir="ltr" value={c.link || ''}
+                                    onChange={(e) => typeSignup({ contact: { ...c, link: e.target.value } })}
+                                    placeholder="https://chat.whatsapp.com/…" />
+                                  <div className={`text-xs mt-1.5 ${c.link && !waGroupLink(c.link) ? 'text-red-500' : 'text-slate-400'}`}>
+                                    {c.link && !waGroupLink(c.link)
+                                      ? 'هذا مو رابط واتساب. الزر يرجع لرقم الفريق حتى تصلحه.'
+                                      : 'من المجموعة: «دعوة عبر رابط» ← انسخ ← ألصقه هنا.'}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="text-xs text-slate-400 mt-2.5" dir="ltr">
+                                  {data.waNumber || '—'}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+
                         <Toggle label="التحويل لواتساب بعد التسجيل"
                           hint="يشوف صفحة النجاح ورقمه المرجعي، ثم ينتقل للمحادثة."
                           on={s.waRedirect !== false} onChange={(v) => patchSignup({ waRedirect: v })} />
@@ -4305,6 +4502,7 @@ export default function App() {
                     locked={week.status === 'مغلق'}
                     onSet={(p, s) => setAttendance(p.id, s, week.id)}
                     onEdit={canMoney ? (p) => { setForm(participantForm(p, program.weeks)); setModal('editParticipant'); } : null}
+                    onReceipt={canMoney ? sendReceipt : null} recBusy={recBusy}
                   />
                 )}
                 <div className="mt-3 text-sm text-slate-500 px-1 flex flex-wrap gap-x-4 gap-y-1">
@@ -4445,6 +4643,7 @@ export default function App() {
                         onSetAttendance={(p, s) => setAttendance(p.id, s)}
                         locked={ledgerLocked}
                         onEdit={canMoney ? (p) => { setForm(participantForm(p)); setModal('editParticipant'); } : null}
+                        onReceipt={canMoney ? sendReceipt : null} recBusy={recBusy}
                         onRemove={isAdmin ? (p) => askConfirm(`حذف «${p.name}»؟`, () => removeParticipant(p.id)) : null}
                       />
                     )}
@@ -7305,7 +7504,7 @@ function LedgerFinance({ ledger, accounts, locked, canTransfer, onAdd, onRemove,
   );
 }
 
-function ParticipantsTable({ participants, accounts, showAttendance, statusOf, onSetAttendance, onEdit, onRemove, locked, weeks, showMoney = true, onConfirmWaiting }) {
+function ParticipantsTable({ participants, accounts, showAttendance, statusOf, onSetAttendance, onEdit, onRemove, locked, weeks, showMoney = true, onConfirmWaiting, onReceipt, recBusy }) {
   if (!participants.length) {
     return <div className={emptyCls}>ما فيه نتائج.</div>;
   }
@@ -7375,6 +7574,11 @@ function ParticipantsTable({ participants, accounts, showAttendance, statusOf, o
                 </td>
               )}
               <td className="px-4 py-3 text-left whitespace-nowrap">
+                {/* الإيصال لمن تأكّد وصول مبلغه وحده — وقبله ما استلمنا شيئًا نشهد به */}
+                {onReceipt && !p._waiting && !p.pending && p.accountId !== 'unpaid' && Number(p.amount) > 0 && (
+                  <button onClick={() => onReceipt(p)} disabled={locked || recBusy === p.id} title="أرسل الإيصال"
+                    className="text-slate-300 hover:text-brand-600 ml-2 disabled:opacity-30"><FileText size={14} /></button>
+                )}
                 {onEdit && <button onClick={() => onEdit(p)} disabled={locked} className="text-slate-300 hover:text-brand-600 disabled:opacity-30"><Pencil size={14} /></button>}
                 {onRemove && <button onClick={() => onRemove(p)} disabled={locked} className="text-slate-300 hover:text-red-500 mr-2 disabled:opacity-30"><Trash2 size={14} /></button>}
               </td>
