@@ -34,7 +34,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v5.13';
+const APP_VERSION = 'v5.14';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'معلّم خيركم', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
@@ -2362,7 +2362,28 @@ export default function App() {
   /** أول فتح يولّد الرمز ويقترح إعدادات معقولة بدل ما يبدأ من فراغ. */
   const toggleSignup = () => {
     const s = { ...emptySignup(), ...(program.signup || {}) };
-    if (s.enabled) { patchSignup({ enabled: false }); return; }
+    if (s.enabled) {
+      /**
+       * إقفال برنامجٍ هو وجهة الرابط العام يُميت الرابط والباركود معًا —
+       * والباركود مطبوعٌ معلَّق، فلا يُقفل بصمت. نسأل، ونوقف الوجهة معه حتى
+       * لا تبقى البطاقة تقول «يفتح عليه» وهو مقفول.
+       */
+      if (publicProgramId === program.id) {
+        askConfirm(
+          `«${program.name}» هو وجهة الرابط العام والباركود. إذا أقفلت تسجيله الذاتي، صار من يمسح الباركود يشوف «التسجيل مقفل». نقفله ونوقف الرابط العام معه؟`,
+          () => save({
+            ...data,
+            publicLink: { programId: '' },
+            programs: data.programs.map((p) => (p.id !== program.id ? p
+              : { ...p, signup: { ...emptySignup(), ...(p.signup || {}), enabled: false } })),
+          }),
+          'نعم، أقفله',
+        );
+        return;
+      }
+      patchSignup({ enabled: false });
+      return;
+    }
     patchSignup({
       enabled: true,
       token: s.token || makeSignupToken(),
@@ -2392,8 +2413,31 @@ export default function App() {
   const setPublicTarget = (pid) => save({
     ...data,
     publicLink: { programId: pid },
-    programs: data.programs.map((p) => (p.id === publicProgramId && p.id !== pid && p.signup
-      ? { ...p, signup: { ...p.signup, enabled: false } } : p)),
+    programs: data.programs.map((p) => {
+      // السابق يُقفل: الرابط ما يفتح إلا على واحد، وترك القديم بابٌ لا يُنتبه له
+      if (p.id === publicProgramId && p.id !== pid && p.signup) {
+        return { ...p, signup: { ...p.signup, enabled: false } };
+      }
+      /**
+       * والجديد يُفتح معه.
+       *
+       * كانا مفتاحين منفصلين: يوجّه الرابطَ إلى برنامجٍ تسجيلُه مقفول، فتقول
+       * البطاقة «يفتح عليه ✓» ويقول الرابط لولي الأمر «التسجيل مقفل». وتوجيهُ
+       * الرابط إلى برنامجٍ معناه «سجّلوا هنا»، فلا يُترك بابه موصدًا.
+       */
+      if (p.id !== pid) return p;
+      const sg = { ...emptySignup(), ...(p.signup || {}) };
+      return {
+        ...p,
+        signup: {
+          ...sg,
+          enabled: true,
+          token: sg.token || makeSignupToken(),
+          openWeeks: sg.openWeeks?.length ? sg.openWeeks : (p.weeks || []).map((w) => w.id),
+          accounts: sg.accounts?.length ? sg.accounts : data.faidAccounts.map((a) => a.id),
+        },
+      };
+    }),
   });
   const clearPublicTarget = () => save({ ...data, publicLink: { programId: '' } });
 
@@ -3792,6 +3836,23 @@ export default function App() {
                       </button>
                     </div>
                   </div>
+
+                  {/* بياناتٌ سبقت الإصلاح: وجهةٌ على برنامجٍ مقفول، والباركود يقول «مقفل» */}
+                  {!s.enabled && publicProgramId === program.id && (
+                    <div className="bg-red-50 border border-red-200 rounded-2xl px-4 py-3 flex items-start gap-2">
+                      <AlertTriangle size={16} className="shrink-0 mt-0.5 text-red-600" />
+                      <div className="text-sm text-red-900">
+                        <b>الرابط العام والباركود موجَّهان لهذا البرنامج، وتسجيله مقفل.</b>
+                        <div className="text-[12px] mt-1 leading-6">
+                          فمن يمسح الباركود يشوف «التسجيل مقفل». افتح المفتاح فوق، أو أوقف الرابط العام.
+                        </div>
+                        <button className="mt-2 bg-white border border-red-200 text-red-700 text-xs font-bold px-3 py-2 rounded-lg"
+                          onClick={clearPublicTarget}>
+                          أوقف الرابط العام
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {s.enabled && (() => {
                     // نفس الفحص اللي يوقف الرابط، معروضًا لك قبل ما ترسله لأحد
