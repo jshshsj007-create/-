@@ -202,6 +202,17 @@ export const publicView = (data, program) => {
     // المجمّع يختار ولي الأمر أيامه؛ المنفصل يختار أي أسابيع يبي
     days,
     dayStyle,
+    /**
+     * من يختار الأيام.
+     *
+     * في المنفصل غالبًا لا اختيار أصلًا: صاحب البرنامج فتح أسبوعًا واحدًا،
+     * فعرضُه على ولي الأمر سؤالٌ جوابه واحد — ضغطةٌ بلا قرار. فله أن يقرّر
+     * بنفسه ويُخفي القسم كلّه.
+     *
+     * والمُباع باقاتٍ يبقى الاختيار فيه دائمًا: الباقة نفسها اختيار أيام،
+     * فإخفاؤها يُخفي ما يُشترى.
+     */
+    pickDays: usePackages || s.daysMode !== 'fixed',
     accounts: (data.faidAccounts || [])
       .filter((a) => (s.accounts || []).includes(a.id))
       .map((a) => ({
@@ -381,6 +392,18 @@ export const GUARDIAN_FIELDS = ['gName', 'gPhone'];
 
 /** خانات ولي الأمر تُسأل مرة، وبقية الخانات تُسأل لكل ابن على حدة. */
 export const isGuardianField = (f) => GUARDIAN_FIELDS.includes(f.id);
+
+/**
+ * تسوية التسجيل قبل التحقق منه.
+ *
+ * لمّا يكون اختيار الأيام لصاحب البرنامج، فما أرسله ولي الأمر ليس رأيًا
+ * يُؤخذ: ما عُرضت عليه أصلًا. فنكتبها نحن ونطرح ما جاء — ولو جاء شيء.
+ */
+export const normalizeSubmission = (view, body) => {
+  if (view?.pickDays !== false) return body;
+  const all = (view.days || []).map((d) => d.id);
+  return { ...body, kids: (body?.kids || []).map((k) => ({ ...k, days: all })) };
+};
 
 export const validateSubmission = (view, body) => {
   const errors = {};

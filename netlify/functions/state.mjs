@@ -9,7 +9,7 @@
  */
 import { getStore } from '@netlify/blobs';
 import crypto from 'node:crypto';
-import { programFor, publicView, validateSubmission, applySubmission, rateLimited, waIntl } from '../../src/signup.js';
+import { programFor, publicView, validateSubmission, applySubmission, normalizeSubmission, rateLimited, waIntl } from '../../src/signup.js';
 import { dedupeByPhone, remapParticipants } from '../../src/people.js';
 import { runBackup, backupStatus, readSnapshot } from '../lib/backup.mjs';
 
@@ -228,15 +228,17 @@ export default async (req) => {
 
     const view = publicView(doc.data, program);
     if (view.blocked) return json({ error: 'blocked' }, 409);
+    // أيامٌ لم تُعرض على ولي الأمر لا تُؤخذ منه: نكتبها نحن ونطرح ما أُرسل
+    const sub = normalizeSubmission(view, body);
     // نتحقق هنا من جديد: ما يجي من الشبكة لا يُوثق به مهما فحصه المتصفح
-    const { ok, errors } = validateSubmission(view, body);
+    const { ok, errors } = validateSubmission(view, sub);
     if (!ok) return json({ error: 'invalid', errors }, 400);
 
     const now = Date.now();
     const { blocked, recent } = rateLimited(doc.signupLog, body.answers?.gPhone, now);
     if (blocked) return json({ error: 'too_many' }, 429);
 
-    const next = applySubmission(doc.data, program, view, body, { newId: () => crypto.randomUUID(), now });
+    const next = applySubmission(doc.data, program, view, sub, { newId: () => crypto.randomUUID(), now });
     await writeDoc({
       rev: doc.rev + 1,
       updatedAt: new Date(now).toISOString(),

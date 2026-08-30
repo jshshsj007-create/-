@@ -231,9 +231,12 @@ function Note({ tone = 'brand', children }) {
 function Row({ label, required, error, hint, children }) {
   return (
     <div className="mb-4">
-      <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-        {label}{required && <span className="text-red-500 mr-1">*</span>}
-      </label>
+      {/* الفاضي معناه «شِله» — فلا تبقى نجمةٌ معلّقة بلا كلمة تحتها */}
+      {label && (
+        <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+          {label}{required && <span className="text-red-500 mr-1">*</span>}
+        </label>
+      )}
       {children}
       {hint && !error && <div className="text-[11px] text-slate-400 mt-1">{hint}</div>}
       {error && <div className="text-red-500 text-xs mt-1">{error}</div>}
@@ -488,7 +491,7 @@ export default function SignupPage({ token }) {
   };
 
   const submit = async () => {
-    const body = { token, answers, kids, accountId, receipt };
+    const body = { token, answers, kids: kids.map(fixDays), accountId, receipt };
     const check = validateSubmission(view, body);
     if (!check.ok) {
       setErrors(check.errors);
@@ -515,7 +518,12 @@ export default function SignupPage({ token }) {
     setState('form');
   };
 
-  const total = totalDue(view, kids);
+  /**
+   * لمّا يكون اختيار الأيام لصاحب البرنامج، نكتبها للابن بأنفسنا: القسم لا
+   * يُعرض، والمبلغ لا بدّ أن يُحسب على أيامٍ حقيقية لا على فراغ.
+   */
+  const fixDays = (k) => (view.pickDays ? k : { ...k, days: view.days.map((d) => d.id) });
+  const total = totalDue(view, kids.map(fixDays));
   const contactHref = view.wa.contactUrl || waLink(view.wa.number, '');
 
   /**
@@ -696,7 +704,7 @@ export default function SignupPage({ token }) {
             </div>
           )}
 
-          {view.days.length > 0 && (!view.usePackages || kid.packageId)
+          {view.pickDays && view.days.length > 0 && (!view.usePackages || kid.packageId)
             && !(view.usePackages && coversAll(view, packageOf(view, kid))) && (() => {
             const pkg = packageOf(view, kid);
             const allowed = view.usePackages ? daysAllowed(view, pkg) : view.days.length;

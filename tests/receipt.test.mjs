@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import { nextRef, refPrefix, yearOf, receiptRows, recOn, defaultReceipt, REC_FIELDS } from '../src/receipt.js';
-import { waGroupLink, contactUrl, parseChip, chipsOf, factsOf, publicView, applySubmission } from '../src/signup.js';
+import { waGroupLink, contactUrl, parseChip, chipsOf, factsOf, publicView, applySubmission, normalizeSubmission } from '../src/signup.js';
 
 let passed = 0;
 const test = (name, fn) => { fn(); passed++; console.log('  ✓ ' + name); };
@@ -227,6 +227,66 @@ test('وكلها تنزل في صفحة ولي الأمر', () => {
   assert.equal(v.chips[0].icon, '⚽');
   assert.equal(v.trust, 'طاقم سعودي');
   assert.equal(v.wa.contactUrl, '', 'بلا رقم ولا مجموعة ما فيه وجهة');
+});
+
+/* --------------------------- من يختار الأيام --------------------------- */
+
+const daysView = (mode, weeks = ['w1', 'w2']) => {
+  const d = base();
+  d.programs[0].signup = { ...d.programs[0].signup, daysMode: mode, openWeeks: weeks };
+  return publicView(d, d.programs[0]);
+};
+
+test('الأصل أن يختار ولي الأمر — فالبرامج القائمة ما تتغيّر', () => {
+  assert.equal(daysView(undefined).pickDays, true);
+  assert.equal(daysView('parent').pickDays, true);
+});
+
+test('و«أنا أحدّدها» تُخفي القسم عنه', () => {
+  assert.equal(daysView('fixed').pickDays, false);
+});
+
+test('والمُباع باقاتٍ يبقى الاختيار فيه — الباقة نفسها اختيار أيام', () => {
+  const d = base();
+  d.programs[0].type = 'مجمع';
+  d.programs[0].signup = {
+    ...d.programs[0].signup, daysMode: 'fixed',
+    packages: [{ id: 'k1', name: 'المدة كاملة', price: 200, dayCount: 0 }],
+  };
+  assert.equal(publicView(d, d.programs[0]).pickDays, true);
+});
+
+test('وأيامه تُكتب له كما فتحها صاحب البرنامج', () => {
+  const v = daysView('fixed');
+  const out = normalizeSubmission(v, { kids: [{ name: 'محمد' }, { name: 'خالد' }] });
+  assert.deepEqual(out.kids.map((k) => k.days), [['w1', 'w2'], ['w1', 'w2']]);
+});
+
+test('وما أرسله من أيام يُطرح — ما عُرضت عليه فما هي رأيه', () => {
+  // ولو تلاعب أحدٌ بالطلب واختار يومًا واحدًا ليدفع أقلّ
+  const v = daysView('fixed');
+  const out = normalizeSubmission(v, { kids: [{ name: 'محمد', days: ['w1'] }] });
+  assert.deepEqual(out.kids[0].days, ['w1', 'w2']);
+});
+
+test('ولمّا يكون الاختيار له، يمرّ ما اختاره كما هو', () => {
+  const v = daysView('parent');
+  const body = { kids: [{ name: 'محمد', days: ['w1'] }] };
+  assert.equal(normalizeSubmission(v, body), body, 'ما نلمس الطلب أصلًا');
+});
+
+test('والمبلغ يُحسب على الأيام المكتوبة لا على فراغ', () => {
+  const d = base();
+  d.programs[0].signup = { ...d.programs[0].signup, daysMode: 'fixed' };
+  const prog = d.programs[0];
+  const view = publicView(d, prog);
+  let n = 0;
+  const r = applySubmission(d, prog, view,
+    normalizeSubmission(view, { answers: { gName: 'سعد', gPhone: '0551234567' }, kids: [{ name: 'محمد سعد' }] }),
+    { newId: () => 'id' + (++n), now: 1 });
+  const rows = r.data.programs[0].weeks.flatMap((w) => w.participants || []);
+  assert.equal(rows.length, 2, 'نزل في الأسبوعين بلا ما يضغط شيئًا');
+  assert.ok(rows.every((x) => x.amount === 70));
 });
 
 console.log(`\n✅ ${passed} اختبارًا للإيصال ووجهة التواصل وصفحة التسجيل\n`);
