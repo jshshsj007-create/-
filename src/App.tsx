@@ -24,6 +24,11 @@ import {
   nextRef, yearOf, defaultReceipt, REC_FIELDS, recOn, receiptPngBlob, receiptFileName, hijri, shareFile,
 } from './receipt.js';
 import {
+  LEAGUE, CUP, leagueFixtures, leagueTable, cupBracket, champion,
+  weekRuns, programRuns, clubCounts, usedIn,
+  answerVerdict, questionTally, Q_TEXTS, Q_ERRORS,
+} from './club.js';
+import {
   SURAHS, PARTS, emptyWird, rangeText, carryAfter, studentTotals,
   studentSessions, studentOfUser, khayrRows, khayrReportText,
   PAGES_PER_PART, toPages, partsText, memorizedPages, memRangeText,
@@ -34,9 +39,11 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v5.14';
-const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'الإعداد (المسابقات)', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
-const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول مسابقات', 'معلّم خيركم', 'مسؤول فيض'];
+const APP_VERSION = 'v6.0';
+const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
+/** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
+const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
+const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول النادي', 'معلّم خيركم', 'مسؤول فيض'];
 const ACCOUNT_COLORS = ['#8B5CF6', '#10B981', '#3B82F6', '#F59E0B', '#EC4899', '#14B8A6'];
 const LEVELS = ['أولية', 'متوسطة', 'عليا'];
 export const ORDINALS = ['الأول', 'الثاني', 'الثالث', 'الرابع', 'الخامس', 'السادس', 'السابع', 'الثامن', 'التاسع', 'العاشر',
@@ -394,6 +401,13 @@ const defaultData = () => ({
   ],
   faidAdjustments: [],
   competitions: [],
+  /**
+   * النادي: بنك المسابقات مرجعٌ لا يقيَّد بموسم، وهذي الثلاث تقول ما نُفِّذ
+   * منه ومتى — فتعرف بعد سنة أي مسابقةٍ سوّيتها في أي جمعة.
+   */
+  clubRuns: [],
+  tournaments: [],
+  questions: [],
   trips: [],
   /**
    * خيركم: طلابه قائمة مستقلة عن مشتركي البرامج، وجلساته سجل التسميع.
@@ -483,7 +497,25 @@ export function migrate(loaded) {
     return src?.termKey ? { ...a, termKey: src.termKey } : { ...a };
   });
   // author = صاحب الفكرة، غير idea اللي هي شرح المسابقة نفسها
-  d.competitions = (d.competitions || []).map((c) => ({ author: '', idea: '', tools: [], photos: [], ...c }));
+  d.competitions = (d.competitions || []).map((c) => {
+    const comp = { author: '', idea: '', tools: [], photos: [], ...c };
+    /**
+     * المرحلة كانت واحدة، وصارت أكثر: المسابقة الوحدة تصلح للأولية والعليا،
+     * فكانت تُكتب مرتين. والقديمة تُرقّى بمرحلتها هي — لا نخمّن له غيرها.
+     */
+    if (!Array.isArray(comp.levels)) comp.levels = comp.level ? [comp.level] : [];
+    comp.levels = comp.levels.filter((lv) => LEVELS.includes(lv));
+    delete comp.level;
+    return comp;
+  });
+  d.clubRuns = (d.clubRuns || []).filter((r) => r && r.compId && r.programId);
+  d.tournaments = (d.tournaments || []).map((t) => ({
+    type: LEAGUE, levels: [], teams: [], matches: [], players: '', programId: '', weekId: '', ...t,
+  }));
+  d.questions = (d.questions || []).map((q) => ({
+    mode: 'open', options: [], correctId: '', answer: '', alsoOk: [], levels: [],
+    open: true, answers: [], texts: {}, programId: '', weekId: '', ...q,
+  }));
   d.khayr = { students: [], sessions: [], ...(d.khayr || {}) };
   /**
    * `mem` حدّ محفوظ الطالب: منه تُقاس دورة المراجعة. القدامى بلا حدّ — فدورتهم
@@ -514,6 +546,15 @@ export function migrate(loaded) {
     if (!user.username) user.username = (user.name || `user${i + 1}`).split(' ')[0];
     if (!user.password) user.password = user.code || '';
     delete user.code;
+    /**
+     * صلاحية المسابقات اتّسعت فصارت «النادي». من كانت عنده يبقى عنده — تغيّر
+     * الاسم لا يسحب صلاحيةً أعطيتها.
+     */
+    if (user.permissions.includes(OLD_CLUB_PERM)) {
+      user.permissions = user.permissions.filter((x) => x !== OLD_CLUB_PERM);
+      if (!user.permissions.includes('النادي')) user.permissions.push('النادي');
+    }
+    if (user.role === 'مسؤول مسابقات') user.role = 'مسؤول النادي';
     return user;
   });
   // قاعدة أولياء الأمور جديدة؛ الجوالات تُوحَّد مرة وحدة عشان المقارنة تصير سريعة
@@ -575,6 +616,59 @@ export const emptySignup = () => ({
 });
 
 /* ------------------------------ عناصر واجهة عامة ------------------------------ */
+
+/** أسماء نصوص صفحة السؤال كما تُعرض في محرّرها. */
+const QT_LABELS = {
+  brand: 'السطر فوق', studentLabel: 'عنوان خانة الاسم', studentHint: 'سطر مساعد تحت الاسم',
+  answerLabel: 'عنوان خانة الجواب', submit: 'زر الإرسال',
+  doneTitle: 'عنوان الشكر', doneText: 'نص الشكر',
+  closedTitle: 'عنوان السؤال المقفل', closedText: 'نص السؤال المقفل',
+  needStudent: 'الاسم فاضي', needAnswer: 'الجواب فاضي', needChoice: 'ما اختار شيئًا',
+};
+
+/**
+ * اختيار البرنامج ثم أسبوعه. البرنامج وحده يكفي لمن ما يبي التحديد، والأسبوع
+ * يُعرض بعده لأنّ أسابيع برنامجٍ آخر لا معنى لها.
+ */
+function WeekPicker({ programs, form, setForm, optional }) {
+  const p = programs.find((x) => x.id === form.programId);
+  return (
+    <>
+      <Field label={optional ? 'البرنامج — اختياري' : 'البرنامج'}>
+        <select className={inputCls} value={form.programId || ''}
+          onChange={(e) => setForm({ ...form, programId: e.target.value, weekId: '', error: '' })}>
+          <option value="">— اختر —</option>
+          {[...programs].reverse().map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+        </select>
+      </Field>
+      {p && (p.weeks || []).length > 0 && (
+        <Field label="الأسبوع" hint="اتركه فاضيًا لو كانت على البرنامج كله.">
+          <select className={inputCls} value={form.weekId || ''}
+            onChange={(e) => setForm({ ...form, weekId: e.target.value, error: '' })}>
+            <option value="">— البرنامج كله —</option>
+            {p.weeks.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+          </select>
+        </Field>
+      )}
+    </>
+  );
+}
+
+/** اختيار المراحل: أكثر من وحدة، وضغطة ثانية تشيلها. */
+function LevelPicker({ value, onChange }) {
+  const on = (lv) => (value || []).includes(lv);
+  return (
+    <div className="flex gap-2">
+      {LEVELS.map((lv) => (
+        <button key={lv} type="button"
+          onClick={() => onChange(on(lv) ? value.filter((x) => x !== lv) : [...(value || []), lv])}
+          className={`flex-1 py-2 rounded-lg text-sm font-medium border ${on(lv) ? 'bg-brand-700 text-white border-brand-700' : 'border-slate-200 text-slate-600'}`}>
+          {on(lv) ? `✓ ${lv}` : lv}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function Badge({ children, tone = 'brand' }) {
   const tones = {
@@ -1143,6 +1237,10 @@ export default function App() {
   const [selectedWeekId, setSelectedWeekId] = useState(null);
   const [selectedTripId, setSelectedTripId] = useState(null);
   const [selectedCompId, setSelectedCompId] = useState(null);
+  // النادي: المسابقات · الدوري · سؤال اليوم
+  const [clubTab, setClubTab] = useState('comps');
+  const [selectedTourId, setSelectedTourId] = useState(null);
+  const [selectedQId, setSelectedQId] = useState(null);
   const [selectedGuardianId, setSelectedGuardianId] = useState(null);
   const [guardianSearch, setGuardianSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('الكل');  // تصفية المشتركين بحالتهم
@@ -1438,6 +1536,8 @@ export default function App() {
   const tripsInScope = data.trips.filter((t) => (tripScope === 'all' ? true
     : tripScope === 'none' ? !t.termKey : t.termKey === termKey));
   const competition = data.competitions.find((c) => c.id === selectedCompId);
+  const tournament = (data.tournaments || []).find((t) => t.id === selectedTourId);
+  const question = (data.questions || []).find((q) => q.id === selectedQId);
   const isGrouped = program?.type === 'مجمع';
 
   /** الدفتر المالي الفعّال + مرجعه: البرنامج المجمّع يحسب على مستوى البرنامج، والمنفصل على مستوى الأسبوع. */
@@ -2102,7 +2202,8 @@ export default function App() {
     if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب اسم المسابقة' }); return; }
     const fields = {
       author: (form.author || '').trim(),
-      name: form.name.trim(), level: form.level || LEVELS[0], date: form.date || '',
+      // المرحلة أكثر من وحدة، والفاضي يعني «تصلح للكل» فلا نجبره على اختيار
+      name: form.name.trim(), levels: (form.levels || []).filter((lv) => LEVELS.includes(lv)), date: form.date || '',
       participants: Number(form.participants || 0), idea: form.idea || '',
       tools: form.tools || [], photos: form.photos || [],
     };
@@ -2119,9 +2220,133 @@ export default function App() {
     save({
       ...data,
       competitions: data.competitions.filter((c) => c.id !== cid),
+      // وسجلّ استخدامها يمضي معها: «استُخدمت في» بلا مسابقةٍ لا معنى له
+      clubRuns: (data.clubRuns || []).filter((r) => r.compId !== cid),
       ...(gone ? { trash: intoTrash('competition', gone) } : {}),
     });
   };
+
+  /* --------------------------------- النادي --------------------------------- */
+
+  /** تسجيل أن هذي المسابقة نُفِّذت في جمعةٍ بعينها. */
+  const addRun = () => {
+    if (!form.programId) { setForm({ ...form, error: 'اختر البرنامج' }); return; }
+    const dup = (data.clubRuns || []).some((r) => r.compId === form.compId
+      && r.programId === form.programId && r.weekId === (form.weekId || ''));
+    if (dup) { setForm({ ...form, error: 'مسجّلة في هذي الجمعة أصلًا' }); return; }
+    save({
+      ...data,
+      clubRuns: [...(data.clubRuns || []),
+        { id: uid(), compId: form.compId, programId: form.programId, weekId: form.weekId || '', at: Date.now() }],
+    });
+    closeModal();
+  };
+  const removeRun = (rid) => save({ ...data, clubRuns: (data.clubRuns || []).filter((r) => r.id !== rid) });
+
+  /** دوري أو بطولة. الفرق تُنشأ بأسمائها هنا، فلا تتغيّر معرّفاتها بعدها. */
+  const saveTournament = () => {
+    if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب اسم الدوري' }); return; }
+    if (!form.programId) { setForm({ ...form, error: 'اختر البرنامج' }); return; }
+    const names = (form.teamNames || []).map((n) => String(n || '').trim()).filter(Boolean);
+    if (names.length < 2) { setForm({ ...form, error: 'اكتب اسمين فأكثر للفرق' }); return; }
+    const old = data.tournaments.find((t) => t.id === form.id);
+    /**
+     * تعديل الأسماء يبقي المباريات: الفريق الأول يبقى الأول ولو تغيّر اسمه.
+     * وتغيير العدد يُبطل ما لُعب — الشجرة تنبني على العدد، فلا تُخلط بنتائج
+     * بُنيت على غيره.
+     */
+    const teams = names.map((n, i) => ({ id: old?.teams?.[i]?.id || uid(), name: n }));
+    const sameCount = old && old.teams.length === teams.length && old.type === (form.type || LEAGUE);
+    const fields = {
+      name: form.name.trim(), type: form.type || LEAGUE,
+      levels: (form.levels || []).filter((lv) => LEVELS.includes(lv)),
+      programId: form.programId, weekId: form.weekId || '',
+      players: String(form.players || ''), teams,
+      matches: sameCount ? (old.matches || []) : [],
+    };
+    save({
+      ...data,
+      tournaments: form.id
+        ? data.tournaments.map((t) => (t.id !== form.id ? t : { ...t, ...fields }))
+        : [...data.tournaments, mark({ id: uid(), ...fields }, true)],
+    });
+    if (!form.id) setSelectedTourId(null);
+    closeModal();
+  };
+  const removeTournament = (tid) => save({ ...data, tournaments: data.tournaments.filter((t) => t.id !== tid) });
+
+  /** نتيجة مباراة. الدوري يعرفها بالفريقين، والبطولة بموضعها في الشجرة. */
+  const setScore = (tid, key, side, value) => {
+    const v = value === '' ? '' : Math.max(0, Number(value) || 0);
+    save({
+      ...data,
+      tournaments: data.tournaments.map((t) => {
+        if (t.id !== tid) return t;
+        const same = (m) => (t.type === CUP
+          ? m.round === key.round && m.slot === key.slot
+          : m.aId === key.aId && m.bId === key.bId);
+        const found = (t.matches || []).some(same);
+        const patch = side === 'a' ? { aScore: v } : { bScore: v };
+        return {
+          ...t,
+          matches: found
+            ? t.matches.map((m) => (same(m) ? { ...m, ...patch } : m))
+            : [...(t.matches || []), { aScore: '', bScore: '', ...key, ...patch }],
+        };
+      }),
+    });
+  };
+
+  /** سؤال اليوم. رمزه يُولَّد مرة ويبقى، فالرابط المرسَل ما يموت. */
+  const saveQuestion = () => {
+    if (!form.text?.trim()) { setForm({ ...form, error: 'اكتب السؤال' }); return; }
+    const mode = form.mode === 'choice' ? 'choice' : 'open';
+    const options = mode === 'choice'
+      ? (form.options || []).map((o) => ({ id: o.id, text: String(o.text || '').trim() })).filter((o) => o.text)
+      : [];
+    if (mode === 'choice' && options.length < 2) { setForm({ ...form, error: 'اكتب اختيارين فأكثر' }); return; }
+    if (mode === 'choice' && !options.some((o) => o.id === form.correctId)) {
+      setForm({ ...form, error: 'علّم الاختيار الصحيح' }); return;
+    }
+    const old = data.questions.find((q) => q.id === form.id);
+    const fields = {
+      text: form.text.trim(), mode, options,
+      correctId: mode === 'choice' ? form.correctId : '',
+      answer: mode === 'open' ? String(form.answer || '').trim() : '',
+      alsoOk: mode === 'open'
+        ? String(form.alsoOkText || '').split('\n').map((x) => x.trim()).filter(Boolean) : [],
+      levels: (form.levels || []).filter((lv) => LEVELS.includes(lv)),
+      programId: form.programId || '', weekId: form.weekId || '',
+      open: form.open !== false,
+      texts: form.texts || {},
+    };
+    save({
+      ...data,
+      questions: form.id
+        ? data.questions.map((q) => (q.id !== form.id ? q : { ...q, ...fields }))
+        : [...data.questions, mark({ id: uid(), token: makeSignupToken(), answers: [], ...fields }, true)],
+    });
+    closeModal();
+  };
+  const removeQuestion = (qid) => save({ ...data, questions: data.questions.filter((q) => q.id !== qid) });
+  const toggleQuestion = (qid) => save({
+    ...data,
+    questions: data.questions.map((q) => (q.id !== qid ? q : { ...q, open: q.open === false })),
+  });
+  /** تعليم جوابٍ بيدك. والثالثة تمسح ما علّمته فيرجع لحكم الآلة. */
+  const markAnswer = (qid, aid, mark2) => save({
+    ...data,
+    questions: data.questions.map((q) => (q.id !== qid ? q : {
+      ...q,
+      answers: (q.answers || []).map((a) => (a.id !== aid ? a : { ...a, mark: a.mark === mark2 ? '' : mark2 })),
+    })),
+  });
+  const removeAnswer = (qid, aid) => save({
+    ...data,
+    questions: data.questions.map((q) => (q.id !== qid ? q : {
+      ...q, answers: (q.answers || []).filter((a) => a.id !== aid),
+    })),
+  });
 
   /** أدوات المسابقة: اسم الأداة وكميتها (أقماع ٦، كورة ٢…). */
   const addTool = () => {
@@ -3275,7 +3500,7 @@ export default function App() {
   const sections = [
     { id: 'programs', label: 'البرامج', desc: 'عرض وإدارة البرامج', icon: BookOpen, show: canAttend },
     { id: 'faid', label: 'فيض', desc: 'حسابات فيض والأرصدة', icon: Wallet, show: can('فيض - الإيرادات والمصروفات') },
-    { id: 'competitions', label: 'المسابقات', desc: 'بنك الأفكار والأدوات', icon: Trophy, show: can('الإعداد (المسابقات)') },
+    { id: 'competitions', label: 'النادي', desc: 'المسابقات والدوري وسؤال اليوم', icon: Trophy, show: can('النادي') },
     { id: 'khayr', label: 'خيركم', desc: 'التسميع والمتابعة', icon: BookMarked, show: canKhayr },
     // الطالب المربوط يدخل على سجلّه هو، بلا أي صلاحية
     { id: 'khayrMe', label: 'خيركم', desc: 'سجلّك في التسميع', icon: BookMarked, show: !!myKhayrStudent },
@@ -3811,9 +4036,12 @@ export default function App() {
 
             {/* تقرير البرنامج */}
             {activeProgramTab === 'report' && (
-              isGrouped
-                ? <GroupedReport program={program} accounts={data.faidAccounts} canMoney={canMoney} />
-                : <SeparateReport program={program} accounts={data.faidAccounts} canMoney={canMoney} />
+              <>
+                <ClubReport data={data} program={program} />
+                {isGrouped
+                  ? <GroupedReport program={program} accounts={data.faidAccounts} canMoney={canMoney} />
+                  : <SeparateReport program={program} accounts={data.faidAccounts} canMoney={canMoney} />}
+              </>
             )}
 
             {activeProgramTab === 'signup' && (() => {
@@ -4993,47 +5221,150 @@ export default function App() {
         )}
 
         {/* -------------------------------- النادي -------------------------------- */}
-        {view === 'competitions' && can('الإعداد (المسابقات)') && (
+        {view === 'competitions' && can('النادي') && (
           <div>
-            <div className="flex items-center justify-between mb-3 gap-3">
-              <h3 className="font-bold text-slate-700">بنك المسابقات</h3>
-              <button className={btnPrimary} onClick={() => { setForm({ tools: [], photos: [] }); setModal('editCompetition'); }}><Plus size={16} /> مسابقة</button>
-            </div>
-            <div className="text-xs text-slate-400 mb-4">كل مسابقة بفكرتها وأدواتها وصورها — مرجع تعيد استخدامه السنوات الجاية.</div>
-            <FilterChips
-              options={['الكل', ...LEVELS].map((lv) => ({
-                id: lv, label: lv,
-                count: lv === 'الكل' ? data.competitions.length : data.competitions.filter((c) => c.level === lv).length,
-              }))}
-              value={setupLevel} onChange={setSetupLevel} />
-            <div className="h-3" />
-            {(() => {
-              const list = data.competitions.filter((c) => setupLevel === 'الكل' || c.level === setupLevel);
-              return !list.length ? (
-                <div className={emptyCls}>ما فيه مسابقات بعد. أضف أول مسابقة وتصير مرجعًا للسنوات الجاية.</div>
-              ) : (
-                <div className="space-y-2.5">
-                  {list.map((c) => (
-                    <button key={c.id} onClick={() => { setSelectedCompId(c.id); goto('competitionDetail'); }}
-                      className="w-full bg-white rounded-2xl border border-slate-100 p-4 text-right hover:shadow-md transition-shadow">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          {c.author && <div className="text-[11px] text-slate-400 mb-0.5">فكرة: {c.author}</div>}
-                          <div className="font-bold text-slate-800">{c.name}</div>
-                          <div className="text-xs text-slate-400 mt-0.5 line-clamp-2">{c.idea || 'ما فيه وصف للفكرة'}</div>
-                        </div>
-                        <Badge tone="brand">{c.level}</Badge>
-                      </div>
-                      <div className="flex items-center gap-3 mt-3 text-[11px] text-slate-400">
-                        {(c.tools || []).length > 0 && <span>🧰 {c.tools.length} أداة</span>}
-                        {(c.photos || []).length > 0 && <span>📷 {c.photos.length} صورة</span>}
-                        {c.date && <span>{c.date}</span>}
-                      </div>
-                    </button>
-                  ))}
+            <h2 className="text-xl font-extrabold text-slate-800">النادي</h2>
+            <div className="text-xs text-slate-400 mt-0.5 mb-4">المسابقات والدوري وسؤال اليوم.</div>
+            <Tabs value={clubTab} onChange={setClubTab} tabs={[
+              { id: 'comps', label: 'المسابقات' },
+              { id: 'league', label: 'الدوري' },
+              { id: 'question', label: 'سؤال اليوم' },
+            ]} />
+
+            {clubTab === 'comps' && (
+              <div>
+                <div className="flex items-center justify-between mb-3 gap-3">
+                  <h3 className="font-bold text-slate-700">بنك المسابقات</h3>
+                  <button className={btnPrimary} onClick={() => { setForm({ levels: [], tools: [], photos: [] }); setModal('editCompetition'); }}><Plus size={16} /> مسابقة</button>
                 </div>
-              );
-            })()}
+                <div className="text-xs text-slate-400 mb-4">كل مسابقة بفكرتها وأدواتها وصورها — مرجع تعيد استخدامه السنوات الجاية.</div>
+                <FilterChips
+                  options={['الكل', ...LEVELS].map((lv) => ({
+                    id: lv, label: lv,
+                    count: lv === 'الكل' ? data.competitions.length
+                      : data.competitions.filter((c) => (c.levels || []).includes(lv)).length,
+                  }))}
+                  value={setupLevel} onChange={setSetupLevel} />
+                <div className="h-3" />
+                {(() => {
+                  const list = data.competitions.filter((c) => setupLevel === 'الكل' || (c.levels || []).includes(setupLevel));
+                  return !list.length ? (
+                    <div className={emptyCls}>ما فيه مسابقات بعد. أضف أول مسابقة وتصير مرجعًا للسنوات الجاية.</div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {list.map((c) => {
+                        const runs = usedIn(data, c.id);
+                        return (
+                          <button key={c.id} onClick={() => { setSelectedCompId(c.id); goto('competitionDetail'); }}
+                            className="w-full bg-white rounded-2xl border border-slate-100 p-4 text-right hover:shadow-md transition-shadow">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                {c.author && <div className="text-[11px] text-slate-400 mb-0.5">فكرة: {c.author}</div>}
+                                <div className="font-bold text-slate-800">{c.name}</div>
+                                <div className="text-xs text-slate-400 mt-0.5 line-clamp-2">{c.idea || 'ما فيه وصف للفكرة'}</div>
+                              </div>
+                              <div className="flex flex-wrap gap-1 justify-end shrink-0">
+                                {(c.levels || []).map((lv) => <Badge key={lv} tone="brand">{lv}</Badge>)}
+                              </div>
+                            </div>
+                            <div className="flex items-center flex-wrap gap-3 mt-3 text-[11px] text-slate-400">
+                              {(c.tools || []).length > 0 && <span>🧰 {c.tools.length} أداة</span>}
+                              {(c.photos || []).length > 0 && <span>📷 {c.photos.length} صورة</span>}
+                              <span className={runs.length ? 'text-brand-700 font-semibold' : ''}>
+                                {runs.length ? `سُوّيت ${runs.length} مرة` : 'ما سُوّيت بعد'}
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
+            {clubTab === 'league' && (
+              <div>
+                <div className="flex items-center justify-between mb-3 gap-3">
+                  <h3 className="font-bold text-slate-700">الدوريات</h3>
+                  <button className={btnPrimary}
+                    onClick={() => { setForm({ type: LEAGUE, levels: [], teamNames: ['', ''] }); setModal('editTournament'); }}>
+                    <Plus size={16} /> دوري
+                  </button>
+                </div>
+                <div className="text-xs text-slate-400 mb-4">
+                  الدوري المصغّر: كل فريق يلاقي الباقين وجدول نقاط. والبطولة: شجرة إقصاء للنهائي.
+                </div>
+                {!data.tournaments.length ? (
+                  <div className={emptyCls}>ما فيه دوريات بعد.</div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {data.tournaments.map((t) => {
+                      const p = data.programs.find((x) => x.id === t.programId);
+                      const w = (p?.weeks || []).find((x) => x.id === t.weekId);
+                      const ch = champion(t);
+                      return (
+                        <button key={t.id} onClick={() => { setSelectedTourId(t.id); goto('tournamentDetail'); }}
+                          className="w-full bg-white rounded-2xl border border-slate-100 p-4 text-right hover:shadow-md transition-shadow">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="font-bold text-slate-800">{t.name}</div>
+                              <div className="text-xs text-slate-400 mt-0.5">
+                                {p ? `${p.name}${w ? ` · ${w.name}` : ''}` : 'بلا برنامج'}
+                              </div>
+                            </div>
+                            <Badge tone={t.type === CUP ? 'amber' : 'brand'}>{t.type === CUP ? 'بطولة' : 'مصغّر'}</Badge>
+                          </div>
+                          <div className="flex items-center flex-wrap gap-3 mt-3 text-[11px] text-slate-400">
+                            <span>{t.teams.length} فرق{t.players ? ` × ${t.players}` : ''}</span>
+                            {ch && <span className="text-brand-700 font-semibold">🏆 {ch.name}</span>}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {clubTab === 'question' && (
+              <div>
+                <div className="flex items-center justify-between mb-3 gap-3">
+                  <h3 className="font-bold text-slate-700">أسئلة اليوم</h3>
+                  <button className={btnPrimary}
+                    onClick={() => { setForm({ mode: 'choice', levels: [], options: [{ id: uid(), text: '' }, { id: uid(), text: '' }], open: true, texts: {} }); setModal('editQuestion'); }}>
+                    <Plus size={16} /> سؤال
+                  </button>
+                </div>
+                <div className="text-xs text-slate-400 mb-4">
+                  تكتب السؤال وتعلّم الصحيح، ويطلع لك رابط ترسله للأهالي — يجاوبون بلا تسجيل دخول.
+                </div>
+                {!data.questions.length ? (
+                  <div className={emptyCls}>ما فيه أسئلة بعد.</div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {data.questions.map((q) => {
+                      const tally = questionTally(q);
+                      return (
+                        <button key={q.id} onClick={() => { setSelectedQId(q.id); goto('questionDetail'); }}
+                          className="w-full bg-white rounded-2xl border border-slate-100 p-4 text-right hover:shadow-md transition-shadow">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="font-bold text-slate-800 min-w-0">{q.text}</div>
+                            <Badge tone={q.open === false ? 'slate' : 'green'}>{q.open === false ? 'مقفل' : 'مفتوح'}</Badge>
+                          </div>
+                          <div className="flex items-center flex-wrap gap-3 mt-3 text-[11px] text-slate-400">
+                            <span>{q.mode === 'choice' ? 'اختيارات' : 'مفتوح'}</span>
+                            <span>{tally.total} جاوبوا</span>
+                            {tally.ok > 0 && <span className="text-green-700 font-semibold">{tally.ok} صح</span>}
+                            {tally.check > 0 && <span className="text-amber-700 font-semibold">{tally.check} تنتظر مراجعتك</span>}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -5044,18 +5375,50 @@ export default function App() {
             <div className="flex items-center justify-between gap-2 mb-4 mt-2">
               <div className="min-w-0">
                 {competition.author && <div className="text-[11px] text-slate-400 mb-0.5">فكرة: {competition.author}</div>}
-                <div className="flex items-center gap-2 min-w-0">
+                <div className="flex items-center flex-wrap gap-2 min-w-0">
                   <h2 className="text-lg font-bold text-slate-800 truncate">{competition.name}</h2>
-                  <Badge tone="brand">{competition.level}</Badge>
+                  {(competition.levels || []).map((lv) => <Badge key={lv} tone="brand">{lv}</Badge>)}
                 </div>
                 <Trace item={competition} className="mt-1" />
               </div>
               <div className="flex items-center gap-1 shrink-0">
-                <button onClick={() => { setForm({ ...competition, tools: competition.tools || [], photos: competition.photos || [] }); setModal('editCompetition'); }}
+                <button onClick={() => { setForm({ ...competition, levels: competition.levels || [], tools: competition.tools || [], photos: competition.photos || [] }); setModal('editCompetition'); }}
                   className="text-slate-400 hover:text-brand-700"><Pencil size={16} /></button>
                 {isAdmin && <button onClick={() => askConfirm(`حذف مسابقة «${competition.name}»؟`, () => { removeCompetition(competition.id); goto('competitions'); })}
                   className="text-slate-300 hover:text-red-500"><Trash2 size={16} /></button>}
               </div>
+            </div>
+
+            {/* أين سُوّيت. البنك مرجعٌ عابرٌ للمواسم، وهذا سجلّ تنفيذه */}
+            <div className={cardCls + ' mb-3'}>
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div className="text-sm font-semibold text-slate-700">استُخدمت في</div>
+                <button className="text-xs font-semibold text-brand-700 hover:text-brand-800"
+                  onClick={() => { setForm({ compId: competition.id, programId: '', weekId: '' }); setModal('addRun'); }}>
+                  + سجّل جمعة
+                </button>
+              </div>
+              {(() => {
+                const runs = usedIn(data, competition.id);
+                return !runs.length ? (
+                  <div className="text-sm text-slate-400">ما سُوّيت في أي جمعة بعد.</div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {runs.map((r) => (
+                      <div key={r.id} className="flex items-center justify-between gap-3 py-1.5 border-b border-slate-50 last:border-0">
+                        <div className="min-w-0">
+                          <div className="text-sm text-slate-700 truncate">
+                            {r.programName || 'برنامج محذوف'}{r.weekName ? ` — ${r.weekName}` : ''}
+                          </div>
+                          {r.termKey && <div className="text-[11px] text-slate-400">{r.termKey.split('-')[0]}</div>}
+                        </div>
+                        <button onClick={() => askConfirm('شيل هذي الجمعة من سجلّ المسابقة؟', () => removeRun(r.id))}
+                          className="text-slate-300 hover:text-red-500 shrink-0"><X size={14} /></button>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
 
             <div className={cardCls + ' mb-3'}>
@@ -5098,6 +5461,226 @@ export default function App() {
             )}
           </div>
         )}
+
+        {/* الدوري: جدولٌ أو شجرة، ونتائجه تُكتب في مكانها */}
+        {view === 'tournamentDetail' && tournament && can('النادي') && (() => {
+          const p = data.programs.find((x) => x.id === tournament.programId);
+          const w = (p?.weeks || []).find((x) => x.id === tournament.weekId);
+          const ch = champion(tournament);
+          const score = (key, side, val) => (
+            <input type="number" inputMode="numeric" min="0" value={val === '' || val === undefined ? '' : val}
+              onChange={(e) => setScore(tournament.id, key, side, e.target.value)}
+              className="w-12 text-center bg-slate-50 border border-slate-200 rounded-lg py-1 text-sm font-bold text-slate-800" />
+          );
+          return (
+            <div>
+              <Breadcrumb items={[{ label: 'النادي', onClick: () => { setClubTab('league'); goto('competitions'); } }, { label: tournament.name }]} />
+              <div className="flex items-center justify-between gap-2 mb-4 mt-2">
+                <div className="min-w-0">
+                  <div className="flex items-center flex-wrap gap-2">
+                    <h2 className="text-lg font-bold text-slate-800 truncate">{tournament.name}</h2>
+                    <Badge tone={tournament.type === CUP ? 'amber' : 'brand'}>{tournament.type === CUP ? 'بطولة دوري' : 'دوري مصغّر'}</Badge>
+                    {(tournament.levels || []).map((lv) => <Badge key={lv} tone="slate">{lv}</Badge>)}
+                  </div>
+                  <div className="text-xs text-slate-400 mt-1">
+                    {p ? `${p.name}${w ? ` — ${w.name}` : ''}` : 'بلا برنامج'}
+                    {' · '}{tournament.teams.length} فرق{tournament.players ? ` × ${tournament.players} لاعبًا` : ''}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={() => setForm({
+                    ...tournament, levels: tournament.levels || [], teamNames: tournament.teams.map((t) => t.name),
+                  }) || setModal('editTournament')} className="text-slate-400 hover:text-brand-700"><Pencil size={16} /></button>
+                  {isAdmin && <button onClick={() => askConfirm(`حذف «${tournament.name}»؟`, () => { removeTournament(tournament.id); setClubTab('league'); goto('competitions'); })}
+                    className="text-slate-300 hover:text-red-500"><Trash2 size={16} /></button>}
+                </div>
+              </div>
+
+              {ch && (
+                <div className="bg-brand-700 text-white rounded-2xl p-4 text-center mb-3">
+                  <div className="text-2xl">🏆</div>
+                  <div className="font-extrabold mt-1">{ch.name}</div>
+                  <div className="text-[11px] text-brand-200 mt-0.5">البطل</div>
+                </div>
+              )}
+
+              {tournament.type === LEAGUE ? (
+                <>
+                  <div className={cardCls + ' mb-3 p-0 overflow-hidden'}>
+                    <div className="grid grid-cols-[1fr_2.6rem_2.6rem_2.6rem_3rem] gap-1 px-4 py-2.5 bg-slate-50 text-[11px] font-bold text-slate-400">
+                      <span>الفريق</span><span className="text-center">لعب</span><span className="text-center">فاز</span>
+                      <span className="text-center">فارق</span><span className="text-center">نقاط</span>
+                    </div>
+                    {leagueTable(tournament).map((r, i) => (
+                      <div key={r.id} className={`grid grid-cols-[1fr_2.6rem_2.6rem_2.6rem_3rem] gap-1 px-4 py-2.5 text-sm border-t border-slate-50 ${i === 0 ? 'bg-brand-50 font-bold text-brand-800' : 'text-slate-700'}`}>
+                        <span className="truncate">{r.name}</span>
+                        <span className="text-center tabular-nums">{r.played}</span>
+                        <span className="text-center tabular-nums">{r.won}</span>
+                        <span className="text-center tabular-nums">{r.diff > 0 ? `+${r.diff}` : r.diff}</span>
+                        <span className="text-center tabular-nums font-bold">{r.points}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className={cardCls}>
+                    <div className="text-sm font-semibold text-slate-700 mb-3">المباريات</div>
+                    <div className="space-y-2">
+                      {leagueFixtures(tournament.teams).map((fx) => {
+                        const m = (tournament.matches || []).find((x) => x.aId === fx.aId && x.bId === fx.bId) || {};
+                        const nm = (id) => tournament.teams.find((t) => t.id === id)?.name || '';
+                        return (
+                          <div key={`${fx.aId}-${fx.bId}`} className="flex items-center gap-2 bg-slate-50 rounded-xl px-3 py-2">
+                            <span className="flex-1 text-sm text-slate-700 truncate text-left">{nm(fx.aId)}</span>
+                            {score(fx, 'a', m.aScore)}
+                            <span className="text-slate-300 text-xs">×</span>
+                            {score(fx, 'b', m.bScore)}
+                            <span className="flex-1 text-sm text-slate-700 truncate">{nm(fx.bId)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-3">
+                  {cupBracket(tournament).rounds.map((rd) => (
+                    <div key={rd.name} className={cardCls}>
+                      <div className="text-sm font-semibold text-slate-700 mb-3">{rd.name}</div>
+                      <div className="space-y-2">
+                        {rd.games.map((g) => (
+                          <div key={`${g.round}-${g.slot}`} className="bg-slate-50 rounded-xl px-3 py-2">
+                            {g.bye ? (
+                              <div className="flex items-center justify-between text-sm">
+                                <span className="font-bold text-slate-700">{g.aName || g.bName}</span>
+                                <span className="text-[11px] text-slate-400">يعبر بلا مباراة</span>
+                              </div>
+                            ) : !g.aId || !g.bId ? (
+                              <div className="text-sm text-slate-400">ينتظر الدور اللي قبله</div>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <span className={`flex-1 text-sm truncate text-left ${g.winner === g.aId ? 'font-bold text-brand-800' : 'text-slate-700'}`}>{g.aName}</span>
+                                {score({ round: g.round, slot: g.slot }, 'a', g.aScore)}
+                                <span className="text-slate-300 text-xs">×</span>
+                                {score({ round: g.round, slot: g.slot }, 'b', g.bScore)}
+                                <span className={`flex-1 text-sm truncate ${g.winner === g.bId ? 'font-bold text-brand-800' : 'text-slate-700'}`}>{g.bName}</span>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  <div className="text-[11px] text-slate-400 px-1">التعادل ما يمرّر أحدًا — لازم تفصل النتيجة.</div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* سؤال اليوم: رابطه، وأجوبته مصحّحةً */}
+        {view === 'questionDetail' && question && can('النادي') && (() => {
+          const url = question.token ? `${location.origin}/q/${question.token}` : '';
+          const tally = questionTally(question);
+          const optText = (id) => (question.options || []).find((o) => o.id === id)?.text || '';
+          return (
+            <div>
+              <Breadcrumb items={[{ label: 'النادي', onClick: () => { setClubTab('question'); goto('competitions'); } }, { label: 'سؤال' }]} />
+              <div className="flex items-start justify-between gap-2 mb-4 mt-2">
+                <div className="min-w-0">
+                  <h2 className="text-lg font-bold text-slate-800">{question.text}</h2>
+                  <div className="flex items-center flex-wrap gap-2 mt-1.5">
+                    <Badge tone={question.open === false ? 'slate' : 'green'}>{question.open === false ? 'مقفل' : 'مفتوح'}</Badge>
+                    <Badge tone="slate">{question.mode === 'choice' ? 'اختيارات' : 'جواب مفتوح'}</Badge>
+                    {(question.levels || []).map((lv) => <Badge key={lv} tone="brand">{lv}</Badge>)}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={() => setForm({
+                    ...question, levels: question.levels || [], options: question.options || [],
+                    alsoOkText: (question.alsoOk || []).join('\n'), texts: question.texts || {},
+                  }) || setModal('editQuestion')} className="text-slate-400 hover:text-brand-700"><Pencil size={16} /></button>
+                  {isAdmin && <button onClick={() => askConfirm('حذف السؤال وأجوبته؟', () => { removeQuestion(question.id); setClubTab('question'); goto('competitions'); })}
+                    className="text-slate-300 hover:text-red-500"><Trash2 size={16} /></button>}
+                </div>
+              </div>
+
+              <div className={cardCls + ' mb-3'}>
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <div className="text-sm font-semibold text-slate-700">رابط الأهالي</div>
+                  <button onClick={() => toggleQuestion(question.id)}
+                    className={`text-xs font-semibold ${question.open === false ? 'text-green-700' : 'text-slate-400'}`}>
+                    {question.open === false ? 'افتحه' : 'اقفله'}
+                  </button>
+                </div>
+                <div className="bg-slate-50 rounded-xl px-3 py-2.5 text-sm text-slate-700 break-all mb-3" dir="ltr">{url}</div>
+                <div className="flex gap-2">
+                  <button className={btnPrimary + ' flex-1'}
+                    onClick={() => { navigator.clipboard?.writeText(url); setSavedAt(Date.now()); }}>
+                    <Copy size={16} /> نسخ
+                  </button>
+                  <a className={btnPrimary + ' flex-1'} target="_blank" rel="noreferrer"
+                    href={`https://wa.me/?text=${encodeURIComponent(`${question.text}\n${url}`)}`}>
+                    <Send size={16} /> واتساب
+                  </a>
+                </div>
+                <button className={btnGhost + ' w-full mt-1'}
+                  onClick={() => { setForm({ ...question, texts: question.texts || {} }); setModal('questionTexts'); }}>
+                  نصوص الصفحة
+                </button>
+                {question.open === false && <div className="text-[11px] text-amber-700 mt-2">مقفل — اللي يفتحه يشوف «انتهى وقت الجواب».</div>}
+              </div>
+
+              <div className="grid grid-cols-4 gap-2 mb-3">
+                {[['جاوبوا', tally.total, 'text-slate-800'], ['صح', tally.ok, 'text-green-700'],
+                  ['خطأ', tally.no, 'text-red-700'], ['راجعها', tally.check, 'text-amber-700']].map(([lb, v, cl]) => (
+                  <div key={lb} className="bg-white rounded-2xl border border-slate-100 p-3 text-center">
+                    <div className={`text-xl font-extrabold tabular-nums ${cl}`}>{v}</div>
+                    <div className="text-[10px] text-slate-400 mt-0.5">{lb}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className={cardCls}>
+                <div className="text-sm font-semibold text-slate-700 mb-3">الأجوبة</div>
+                {!(question.answers || []).length ? (
+                  <div className="text-sm text-slate-400">ما وصل جواب بعد.</div>
+                ) : (
+                  <div className="space-y-2">
+                    {[...question.answers].sort((a, b) => (b.at || 0) - (a.at || 0)).map((a) => {
+                      const v = answerVerdict(question, a);
+                      const tone = v === 'ok' ? 'text-green-700' : v === 'no' ? 'text-red-700' : 'text-amber-700';
+                      return (
+                        <div key={a.id} className="flex items-center gap-2 bg-slate-50 rounded-xl px-3 py-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm font-bold text-slate-800 truncate">{a.student}</div>
+                            <div className="text-xs text-slate-500 truncate">
+                              {question.mode === 'choice' ? optText(a.optionId) : a.text}
+                            </div>
+                          </div>
+                          <span className={`text-sm font-bold shrink-0 ${tone}`}>
+                            {v === 'ok' ? '✓' : v === 'no' ? '✗' : 'راجعها'}
+                          </span>
+                          <div className="flex gap-1 shrink-0">
+                            <button onClick={() => markAnswer(question.id, a.id, 'ok')}
+                              className={`w-7 h-7 rounded-lg text-xs font-bold ${a.mark === 'ok' ? 'bg-green-600 text-white' : 'bg-white border border-slate-200 text-slate-400'}`}>✓</button>
+                            <button onClick={() => markAnswer(question.id, a.id, 'no')}
+                              className={`w-7 h-7 rounded-lg text-xs font-bold ${a.mark === 'no' ? 'bg-red-600 text-white' : 'bg-white border border-slate-200 text-slate-400'}`}>✗</button>
+                            {isAdmin && <button onClick={() => askConfirm(`حذف جواب «${a.student}»؟`, () => removeAnswer(question.id, a.id))}
+                              className="w-7 h-7 rounded-lg text-slate-300 hover:text-red-500"><X size={13} className="mx-auto" /></button>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {tally.check > 0 && (
+                  <div className="text-[11px] text-slate-400 mt-3">
+                    «راجعها» تعني إن الجواب قريبٌ من الصحيح وما طابقه — فما يُحسب خطأً حتى تحكم أنت.
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
         {view === 'khayr' && canKhayr && (
           <div>
@@ -6732,13 +7315,9 @@ export default function App() {
             <textarea className={inputCls + ' h-28'} value={form.idea || ''} onChange={(e) => setForm({ ...form, idea: e.target.value })}
               placeholder="تُقسّم المجموعة فريقين، وكل فريق يمرّر الكورة بين الأقماع بدون ما تطيح…" />
           </Field>
-          <Field label="المرحلة">
-            <div className="flex gap-2">
-              {LEVELS.map((lv) => (
-                <button key={lv} type="button" onClick={() => setForm({ ...form, level: lv })}
-                  className={`flex-1 py-2 rounded-lg text-sm font-medium border ${(form.level || LEVELS[0]) === lv ? 'bg-brand-700 text-white border-brand-700' : 'border-slate-200 text-slate-600'}`}>{lv}</button>
-              ))}
-            </div>
+          {/* المسابقة الوحدة تصلح لأكثر من مرحلة، فتُكتب مرة وتظهر في القائمتين */}
+          <Field label="المرحلة" hint="تقدر تختار أكثر من وحدة. والفاضي يعني تصلح للكل.">
+            <LevelPicker value={form.levels || []} onChange={(levels) => setForm({ ...form, levels })} />
           </Field>
 
           <Field label="الأدوات المطلوبة" hint="اسم الأداة وكميتها. مثال: أقماع ٦، كورة ٢.">
@@ -6788,6 +7367,162 @@ export default function App() {
           {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
           <div className="flex gap-2 mt-5">
             <button className={btnPrimary + ' flex-1'} onClick={saveCompetition}>{form.id ? 'حفظ' : 'إضافة'}</button>
+            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* في أي جمعة سُوّيت هذي المسابقة */}
+      {modal === 'addRun' && (
+        <Modal title="سجّل جمعة" onClose={closeModal}>
+          <WeekPicker programs={data.programs} form={form} setForm={setForm} />
+          {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+          <div className="flex gap-2 mt-5">
+            <button className={btnPrimary + ' flex-1'} onClick={addRun}>سجّل</button>
+            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+          </div>
+        </Modal>
+      )}
+
+      {modal === 'editTournament' && (
+        <Modal title={form.id ? 'تعديل الدوري' : 'دوري جديد'} onClose={closeModal} wide>
+          <Field label="اسم الدوري">
+            <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })}
+              placeholder="بطولة كرة القدم" />
+          </Field>
+          <Field label="النوع" hint="المصغّر: كل فريق يلاقي الباقين وجدول نقاط. البطولة: شجرة إقصاء للنهائي.">
+            <div className="flex gap-2">
+              {[[LEAGUE, 'دوري مصغّر'], [CUP, 'بطولة دوري']].map(([id, lb]) => (
+                <button key={id} type="button" onClick={() => setForm({ ...form, type: id })}
+                  className={`flex-1 py-2 rounded-lg text-sm font-medium border ${(form.type || LEAGUE) === id ? 'bg-brand-700 text-white border-brand-700' : 'border-slate-200 text-slate-600'}`}>{lb}</button>
+              ))}
+            </div>
+          </Field>
+          <WeekPicker programs={data.programs} form={form} setForm={setForm} />
+          <Field label="المرحلة" hint="اختياري.">
+            <LevelPicker value={form.levels || []} onChange={(levels) => setForm({ ...form, levels })} />
+          </Field>
+          <Field label="لاعبو كل فريق — اختياري">
+            <input type="number" inputMode="numeric" className={inputCls} value={form.players || ''}
+              onChange={(e) => setForm({ ...form, players: e.target.value })} placeholder="8" />
+          </Field>
+          <Field label="الفرق" hint="اكتب اسم كل فريق. وتغيير عددها يبدأ النتائج من جديد.">
+            <div className="space-y-2">
+              {(form.teamNames || []).map((n, i) => (
+                <div key={i} className="flex gap-2">
+                  <input className={inputCls} value={n}
+                    onChange={(e) => setForm({ ...form, error: '', teamNames: form.teamNames.map((x, j) => (j === i ? e.target.value : x)) })}
+                    placeholder={`فريق ${i + 1}`} />
+                  {form.teamNames.length > 2 && (
+                    <button type="button" onClick={() => setForm({ ...form, teamNames: form.teamNames.filter((_, j) => j !== i) })}
+                      className="text-slate-300 hover:text-red-500 px-2"><X size={15} /></button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <button type="button" onClick={() => setForm({ ...form, teamNames: [...(form.teamNames || []), ''] })}
+              className="text-xs font-semibold text-brand-700 mt-2">+ فريق</button>
+            {(form.teamNames || []).filter((x) => String(x).trim()).length > 0 && Number(form.players) > 0 && (
+              <div className="text-[11px] text-slate-400 mt-2">
+                {(form.teamNames || []).filter((x) => String(x).trim()).length} فرق × {form.players} = {(form.teamNames || []).filter((x) => String(x).trim()).length * Number(form.players)} لاعبًا
+              </div>
+            )}
+          </Field>
+          {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+          <div className="flex gap-2 mt-5">
+            <button className={btnPrimary + ' flex-1'} onClick={saveTournament}>{form.id ? 'حفظ' : 'إضافة'}</button>
+            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+          </div>
+        </Modal>
+      )}
+
+      {modal === 'editQuestion' && (
+        <Modal title={form.id ? 'تعديل السؤال' : 'سؤال جديد'} onClose={closeModal} wide>
+          <Field label="السؤال">
+            <textarea className={inputCls + ' h-20'} value={form.text || ''}
+              onChange={(e) => setForm({ ...form, text: e.target.value, error: '' })} placeholder="كم عدد أركان الإسلام؟" />
+          </Field>
+          <Field label="نوع الجواب">
+            <div className="flex gap-2">
+              {[['choice', 'اختيارات'], ['open', 'مفتوح']].map(([id, lb]) => (
+                <button key={id} type="button" onClick={() => setForm({ ...form, mode: id, error: '' })}
+                  className={`flex-1 py-2 rounded-lg text-sm font-medium border ${(form.mode || 'choice') === id ? 'bg-brand-700 text-white border-brand-700' : 'border-slate-200 text-slate-600'}`}>{lb}</button>
+              ))}
+            </div>
+          </Field>
+
+          {(form.mode || 'choice') === 'choice' ? (
+            <Field label="الاختيارات" hint="اضغط الدائرة عشان تعلّم الصحيح.">
+              <div className="space-y-2">
+                {(form.options || []).map((o, i) => (
+                  <div key={o.id} className="flex gap-2 items-center">
+                    <button type="button" onClick={() => setForm({ ...form, correctId: o.id, error: '' })}
+                      className={`w-8 h-8 shrink-0 rounded-full border-2 text-sm font-bold ${form.correctId === o.id ? 'bg-green-600 border-green-600 text-white' : 'border-slate-200 text-slate-300'}`}>✓</button>
+                    <input className={inputCls} value={o.text}
+                      onChange={(e) => setForm({ ...form, error: '', options: form.options.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)) })}
+                      placeholder={`اختيار ${i + 1}`} />
+                    {form.options.length > 2 && (
+                      <button type="button" onClick={() => setForm({ ...form, options: form.options.filter((_, j) => j !== i) })}
+                        className="text-slate-300 hover:text-red-500 px-1"><X size={15} /></button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <button type="button" onClick={() => setForm({ ...form, options: [...(form.options || []), { id: uid(), text: '' }] })}
+                className="text-xs font-semibold text-brand-700 mt-2">+ اختيار</button>
+            </Field>
+          ) : (
+            <>
+              <Field label="الجواب الصحيح" hint="يتصحّح لحاله. «خمسه» و«خمسة» و«٥» و«5» كلها وحدة.">
+                <input className={inputCls} value={form.answer || ''}
+                  onChange={(e) => setForm({ ...form, answer: e.target.value, error: '' })} placeholder="خمسة" />
+              </Field>
+              <Field label="أجوبة أخرى مقبولة — اختياري" hint="سطر لكل جواب. لما تعرف صيغةً صحيحة ما يلحقها التنظيف.">
+                <textarea className={inputCls + ' h-20'} value={form.alsoOkText || ''}
+                  onChange={(e) => setForm({ ...form, alsoOkText: e.target.value })} placeholder={'خمسة أركان\nخمس'} />
+              </Field>
+            </>
+          )}
+
+          <Field label="لمين — اختياري">
+            <LevelPicker value={form.levels || []} onChange={(levels) => setForm({ ...form, levels })} />
+          </Field>
+          <WeekPicker programs={data.programs} form={form} setForm={setForm} optional />
+          {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+          <div className="flex gap-2 mt-5">
+            <button className={btnPrimary + ' flex-1'} onClick={saveQuestion}>{form.id ? 'حفظ' : 'إضافة'}</button>
+            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* نصوص صفحة السؤال: ما يكتبه صاحب الفريق يفوز */}
+      {modal === 'questionTexts' && (
+        <Modal title="نصوص الصفحة" onClose={closeModal} wide>
+          <div className="text-xs text-slate-400 mb-4">
+            اللي تكتبه يفوز، والفاضي يعني «شِله من الصفحة» — إلا رسائل الخطأ، الفاضي فيها يرجّع الأصل.
+            وتقدر تستعمل <span className="font-mono">{'{الطالب}'}</span> في نص الشكر.
+          </div>
+          {Object.keys(Q_TEXTS).map((k) => (
+            <Field key={k} label={QT_LABELS[k] || k}>
+              <input className={inputCls} value={(form.texts || {})[k] ?? ''}
+                onChange={(e) => setForm({ ...form, texts: { ...(form.texts || {}), [k]: e.target.value } })}
+                placeholder={Q_TEXTS[k]} />
+            </Field>
+          ))}
+          <div className="text-xs font-bold text-slate-500 mt-5 mb-2">رسائل الخطأ</div>
+          {Object.keys(Q_ERRORS).map((k) => (
+            <Field key={k} label={QT_LABELS[k] || k}>
+              <input className={inputCls} value={(form.texts || {})[k] ?? ''}
+                onChange={(e) => setForm({ ...form, texts: { ...(form.texts || {}), [k]: e.target.value } })}
+                placeholder={Q_ERRORS[k]} />
+            </Field>
+          ))}
+          <div className="flex gap-2 mt-5">
+            <button className={btnPrimary + ' flex-1'} onClick={() => {
+              save({ ...data, questions: data.questions.map((q) => (q.id !== form.id ? q : { ...q, texts: form.texts || {} })) });
+              closeModal();
+            }}>حفظ</button>
             <button className={btnGhost} onClick={closeModal}>إلغاء</button>
           </div>
         </Modal>
@@ -7848,6 +8583,59 @@ function ProgramTotals({ program }) {
       </div>
       <div className="text-xs text-slate-400 px-1">
         التوزيع في البرنامج المنفصل يتم داخل كل يوم على حدة. افتح اليوم من تبويب «الأيام» لتسجيل النصيب أو ترحيله لفيض.
+      </div>
+    </div>
+  );
+}
+
+/**
+ * ما نُفِّذ من النادي في هذا البرنامج.
+ *
+ * البنك يقول «عندنا هذي المسابقة»، وهذا يقول «سوّيناها هنا» — والفرق بينهما
+ * هو ما يبحث عنه من يفتح التقرير بعد سنة. والمعدوم لا يُعرض: قسمٌ أصفاره
+ * أربعة يزحم الورقة ولا يقول شيئًا.
+ */
+function ClubReport({ data, program }) {
+  const runs = programRuns(data, program.id);
+  const c = clubCounts(runs);
+  if (!c.competitions && !c.leagues && !c.cups && !c.questions) return null;
+  const weekOf = (id) => (program.weeks || []).find((w) => w.id === id)?.name || '';
+  const compName = (id) => (data.competitions || []).find((x) => x.id === id)?.name || 'مسابقة محذوفة';
+  const rows = [
+    ...runs.competitions.map((r) => ({ id: r.id, name: compName(r.compId), kind: 'مسابقة', week: weekOf(r.weekId) })),
+    ...runs.tournaments.map((t) => {
+      const ch = champion(t);
+      return {
+        id: t.id, name: t.name, week: weekOf(t.weekId),
+        kind: (t.type === CUP ? 'بطولة' : 'مصغّر') + (ch ? ` · ${ch.name}` : ''),
+      };
+    }),
+    ...runs.questions.map((q) => ({
+      id: q.id, name: q.text, kind: `سؤال · ${questionTally(q).total} جاوبوا`, week: weekOf(q.weekId),
+    })),
+  ];
+  const tiles = [
+    ['المسابقات', c.competitions], ['الدوريات المصغّرة', c.leagues],
+    ['البطولات', c.cups], ['أسئلة اليوم', c.questions],
+  ].filter(([, v]) => v > 0);
+  return (
+    <div className={cardCls + ' mb-4'}>
+      <div className="text-sm font-semibold text-slate-700 mb-3">النادي في هذا البرنامج</div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+        {tiles.map(([lb, v]) => (
+          <div key={lb} className="bg-slate-50 rounded-xl p-3 text-center">
+            <div className="text-xl font-extrabold text-slate-800 tabular-nums">{v}</div>
+            <div className="text-[10px] text-slate-400 mt-0.5">{lb}</div>
+          </div>
+        ))}
+      </div>
+      <div className="space-y-1">
+        {rows.map((r) => (
+          <div key={r.id} className="flex items-center justify-between gap-3 py-1.5 border-b border-slate-50 last:border-0">
+            <span className="text-sm text-slate-700 truncate">{r.name}</span>
+            <span className="text-[11px] text-slate-400 shrink-0">{[r.kind, r.week].filter(Boolean).join(' · ')}</span>
+          </div>
+        ))}
       </div>
     </div>
   );

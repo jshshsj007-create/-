@@ -64,4 +64,5 @@ node tests/cycle.test.mjs
 node tests/publink.test.mjs
 node tests/place.test.mjs
 node tests/receipt.test.mjs
+node tests/nadi.test.mjs
 rm -rf "$STUB" tests/build

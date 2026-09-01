@@ -10,6 +10,7 @@
 import { getStore } from '@netlify/blobs';
 import crypto from 'node:crypto';
 import { programFor, publicView, validateSubmission, applySubmission, normalizeSubmission, rateLimited, waIntl } from '../../src/signup.js';
+import { questionView, validateAnswer, applyAnswer, answersRateLimited } from '../../src/club.js';
 import { dedupeByPhone, remapParticipants } from '../../src/people.js';
 import { runBackup, backupStatus, readSnapshot } from '../lib/backup.mjs';
 
@@ -118,6 +119,11 @@ const strip = (data, me) => {
   if (!allowed(me, 'أولياء الأمور')) { out.guardians = []; out.students = []; }
   if (!allowed(me, 'خيركم')) out.khayr = khayrOfStudent(data?.khayr, me);
   /**
+   * أسئلة النادي تحمل الجواب الصحيح وأسماء الأولاد الذين جاوبوا. من لا يفتح
+   * شاشة النادي لا يفتحها في بياناته أيضًا.
+   */
+  if (!allowed(me, 'النادي')) out.questions = [];
+  /**
    * صندوق المحذوفات يحمل سجلات كاملة — أهالي وطلابًا وتسميعًا. لو أرسلناه
    * للكل، صار بابًا خلفيًا يتجاوز كل ما حجبناه فوق. فهو للمدير وحده،
    * وهو صاحب الشاشة أصلًا.
@@ -152,6 +158,9 @@ const guard = (incoming, current, me) => {
 
   // الطالب يقرأ سجلّه ولا يكتبه — ولا يكتب فيه غير أهل الصلاحية
   if (!allowed(me, 'خيركم')) out.khayr = current?.khayr || { students: [], sessions: [] };
+
+  // وما حُجب في `strip` يُردّ هنا، وإلا محته حفظةٌ عادية من جهازٍ ما شافه
+  if (!allowed(me, 'النادي')) out.questions = current?.questions || [];
 
   /**
    * الصندوق: الموظف ما يشوفه (حجبناه في `strip`)، فلو قبلنا قائمته كما هي
@@ -222,6 +231,41 @@ export default async (req) => {
     return json({ ok: true, view: publicView(doc.data, program) });
   }
 
+  /**
+   * سؤال اليوم. ما يخرج منه الجواب الصحيح ولا أجوبة غيره — وإلا صار الرابط
+   * يسلّم الحلّ لمن يفتحه.
+   */
+  if (op === 'question_info') {
+    const view = doc && questionView(doc.data, body.token);
+    if (!view) return json({ error: 'closed' }, 404);
+    return json({ ok: true, view });
+  }
+
+  if (op === 'question_answer') {
+    const view = doc && questionView(doc.data, body.token);
+    if (!view) return json({ error: 'closed' }, 404);
+    if (!view.open) return json({ error: 'closed' }, 409);
+
+    // نفحص هنا من جديد: ما يجي من الشبكة لا يُوثق به مهما فحصه المتصفح
+    const { ok, errors } = validateAnswer(view, body);
+    if (!ok) return json({ error: 'invalid', errors }, 400);
+
+    const now = Date.now();
+    const { blocked, recent } = answersRateLimited(doc.answerLog, now);
+    if (blocked) return json({ error: 'too_many' }, 429);
+
+    const q = doc.data.questions.find((x) => x.id === view.id);
+    const next = applyAnswer(doc.data, q, body, { id: crypto.randomUUID(), now });
+    await writeDoc({
+      ...doc,
+      rev: doc.rev + 1,
+      updatedAt: new Date(now).toISOString(),
+      data: next.data,
+      answerLog: [...recent, { at: now }],
+    });
+    return json({ ok: true, student: next.student });
+  }
+
   if (op === 'signup_submit') {
     const program = doc && programFor(doc.data, body.token);
     if (!program) return json({ error: 'closed' }, 404);
@@ -240,9 +284,9 @@ export default async (req) => {
 
     const next = applySubmission(doc.data, program, view, sub, { newId: () => crypto.randomUUID(), now });
     await writeDoc({
+      ...doc,
       rev: doc.rev + 1,
       updatedAt: new Date(now).toISOString(),
-      secret: doc.secret,
       data: enforceOnePerPhone(next.data),
       signupLog: [...recent, { at: now, phone: String(body.answers?.gPhone || '') }],
     });
@@ -324,7 +368,8 @@ export default async (req) => {
       return json({ error: 'conflict', rev: doc.rev, data: strip(doc.data, me) }, 409);
     }
     const data = enforceOnePerPhone(guard(body.data, doc.data, me));
-    const next = { rev: doc.rev + 1, updatedAt: new Date().toISOString(), secret: doc.secret, data, signupLog: doc.signupLog || [] };
+    // ننشر الوثيقة كما هي ثم نستبدل ما تغيّر: أي سجلٍّ نضيفه لاحقًا يبقى
+    const next = { ...doc, rev: doc.rev + 1, updatedAt: new Date().toISOString(), data };
     await writeDoc(next);
     return json({ ok: true, rev: next.rev });
   }
