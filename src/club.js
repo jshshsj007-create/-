@@ -287,7 +287,8 @@ export const usedIn = (data, compId) => (data?.clubRuns || [])
 
 /** نصوص صفحة السؤال. الفاضي يعني «شِله» — إلا رسائل الخطأ، فالفاضي يرجّعها. */
 export const Q_TEXTS = {
-  brand: 'فريق فيض السعودي · سؤال اليوم',
+  // اسم الفريق في الرأس فوق، فلا يُعاد هنا
+  brand: 'سؤال اليوم',
   studentLabel: 'اسم الابن',
   studentHint: '',
   answerLabel: 'جوابك',

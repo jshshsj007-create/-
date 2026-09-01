@@ -1,6 +1,37 @@
 import React, { useState, useEffect } from 'react';
 import { api } from './cloud.js';
 import { qText, qError, Q_TEXTS } from './club.js';
+import { FaydhLogo, TEAM_NAME } from './logo.jsx';
+
+/**
+ * الرأس: شعار فيض على الأزرق الغامق، مثل صفحة التسجيل تمامًا.
+ *
+ * الشعار أبيضُ على شفاف فلا يُرى إلا على داكن، ولهذا هو في الشريط لا على
+ * البطاقة. ووليّ الأمر يفتح الرابطين من نفس القروب، فيعرف من أين جاءه قبل
+ * أن يقرأ حرفًا.
+ *
+ * وهو خارج `QuestionPage` عن قصد: لو عُرِّف داخلها لصار لكل رسمةٍ مكوّنٌ
+ * جديدٌ في نظر React، فتُهدم الشجرة وتُبنى مع كل حرف يُكتب — ويقفز المؤشّر
+ * من الخانة عند أول حرف.
+ */
+function Shell({ brand, children }) {
+  return (
+    <div dir="rtl" className="min-h-screen bg-slate-50" style={{ fontFamily: "'Tajawal', sans-serif" }}>
+      <div className="bg-brand-900 px-5 pt-6 pb-14">
+        <div className="max-w-md mx-auto flex items-center gap-3">
+          <FaydhLogo size={44} variant="mark" />
+          <div className="text-white font-extrabold text-xl">{TEAM_NAME}</div>
+        </div>
+      </div>
+      <div className="px-4 -mt-8 pb-16 max-w-md mx-auto">
+        {brand !== '' && (
+          <div className="text-center mb-3 text-xs text-slate-400 font-medium">{brand || Q_TEXTS.brand}</div>
+        )}
+        {children}
+      </div>
+    </div>
+  );
+}
 
 /**
  * سؤال اليوم — صفحة ولي الأمر.
@@ -58,25 +89,13 @@ export default function QuestionPage({ token }) {
   const card = 'bg-white rounded-3xl shadow-sm border border-slate-100 p-6 sm:p-8';
   const brand = view ? qText(view, 'brand') : '';
 
-  const Shell = ({ children }) => (
-    <div className="min-h-screen bg-slate-50 flex items-start sm:items-center justify-center p-4 sm:p-6">
-      <div className="w-full max-w-md">
-        {/* شعار الفريق أبيضُ على شفاف، فلا يُرى على هذي الأرضية — والاسم يكفي */}
-        {brand !== '' && (
-          <div className="text-center mb-4 text-xs text-slate-400 font-medium">{brand || Q_TEXTS.brand}</div>
-        )}
-        {children}
-      </div>
-    </div>
-  );
-
   if (state === 'loading') {
-    return <Shell><div className={card + ' text-center text-slate-400 text-sm'}>لحظة…</div></Shell>;
+    return <Shell brand={brand}><div className={card + ' text-center text-slate-400 text-sm'}>لحظة…</div></Shell>;
   }
 
   if (state === 'closed') {
     return (
-      <Shell>
+      <Shell brand={brand}>
         <div className={card + ' text-center'}>
           <h1 className="text-xl font-extrabold text-slate-800">{qText(view, 'closedTitle') || Q_TEXTS.closedTitle}</h1>
           <p className="text-sm text-slate-500 mt-2 leading-relaxed">{qText(view, 'closedText')}</p>
@@ -87,7 +106,7 @@ export default function QuestionPage({ token }) {
 
   if (state === 'done') {
     return (
-      <Shell>
+      <Shell brand={brand}>
         <div className={card + ' text-center'}>
           <div className="w-14 h-14 rounded-full bg-green-100 text-green-700 flex items-center justify-center mx-auto mb-4 text-2xl font-bold">✓</div>
           <h1 className="text-xl font-extrabold text-slate-800">{qText(view, 'doneTitle')}</h1>
@@ -101,7 +120,7 @@ export default function QuestionPage({ token }) {
   const input = 'w-full border border-slate-200 rounded-xl px-4 py-3 text-base text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent';
 
   return (
-    <Shell>
+    <Shell brand={brand}>
       <div className={card}>
         <h1 className="text-2xl font-extrabold text-slate-800 leading-relaxed mb-6">{view.text}</h1>
 
