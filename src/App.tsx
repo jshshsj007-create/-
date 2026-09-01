@@ -39,7 +39,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v6.2';
+const APP_VERSION = 'v6.3';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -633,49 +633,32 @@ const QT_LABELS = {
 function WeekPicker({ programs, form, setForm, optional }) {
   const p = programs.find((x) => x.id === form.programId);
   /**
-   * المفتوح أولًا.
+   * المفتوح وحده.
    *
-   * البرامج تتراكم موسمًا بعد موسم، والذي تسجّل فيه اليوم هو المفتوح — فلا
-   * يُدفن بين عشرين مقفلًا. والمقفل يبقى معروضًا تحته: قد تُسجّل مسابقةً
-   * سوّيتها في موسمٍ مضى.
+   * البرامج تتراكم موسمًا بعد موسم، والذي تسجّل فيه هو المفتوح — فالمقفل لا
+   * يُعرض أصلًا، لا فوق ولا تحت. وكذلك الأسابيع.
+   *
+   * ويُستثنى واحد: ما اخترته أنت من قبلُ ثم أُقفل. يبقى معروضًا وأنت تعدّل،
+   * وإلا وجدت الخانة فارغةً فحفظتَ عليها — فيسقط ربطٌ صحيحٌ بلا أن تقصد.
    */
-  const open = programs.filter((x) => x.status !== 'مغلق').slice().reverse();
-  const shut = programs.filter((x) => x.status === 'مغلق').slice().reverse();
-  const openWeeks = (p?.weeks || []).filter((w) => w.status !== 'مغلق');
-  const shutWeeks = (p?.weeks || []).filter((w) => w.status === 'مغلق');
+  const shown = (list, chosen) => list.filter((x) => x.status !== 'مغلق' || x.id === chosen);
+  const progs = shown(programs, form.programId).slice().reverse();
+  const weeks = shown(p?.weeks || [], form.weekId);
   return (
     <>
       <Field label={optional ? 'البرنامج — اختياري' : 'البرنامج'}>
         <select className={inputCls} value={form.programId || ''}
           onChange={(e) => setForm({ ...form, programId: e.target.value, weekId: '', error: '' })}>
           <option value="">— اختر —</option>
-          {open.length > 0 && (
-            <optgroup label="المفتوحة">
-              {open.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-            </optgroup>
-          )}
-          {shut.length > 0 && (
-            <optgroup label="المقفلة">
-              {shut.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-            </optgroup>
-          )}
+          {progs.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
         </select>
       </Field>
-      {p && (p.weeks || []).length > 0 && (
+      {p && weeks.length > 0 && (
         <Field label="الأسبوع" hint="اتركه فاضيًا لو كانت على البرنامج كله.">
           <select className={inputCls} value={form.weekId || ''}
             onChange={(e) => setForm({ ...form, weekId: e.target.value, error: '' })}>
             <option value="">— البرنامج كله —</option>
-            {openWeeks.length > 0 && (
-              <optgroup label="المفتوحة">
-                {openWeeks.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-              </optgroup>
-            )}
-            {shutWeeks.length > 0 && (
-              <optgroup label="المقفلة">
-                {shutWeeks.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-              </optgroup>
-            )}
+            {weeks.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
         </Field>
       )}
