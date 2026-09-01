@@ -182,6 +182,18 @@
   }
   .payBox .under{margin-top:8px}
 
+  /* إرفاق الإيصال */
+  .slip{margin-top:12px}
+  .drop{
+    display:block;text-align:center;cursor:pointer;
+    border:1.5px dashed var(--line);border-radius:16px;padding:16px 14px
+  }
+  .drop .ic{display:block;font-size:20px;line-height:1;margin-bottom:7px}
+  .drop .tx{display:block;font-size:14px;font-weight:600;color:var(--ink)}
+  .drop .sub{display:block;font-size:11.5px;color:var(--muted);margin-top:4px;line-height:1.7}
+  .drop.ok{border-style:solid;border-color:var(--brand);background:var(--brand-soft)}
+  .drop:focus-within{outline:3px solid var(--brand);outline-offset:2px}
+
   /* ورقة التفاصيل */
   dialog{
     border:0;padding:0;background:none;max-width:440px;width:calc(100% - 32px);
@@ -282,12 +294,27 @@
           <b>تحويل بنكي</b><span>مصرف الراجحي</span></button>
         <button type="button" class="opt" data-pay="stc" role="radio" aria-checked="false">
           <b>STC Pay</b><span>تحويل على الجوال</span></button>
+        <button type="button" class="opt" data-pay="cash" role="radio" aria-checked="false">
+          <b>كاش</b><span>عند الاستقبال يوم الجمعة</span></button>
       </div>
+
       <div class="payBox" id="payBox" hidden>
         <div class="payHead"><span id="payName">تحويل بنكي</span><b>٩٥٠ ريال</b></div>
-        <div class="payNum" id="payNum">SA00 0000 0000 0000 0000 0000</div>
+        <div class="payNum" id="payNum"></div>
         <button class="under" id="copyNum">انسخ الرقم</button>
       </div>
+
+      <!-- الإيصال: شرطٌ للتحويل والـSTC، لا للكاش -->
+      <div class="slip" id="slip" hidden>
+        <label class="drop" id="drop" for="file">
+          <span class="ic" id="slipIc">📎</span>
+          <span class="tx" id="slipTx">أرفق صورة الإيصال</span>
+          <span class="sub" id="slipSub">التسجيل ما يُقبل بلا إيصال التحويل</span>
+        </label>
+        <input id="file" type="file" accept="image/*,application/pdf" hidden>
+        <button class="under" id="dropSlip" hidden>احذف الإيصال</button>
+      </div>
+
       <div class="err" id="e3" role="alert"></div>
     </div>
     <div id="foot3" hidden>
@@ -403,11 +430,23 @@
    * حسابات الفريق. الأرقام هنا فاضية عمدًا — الصفحة تُنشر، والأرقام الحقيقية
    * مكانها إعدادات التطبيق لا الكود.
    */
+  /**
+   * حسابات الفريق. `slip` تعني: لا يُقبل التسجيل بلا إيصال — والكاش يُسدَّد
+   * باليد يوم البرنامج فما له إيصالٌ يُرفع.
+   * و`copy` بلا فراغات: البنوك تقبل الاثنين، واللصق بلا فراغٍ أسلم.
+   */
   const PAY = {
-    bank: { name: 'تحويل بنكي — مصرف الراجحي', num: 'SA00 0000 0000 0000 0000 0000' },
-    stc: { name: 'STC Pay', num: '05X XXX XXXX' },
+    bank: {
+      name: 'تحويل بنكي — مصرف الراجحي',
+      num: 'SA87 8000 0307 6080 1604 5056',
+      copy: 'SA8780000307608016045056',
+      slip: true,
+    },
+    stc: { name: 'STC Pay', num: '0557821586', copy: '0557821586', slip: true },
+    cash: { name: 'كاش عند الاستقبال', slip: false },
   };
   let pay = '';
+  let slipName = '';
 
   /**
    * الاختيار يفتح الحساب في مكانه — يسدّد وهو واقف هنا، ثم يرسل التسجيل.
@@ -420,24 +459,52 @@
       for (const b of document.querySelectorAll('.opt'))
         b.setAttribute('aria-checked', String(b === btn));
       $('payName').textContent = p.name;
-      $('payNum').textContent = p.num;
+      $('payNum').textContent = p.num || '';
       $('copyNum').textContent = 'انسخ الرقم';
-      $('payBox').hidden = false;
-      $('send').textContent = 'سدّدت — سجّل ' + firstName(nameIn.value);
+      $('payBox').hidden = !p.num;
+      $('slip').hidden = !p.slip;
+      $('send').textContent = (p.slip ? 'سدّدت — سجّل ' : 'سجّل ') + firstName(nameIn.value);
       $('e3').textContent = '';
     };
   }
 
+  /** الإيصال المرفق: اسمه يكفي للعرض، وما يُرفع لأي مكان. */
+  const drawSlip = () => {
+    const has = !!slipName;
+    $('drop').classList.toggle('ok', has);
+    $('slipIc').textContent = has ? '✓' : '📎';
+    $('slipTx').textContent = has ? 'الإيصال مرفق' : 'أرفق صورة الإيصال';
+    $('slipSub').textContent = has ? slipName : 'التسجيل ما يُقبل بلا إيصال التحويل';
+    $('dropSlip').hidden = !has;
+  };
+
+  $('file').onchange = () => {
+    slipName = $('file').files?.[0]?.name || '';
+    drawSlip();
+    if (slipName) $('e3').textContent = '';
+  };
+
+  $('dropSlip').onclick = () => {
+    $('file').value = '';
+    slipName = '';
+    drawSlip();
+  };
+
   $('send').onclick = () => {
     if (!pay) { $('e3').textContent = 'اختر طريقة السداد.'; return; }
+    if (PAY[pay].slip && !slipName) {
+      $('e3').textContent = 'أرفق صورة الإيصال — التسجيل ما يُقبل بدونها.';
+      $('drop').scrollIntoView({ block: 'nearest' });
+      return;
+    }
     $('q4').textContent = 'وصلنا تسجيل ' + firstName(nameIn.value) + '.';
-    armWhatsApp(nameIn.value.trim(), PAY[pay].name);
+    armWhatsApp(nameIn.value.trim(), PAY[pay].name, slipName);
     show(4);
   };
 
   $('copyNum').onclick = async () => {
     try {
-      await navigator.clipboard.writeText($('payNum').textContent.trim());
+      await navigator.clipboard.writeText(PAY[pay]?.copy || '');
       $('copyNum').textContent = 'اننسخ ✓';
       setTimeout(() => { $('copyNum').textContent = 'انسخ الرقم'; }, 2500);
     } catch (e) { $('copyNum').textContent = 'ما قدر ينسخ'; }
@@ -451,10 +518,15 @@
    * الفريق، وولي الأمر ما عليه إلا يضغط إرسال.
    */
   let timer = null;
-  const armWhatsApp = (full, payName) => {
+  const armWhatsApp = (full, payName, slip) => {
+    /*
+     * الإيصال نفسه ما يركب مع الرابط — واتساب ما ينقل مرفقًا في رابط.
+     * فنكتب في الرسالة أنه مرفق، ونطلبه صورةً في المحادثة.
+     */
     const msg = 'الطالب: ' + full
       + '\nالبرنامج: فيض الرواد — الموسم الكامل'
       + '\nطريقة السداد: ' + payName
+      + (slip ? '\nالإيصال: ' + slip : '')
       + '\nالرقم المرجعي: FA-1448-0042';
     const url = 'https://wa.me/' + TEAM_WA + '?text=' + encodeURIComponent(msg);
     $('wa').href = url;
@@ -489,8 +561,12 @@
     $('e2').textContent = '';
     $('e3').textContent = '';
     pay = '';
+    slipName = '';
+    $('file').value = '';
+    drawSlip();
     for (const b of document.querySelectorAll('.opt')) b.setAttribute('aria-checked', 'false');
     $('payBox').hidden = true;
+    $('slip').hidden = true;
     $('send').textContent = 'سجّل';
     show(1);
   };
