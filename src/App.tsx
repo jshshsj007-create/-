@@ -39,7 +39,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v6.1';
+const APP_VERSION = 'v6.2';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -632,13 +632,33 @@ const QT_LABELS = {
  */
 function WeekPicker({ programs, form, setForm, optional }) {
   const p = programs.find((x) => x.id === form.programId);
+  /**
+   * المفتوح أولًا.
+   *
+   * البرامج تتراكم موسمًا بعد موسم، والذي تسجّل فيه اليوم هو المفتوح — فلا
+   * يُدفن بين عشرين مقفلًا. والمقفل يبقى معروضًا تحته: قد تُسجّل مسابقةً
+   * سوّيتها في موسمٍ مضى.
+   */
+  const open = programs.filter((x) => x.status !== 'مغلق').slice().reverse();
+  const shut = programs.filter((x) => x.status === 'مغلق').slice().reverse();
+  const openWeeks = (p?.weeks || []).filter((w) => w.status !== 'مغلق');
+  const shutWeeks = (p?.weeks || []).filter((w) => w.status === 'مغلق');
   return (
     <>
       <Field label={optional ? 'البرنامج — اختياري' : 'البرنامج'}>
         <select className={inputCls} value={form.programId || ''}
           onChange={(e) => setForm({ ...form, programId: e.target.value, weekId: '', error: '' })}>
           <option value="">— اختر —</option>
-          {[...programs].reverse().map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+          {open.length > 0 && (
+            <optgroup label="المفتوحة">
+              {open.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+            </optgroup>
+          )}
+          {shut.length > 0 && (
+            <optgroup label="المقفلة">
+              {shut.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+            </optgroup>
+          )}
         </select>
       </Field>
       {p && (p.weeks || []).length > 0 && (
@@ -646,7 +666,16 @@ function WeekPicker({ programs, form, setForm, optional }) {
           <select className={inputCls} value={form.weekId || ''}
             onChange={(e) => setForm({ ...form, weekId: e.target.value, error: '' })}>
             <option value="">— البرنامج كله —</option>
-            {p.weeks.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+            {openWeeks.length > 0 && (
+              <optgroup label="المفتوحة">
+                {openWeeks.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+              </optgroup>
+            )}
+            {shutWeeks.length > 0 && (
+              <optgroup label="المقفلة">
+                {shutWeeks.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+              </optgroup>
+            )}
           </select>
         </Field>
       )}
@@ -2245,7 +2274,7 @@ export default function App() {
 
   /** دوري أو بطولة. الفرق تُنشأ بأسمائها هنا، فلا تتغيّر معرّفاتها بعدها. */
   const saveTournament = () => {
-    if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب اسم الدوري' }); return; }
+    if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب الاسم' }); return; }
     if (!form.programId) { setForm({ ...form, error: 'اختر البرنامج' }); return; }
     const names = (form.teamNames || []).map((n) => String(n || '').trim()).filter(Boolean);
     if (names.length < 2) { setForm({ ...form, error: 'اكتب اسمين فأكثر للفرق' }); return; }
@@ -5227,7 +5256,7 @@ export default function App() {
             <div className="text-xs text-slate-400 mt-0.5 mb-4">المسابقات والدوري وسؤال اليوم.</div>
             <Tabs value={clubTab} onChange={setClubTab} tabs={[
               { id: 'comps', label: 'المسابقات' },
-              { id: 'league', label: 'الدوري' },
+              { id: 'league', label: 'الدوري والكأس' },
               { id: 'question', label: 'سؤال اليوم' },
             ]} />
 
@@ -5286,17 +5315,17 @@ export default function App() {
             {clubTab === 'league' && (
               <div>
                 <div className="flex items-center justify-between mb-3 gap-3">
-                  <h3 className="font-bold text-slate-700">الدوريات</h3>
+                  <h3 className="font-bold text-slate-700">الدوري والكأس</h3>
                   <button className={btnPrimary}
                     onClick={() => { setForm({ type: LEAGUE, levels: [], teamNames: ['', ''] }); setModal('editTournament'); }}>
-                    <Plus size={16} /> دوري
+                    <Plus size={16} /> جديد
                   </button>
                 </div>
                 <div className="text-xs text-slate-400 mb-4">
-                  الدوري المصغّر: كل فريق يلاقي الباقين وجدول نقاط. والبطولة: شجرة إقصاء للنهائي.
+                  الدوري: كل فريق يلاقي الباقين وجدول نقاط. والكأس: شجرة إقصاء للنهائي.
                 </div>
                 {!data.tournaments.length ? (
-                  <div className={emptyCls}>ما فيه دوريات بعد.</div>
+                  <div className={emptyCls}>ما فيه دوري ولا كأس بعد.</div>
                 ) : (
                   <div className="space-y-2.5">
                     {data.tournaments.map((t) => {
@@ -5313,7 +5342,7 @@ export default function App() {
                                 {p ? `${p.name}${w ? ` · ${w.name}` : ''}` : 'بلا برنامج'}
                               </div>
                             </div>
-                            <Badge tone={t.type === CUP ? 'amber' : 'brand'}>{t.type === CUP ? 'بطولة' : 'مصغّر'}</Badge>
+                            <Badge tone={t.type === CUP ? 'amber' : 'brand'}>{t.type === CUP ? 'كأس' : 'دوري'}</Badge>
                           </div>
                           <div className="flex items-center flex-wrap gap-3 mt-3 text-[11px] text-slate-400">
                             <span>{t.teams.length} فرق{t.players ? ` × ${t.players}` : ''}</span>
@@ -5479,7 +5508,7 @@ export default function App() {
                 <div className="min-w-0">
                   <div className="flex items-center flex-wrap gap-2">
                     <h2 className="text-lg font-bold text-slate-800 truncate">{tournament.name}</h2>
-                    <Badge tone={tournament.type === CUP ? 'amber' : 'brand'}>{tournament.type === CUP ? 'بطولة دوري' : 'دوري مصغّر'}</Badge>
+                    <Badge tone={tournament.type === CUP ? 'amber' : 'brand'}>{tournament.type === CUP ? 'الكأس' : 'الدوري'}</Badge>
                     {(tournament.levels || []).map((lv) => <Badge key={lv} tone="slate">{lv}</Badge>)}
                   </div>
                   <div className="text-xs text-slate-400 mt-1">
@@ -7385,14 +7414,14 @@ export default function App() {
       )}
 
       {modal === 'editTournament' && (
-        <Modal title={form.id ? 'تعديل الدوري' : 'دوري جديد'} onClose={closeModal} wide>
-          <Field label="اسم الدوري">
+        <Modal title={form.id ? 'تعديل' : 'دوري أو كأس جديد'} onClose={closeModal} wide>
+          <Field label="الاسم">
             <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })}
-              placeholder="بطولة كرة القدم" />
+              placeholder="كأس كرة القدم" />
           </Field>
-          <Field label="النوع" hint="المصغّر: كل فريق يلاقي الباقين وجدول نقاط. البطولة: شجرة إقصاء للنهائي.">
+          <Field label="النوع" hint="الدوري: كل فريق يلاقي الباقين وجدول نقاط. الكأس: شجرة إقصاء للنهائي.">
             <div className="flex gap-2">
-              {[[LEAGUE, 'دوري مصغّر'], [CUP, 'بطولة دوري']].map(([id, lb]) => (
+              {[[LEAGUE, 'الدوري'], [CUP, 'الكأس']].map(([id, lb]) => (
                 <button key={id} type="button" onClick={() => setForm({ ...form, type: id })}
                   className={`flex-1 py-2 rounded-lg text-sm font-medium border ${(form.type || LEAGUE) === id ? 'bg-brand-700 text-white border-brand-700' : 'border-slate-200 text-slate-600'}`}>{lb}</button>
               ))}
@@ -8607,7 +8636,7 @@ function ClubReport({ data, program }) {
       const ch = champion(t);
       return {
         id: t.id, name: t.name, week: weekOf(t.weekId),
-        kind: (t.type === CUP ? 'بطولة' : 'مصغّر') + (ch ? ` · ${ch.name}` : ''),
+        kind: (t.type === CUP ? 'كأس' : 'دوري') + (ch ? ` · ${ch.name}` : ''),
       };
     }),
     ...runs.questions.map((q) => ({
@@ -8615,8 +8644,8 @@ function ClubReport({ data, program }) {
     })),
   ];
   const tiles = [
-    ['المسابقات', c.competitions], ['الدوريات المصغّرة', c.leagues],
-    ['البطولات', c.cups], ['أسئلة اليوم', c.questions],
+    ['المسابقات', c.competitions], ['الدوريات', c.leagues],
+    ['الكؤوس', c.cups], ['أسئلة اليوم', c.questions],
   ].filter(([, v]) => v > 0);
   return (
     <div className={cardCls + ' mb-4'}>
