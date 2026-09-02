@@ -29,6 +29,7 @@ import {
   answerVerdict, questionTally, Q_TEXTS, Q_ERRORS,
   drawPool, pastWinners, makeDraw, applyDraw,
 } from './club.js';
+import { cashRows, cashTotals, cashPayers, handoverRows, validHandover, applyHandover } from './cash.js';
 import {
   SURAHS, PARTS, emptyWird, rangeText, carryAfter, studentTotals,
   studentSessions, studentOfUser, khayrRows, khayrReportText,
@@ -40,7 +41,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v6.5';
+const APP_VERSION = 'v6.6';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -409,6 +410,8 @@ const defaultData = () => ({
   clubRuns: [],
   tournaments: [],
   questions: [],
+  /** تسليم مبلغٍ من حسابٍ إلى حساب — نقلُ نقدٍ لا إيراد ولا مصروف. */
+  handovers: [],
   trips: [],
   /**
    * خيركم: طلابه قائمة مستقلة عن مشتركي البرامج، وجلساته سجل التسميع.
@@ -517,6 +520,7 @@ export function migrate(loaded) {
     mode: 'open', options: [], correctId: '', answer: '', alsoOk: [], levels: [],
     open: true, answers: [], draws: [], texts: {}, programId: '', weekId: '', ...q,
   }));
+  d.handovers = d.handovers || [];
   d.khayr = { students: [], sessions: [], ...(d.khayr || {}) };
   /**
    * `mem` حدّ محفوظ الطالب: منه تُقاس دورة المراجعة. القدامى بلا حدّ — فدورتهم
@@ -1634,6 +1638,10 @@ export default function App() {
   const scopedAdjustments = data.faidAdjustments.filter(faidInScope);
   const scopeName = faidScope === 'all' ? 'كل المواسم'
     : faidScope === 'none' ? 'بلا موسم' : `الترم ${data.currentTerm} ${data.currentYear} هـ`;
+
+  /** «كم معك؟» — نقدُ كل حساب، وكم منه محفوظٌ لأيامٍ ما صارت. */
+  const cashList = cashRows(data);
+  const cashSum = cashTotals(cashList);
 
   const accountStats = statsOf(data.faidAdjustments);
   const scopedStats = statsOf(scopedAdjustments);
@@ -2807,11 +2815,27 @@ export default function App() {
   };
 
   /** التأكيد يعني: الفلوس وصلت الحساب فعلًا. عندها فقط يدخل الإيراد. */
+  /**
+   * تأكيد وصول المبلغ.
+   *
+   * والتسجيل الواحد من الرابط دفعةٌ واحدة بإيصالٍ واحد ورقمٍ واحد، وإن نزل
+   * صفًّا في كل أسبوع. فتأكيدُ صفٍّ منه إقرارٌ بوصول المبلغ كله — وإخوته تبقى
+   * معلّقة (فما تدخل إيراد أسبوعٍ ما صار) لكنها تُعلَّم «مدفوع مقدّمًا»، لأن
+   * «ينتظر تأكيدك» كذبٌ على مالٍ في يدك.
+   */
   const clearPendingFlag = (pred) => save({
     ...data,
     programs: data.programs.map((p) => {
       if (p.id !== program.id) return p;
-      const fix = (part) => (pred(part) ? { ...part, pending: false, confirmedAt: Date.now() } : part);
+      const paidRefs = new Set();
+      const scan = (part) => { if (pred(part) && part.ref) paidRefs.add(part.ref); };
+      (p.participants || []).forEach(scan);
+      (p.weeks || []).forEach((w) => (w.participants || []).forEach(scan));
+      const fix = (part) => {
+        if (pred(part)) return { ...part, pending: false, prepaid: false, confirmedAt: Date.now() };
+        if (part.pending && part.ref && paidRefs.has(part.ref)) return { ...part, prepaid: true };
+        return part;
+      };
       return {
         ...p,
         participants: (p.participants || []).map(fix),
@@ -3002,6 +3026,18 @@ export default function App() {
         ? list.map((x) => (x.id !== form.id ? x : { ...x, name, price, dayCount }))
         : [...list, { id: uid(), name, price, dayCount }],
     });
+    closeModal();
+  };
+
+  /** تسليم مبلغٍ من حسابٍ إلى حساب. الفحص في `cash.js` عشان يُختبر. */
+  const saveHandover = () => {
+    const err = validHandover(data, form);
+    if (err) { setForm({ ...form, error: err }); return; }
+    save(applyHandover(data, {
+      id: uid(), fromId: form.fromId, toId: form.toId,
+      amount: Number(form.amount), note: (form.note || '').trim(),
+      at: Date.now(), by: currentUser?.name || '',
+    }));
     closeModal();
   };
 
@@ -3854,7 +3890,12 @@ export default function App() {
                           <td className="px-4 py-3 font-semibold text-slate-800">
                 {p.name}
                 {/* سجّل نفسه من الرابط ولسه ما تأكّد وصول مبلغه */}
-                {p.pending && <span className="mr-2 align-middle"><Badge tone="amber">ينتظر تأكيدك</Badge></span>}
+                {p.pending && (
+                  <span className="mr-2 align-middle">
+                    {/* دفع المدة كلها مقدّمًا، فما ينتظر منك تأكيدًا — ينتظر جمعته */}
+                    <Badge tone={p.prepaid ? 'blue' : 'amber'}>{p.prepaid ? 'مدفوع مقدّمًا' : 'ينتظر تأكيدك'}</Badge>
+                  </span>
+                )}
               </td>
                           <td className="px-4 py-3"><Badge tone={p.type === 'مجمع' ? 'blue' : 'brand'}>{p.type}</Badge></td>
                           <td className="px-4 py-3 text-slate-600">{p.weeks.length}</td>
@@ -4321,7 +4362,7 @@ export default function App() {
                                     <div className="text-[11px] text-slate-400">
                                       {fmt(pk.price)} ر.س · {Number(pk.dayCount)
                                         ? `${pk.dayCount} ${isGrouped ? 'أيام' : 'أسابيع'}`
-                                        : `كل الأ${isGrouped ? 'يام' : 'سابيع'} المتاحة`}
+                                        : `كل الأ${isGrouped ? 'يام' : 'سابيع'} المتاحة (${(s.openWeeks || []).length})`}
                                       {!isGrouped && over > 0 && ` · ${fmt(Math.floor(Number(pk.price || 0) / over))} للأسبوع`}
                                       {off && ' · مخفية'}
                                     </div>
@@ -4378,16 +4419,22 @@ export default function App() {
                         </Field>
 
                         {/*
-                          الباقات هي اختيار أيامٍ في نفسها، فما نعرض المفتاح معها:
-                          إخفاء الأيام هناك يُخفي ما يُشترى.
+                          واحدٌ ما يُسأل عنه: نكتبه له مهما كان المفتاح، فلا
+                          نعرض مفتاحًا لا أثر له.
                         */}
-                        {!livePacks.length && (
+                        {(s.openWeeks || []).length > 1 && (
                           <Toggle label="ولي الأمر يختار أيامه"
                             hint={s.daysMode === 'fixed'
                               ? 'مطفي: ما يشوف الأيام أصلًا، ونسجّله في اللي فتحته فوق.'
                               : 'مشغّل: يختار من الأيام اللي فتحتها فوق.'}
                             on={s.daysMode !== 'fixed'}
                             onChange={(v) => patchSignup({ daysMode: v ? 'parent' : 'fixed' })} />
+                        )}
+                        {/* والباقة بعددٍ أقل من الأيام تُبطل الإطفاء: عددها هو الاختيار */}
+                        {s.daysMode === 'fixed' && livePacks.some((p) => Number(p.dayCount) > 0 && Number(p.dayCount) < (s.openWeeks || []).length) && (
+                          <div className="text-[11px] text-amber-700 leading-6 -mt-1 mb-2">
+                            عندك باقةٌ بعددٍ أقل من المفتوح، فلازم يختار أيامه — والمفتاح ما يشتغل معها.
+                          </div>
                         )}
 
                         {/*
@@ -5064,7 +5111,13 @@ export default function App() {
                   </div>
                 )}
 
-                {activeWeekTab === 'report' && <WeekReport week={week} accounts={data.faidAccounts} canMoney={canMoney} programName={program.name} />}
+                {activeWeekTab === 'report' && (
+                  <>
+                    {/* ما سُوّي في هذا اليوم من النادي — لمن له صلاحيته */}
+                    {can('النادي') && <ClubReport data={data} program={program} week={week} />}
+                    <WeekReport week={week} accounts={data.faidAccounts} canMoney={canMoney} programName={program.name} />
+                  </>
+                )}
               </>
             )}
           </div>
@@ -5215,7 +5268,20 @@ export default function App() {
             <Tabs value={faidTab} onChange={(t) => { setFaidTab(t); if (t === 'analysis') clearFaidDrill(); }} tabs={[
               { id: 'txns', label: 'العمليات' },
               { id: 'analysis', label: 'وين راحت الفلوس' },
+              { id: 'cash', label: 'كم معك' },
             ]} />
+
+            {faidTab === 'cash' && (
+              <CashScreen
+                rows={cashList} totals={cashSum} handovers={handoverRows(data)}
+                onOpen={(id) => { setForm({ accountId: id }); setModal('cashAccount'); }}
+                onHandover={() => { setForm({}); setModal('handover'); }}
+                onUndo={isAdmin ? (h) => askConfirm(
+                  `إلغاء تسليم ${fmt(h.amount)} ر.س من ${h.fromName} إلى ${h.toName}؟`,
+                  () => save({ ...data, handovers: data.handovers.filter((x) => x.id !== h.id) }),
+                ) : null}
+              />
+            )}
 
             {faidTab === 'analysis' && (
               <FaidAnalysis
@@ -8212,6 +8278,18 @@ export default function App() {
               hint={`اتركه فاضيًا (أو صفر) لو الباقة تشمل كل الأ${isGrouped ? 'يام' : 'سابيع'} المتاحة. وإلا يختار ولي الأمر هذا العدد.`}>
               <input type="number" className={inputCls} value={form.dayCount ?? ''} onChange={(e) => setForm({ ...form, dayCount: e.target.value, error: '' })} placeholder="4" />
             </Field>
+            {/*
+              «كل المتاحة» رقمٌ يتغيّر بما تفتحه تحت، فيُقال له الآن: باقةُ
+              موسمٍ كامل على أسبوعٍ واحدٍ مفتوح تصير أسبوعًا، ولا يدري إلا
+              حين يفتحها وليّ أمر.
+            */}
+            {!Number(form.dayCount || 0) && (
+              <div className={`rounded-xl px-3.5 py-2.5 text-[12px] font-semibold leading-6 mb-4 border ${
+                open > 1 ? 'bg-slate-50 border-slate-200 text-slate-600' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+                كل الأ{isGrouped ? 'يام' : 'سابيع'} المتاحة = <b>{open}</b> الآن
+                {open <= 1 && ' — افتح الباقي من «الأيام المتاحة للتسجيل» تحت.'}
+              </div>
+            )}
             {/* نصيب اليوم يُحسب أمامه وهو يكتب، فما يحتاج يحسبه بيده */}
             {!isGrouped && price > 0 && over > 0 && (
               <div className="bg-brand-50 border border-brand-100 rounded-xl px-3.5 py-2.5 text-[12px] text-brand-800 font-semibold leading-6 mb-4">
@@ -8227,6 +8305,93 @@ export default function App() {
             {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
             <div className="flex gap-2 mt-2">
               <button className={btnPrimary + ' flex-1'} onClick={savePackage}>{form.id ? 'حفظ' : 'إضافة'}</button>
+              <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+            </div>
+          </Modal>
+        );
+      })()}
+
+      {/* من دفع في هذا الحساب — جوابُ «الفلوس هذي من وين؟» */}
+      {modal === 'cashAccount' && (() => {
+        const acc = data.faidAccounts.find((a) => a.id === form.accountId);
+        if (!acc) return null;
+        const me = cashList.find((a) => a.id === acc.id) || { balance: 0, held: 0 };
+        const payers = cashPayers(data, acc.id);
+        return (
+          <Modal title={acc.name} onClose={closeModal} wide>
+            <div className="bg-brand-700 rounded-2xl p-4 text-white mb-4">
+              <div className="text-[11px] text-brand-200">معه الآن</div>
+              <div className="text-2xl font-extrabold tabular-nums mt-0.5">{fmt(me.balance)} <span className="text-sm font-bold">ر.س</span></div>
+              {me.held > 0 && <div className="text-[11px] text-brand-200 mt-1.5">منها {fmt(me.held)} محفوظة لأيامٍ ما صارت.</div>}
+            </div>
+            <div className="text-sm font-semibold text-slate-700 mb-2">من دفع فيه</div>
+            {!payers.length ? (
+              <div className={emptyCls}>ما دفع فيه أحد بعد.</div>
+            ) : (
+              <div className="divide-y divide-slate-100 max-h-[45vh] overflow-y-auto">
+                {payers.map((r) => (
+                  <div key={r.id} className="flex items-center justify-between gap-2 py-2.5">
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold text-slate-800 truncate">
+                        {r.name}
+                        {r.prepaid && <span className="mr-2 align-middle"><Badge tone="blue">مقدّمًا</Badge></span>}
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5 truncate">
+                        {[r.program, r.week, r.packageName].filter(Boolean).join(' · ')}
+                      </div>
+                    </div>
+                    <span className="text-sm font-extrabold text-slate-800 tabular-nums shrink-0">{fmt(r.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="text-[11px] text-slate-400 mt-3 leading-6">
+              والمصروف من هذا الحساب ونصيب المدارس وفيض تشوفها في دفاتر البرامج — وهي مطروحةٌ من رصيده فوق.
+            </div>
+          </Modal>
+        );
+      })()}
+
+      {/* التسليم: نقلُ نقدٍ بين حسابين، لا إيراد ولا مصروف */}
+      {modal === 'handover' && (() => {
+        const opts = data.faidAccounts;
+        const from = cashList.find((a) => a.id === form.fromId);
+        return (
+          <Modal title="تسليم مبلغ" onClose={closeModal}>
+            <Field label="من" hint={from ? `معه ${fmt(from.balance)} ر.س` : ''}>
+              <select className={inputCls} value={form.fromId || ''}
+                onChange={(e) => setForm({ ...form, fromId: e.target.value, error: '' })}>
+                <option value="">اختر الحساب</option>
+                {opts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </Field>
+            <Field label="إلى">
+              <select className={inputCls} value={form.toId || ''}
+                onChange={(e) => setForm({ ...form, toId: e.target.value, error: '' })}>
+                <option value="">اختر الحساب</option>
+                {opts.filter((a) => a.id !== form.fromId).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </Field>
+            <Field label="المبلغ (ر.س)">
+              <div className="flex gap-2">
+                <input type="number" className={inputCls} value={form.amount ?? ''}
+                  onChange={(e) => setForm({ ...form, amount: e.target.value, error: '' })} placeholder="3000" />
+                {from && from.balance > 0 && (
+                  <button type="button" className={btnGhostBox + ' shrink-0'}
+                    onClick={() => setForm({ ...form, amount: from.balance, error: '' })}>كل ما معه</button>
+                )}
+              </div>
+            </Field>
+            <Field label="ملاحظة — اختياري">
+              <input className={inputCls} value={form.note || ''}
+                onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="تسليم آخر الأسبوع" />
+            </Field>
+            <div className="text-[11px] text-slate-400 leading-6 mb-3">
+              ينقل النقد ولا يغيّر إيرادًا ولا محفوظًا — فلوسٌ من جيبٍ إلى جيب.
+            </div>
+            {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+            <div className="flex gap-2 mt-2">
+              <button className={btnPrimary + ' flex-1'} onClick={saveHandover}>سلّم</button>
               <button className={btnGhost} onClick={closeModal}>إلغاء</button>
             </div>
           </Modal>
@@ -8561,7 +8726,12 @@ function ParticipantsTable({ participants, accounts, showAttendance, statusOf, o
               <td className="px-4 py-3 font-semibold text-slate-800">
                 {p.name}
                 {/* سجّل نفسه من الرابط ولسه ما تأكّد وصول مبلغه */}
-                {p.pending && <span className="mr-2 align-middle"><Badge tone="amber">ينتظر تأكيدك</Badge></span>}
+                {p.pending && (
+                  <span className="mr-2 align-middle">
+                    {/* دفع المدة كلها مقدّمًا، فما ينتظر منك تأكيدًا — ينتظر جمعته */}
+                    <Badge tone={p.prepaid ? 'blue' : 'amber'}>{p.prepaid ? 'مدفوع مقدّمًا' : 'ينتظر تأكيدك'}</Badge>
+                  </span>
+                )}
               </td>
               {weeks && (() => {
                 const mine = enrolledDays(p, weeks);
@@ -8711,6 +8881,12 @@ function WaitingList({ items, accounts, canMoney, locked, onConfirm, onConfirmAl
   // ما فيه منتظر أصلًا: نختفي. حجبهم البحثُ: نبقى ونقول ذلك — وإلا ظنّ إنه ما فيه أحد
   if (!items.length && !hidden) return null;
   const accountName = (id) => accounts.find((a) => a.id === id)?.name || 'بلا حساب';
+  /**
+   * المدفوع مقدّمًا ما ينتظر منك قرارًا — ينتظر إدخالك حصّته في إيراد يومه.
+   * ولو أقفلتَ اليوم وأنت ناسٍ، طلع إيراده أقلّ مما هو، وطلع توزيعه غلطًا.
+   */
+  const pre = items.filter((x) => x.prepaid);
+  const preSum = pre.reduce((s, x) => s + Number(x.amount || 0), 0);
   return (
     <div id="waiting-list" className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
       <div className="flex items-center justify-between gap-2 mb-1">
@@ -8737,6 +8913,17 @@ function WaitingList({ items, accounts, canMoney, locked, onConfirm, onConfirmAl
             : 'سجّلوا من الرابط، وينتظرون تأكيد المسؤول عشان يدخلون قائمة الحضور.'}
         </div>
       )}
+      {canMoney && pre.length > 0 && (
+        <div className="bg-white border border-blue-200 rounded-xl px-3.5 py-2.5 mb-3 flex items-center justify-between gap-3 flex-wrap">
+          <div className="text-[12px] text-blue-900 leading-6">
+            <b>{pre.length}</b> مدفوعين مقدّمًا ما أدخلتهم — نصيبهم من هذا اليوم <b>{fmt(preSum)} ر.س</b>.
+          </div>
+          <button onClick={onConfirmAll} disabled={locked}
+            className="bg-blue-600 text-white text-xs font-bold px-3 py-2 rounded-lg shrink-0 disabled:opacity-40">
+            أدخلهم
+          </button>
+        </div>
+      )}
       <div className="space-y-2.5">
         {items.map((p) => {
           const late = arrearsOf ? arrearsOf(p) : [];
@@ -8759,7 +8946,11 @@ function WaitingList({ items, accounts, canMoney, locked, onConfirm, onConfirmAl
                   </button>
                 )}
                 <div className="min-w-0 flex-1">
-                  <div className="font-semibold text-sm text-slate-800 truncate">{p.name}</div>
+                  <div className="font-semibold text-sm text-slate-800 truncate">
+                    {p.name}
+                    {/* دفع المدة كلها، فما ينتظر منك قرارًا — ينتظر إدخال حصّة يومه */}
+                    {p.prepaid && <span className="mr-2 align-middle"><Badge tone="blue">مدفوع مقدّمًا</Badge></span>}
+                  </div>
                   {late.length > 0 && (
                     <div className="text-[11px] text-red-600 font-bold mt-0.5">
                       ⚠️ عليه {arrearsText(late)} من {late.map((r) => r.label).join(' · ')}
@@ -8826,11 +9017,16 @@ function ProgramTotals({ program }) {
  * هو ما يبحث عنه من يفتح التقرير بعد سنة. والمعدوم لا يُعرض: قسمٌ أصفاره
  * أربعة يزحم الورقة ولا يقول شيئًا.
  */
-function ClubReport({ data, program }) {
-  const runs = programRuns(data, program.id);
+/**
+ * النادي في التقرير: البرنامج كلّه، أو يومٌ منه لو مُرّر `week`.
+ *
+ * وفي اليوم لا يُكتب اسمه في كل سطر — الشاشة كلها عنه.
+ */
+function ClubReport({ data, program, week }) {
+  const runs = week ? weekRuns(data, program.id, week.id) : programRuns(data, program.id);
   const c = clubCounts(runs);
   if (!c.competitions && !c.leagues && !c.cups && !c.questions) return null;
-  const weekOf = (id) => (program.weeks || []).find((w) => w.id === id)?.name || '';
+  const weekOf = (id) => (week ? '' : (program.weeks || []).find((w) => w.id === id)?.name || '');
   const compName = (id) => (data.competitions || []).find((x) => x.id === id)?.name || 'مسابقة محذوفة';
   const rows = [
     ...runs.competitions.map((r) => ({ id: r.id, name: compName(r.compId), kind: 'مسابقة', week: weekOf(r.weekId) })),
@@ -8851,7 +9047,7 @@ function ClubReport({ data, program }) {
   ].filter(([, v]) => v > 0);
   return (
     <div className={cardCls + ' mb-4'}>
-      <div className="text-sm font-semibold text-slate-700 mb-3">النادي في هذا البرنامج</div>
+      <div className="text-sm font-semibold text-slate-700 mb-3">{week ? 'النادي في هذا اليوم' : 'النادي في هذا البرنامج'}</div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
         {tiles.map(([lb, v]) => (
           <div key={lb} className="bg-slate-50 rounded-xl p-3 text-center">
@@ -8867,6 +9063,77 @@ function ClubReport({ data, program }) {
             <span className="text-[11px] text-slate-400 shrink-0">{[r.kind, r.week].filter(Boolean).join(' · ')}</span>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * «كم معك؟» — نقدُ كل حساب في سطر.
+ *
+ * يتصل بك أبو فارس آخر الأسبوع يسأل كم معه، فتفتحها وتقول. والمحفوظ يُذكر
+ * تحت المجموع لا في السطر: هو مالٌ في يدك، لكنه ليس إيرادك — فما يُوزَّع.
+ */
+function CashScreen({ rows, totals, handovers, onOpen, onHandover, onUndo }) {
+  return (
+    <div className="space-y-3">
+      <div className="bg-brand-700 rounded-2xl p-4 text-white flex items-center justify-between gap-3">
+        <div>
+          <div className="text-[11px] text-brand-200">مجموع ما عند الفريق</div>
+          <div className="text-2xl font-extrabold tabular-nums mt-0.5">{fmt(totals.balance)} <span className="text-sm font-bold">ر.س</span></div>
+        </div>
+        {totals.held > 0 && (
+          <div className="text-left">
+            <div className="text-[11px] text-brand-200">منها محفوظ لأيامٍ ما صارت</div>
+            <div className="text-lg font-extrabold tabular-nums">{fmt(totals.held)}</div>
+          </div>
+        )}
+      </div>
+
+      {rows.map((a) => (
+        <button key={a.id} onClick={() => onOpen(a.id)}
+          className="w-full text-right bg-white rounded-2xl border border-slate-100 px-4 py-3.5 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="font-bold text-slate-800">{a.name}</div>
+            <div className="text-[11px] text-slate-400 mt-0.5">
+              دخله {fmt(a.inflow)} · خرج منه {fmt(a.outflow)}
+              {a.held > 0 && ` · محفوظ ${fmt(a.held)}`}
+            </div>
+          </div>
+          <div className={`text-xl font-extrabold tabular-nums shrink-0 ${a.balance ? 'text-slate-800' : 'text-slate-300'}`}>{fmt(a.balance)}</div>
+        </button>
+      ))}
+
+      <button className={btnPrimary + ' w-full'} onClick={onHandover}>
+        <Send size={16} /> سلّم مبلغًا لحسابٍ ثاني
+      </button>
+
+      {handovers.length > 0 && (
+        <div className={cardCls}>
+          <div className="text-sm font-semibold text-slate-700 mb-2">التسليمات</div>
+          <div className="divide-y divide-slate-100">
+            {handovers.map((h) => (
+              <div key={h.id} className="flex items-center justify-between gap-2 py-2.5">
+                <div className="min-w-0">
+                  <div className="text-sm text-slate-700 truncate">{h.fromName} ← {h.toName}</div>
+                  <div className="text-[10px] text-slate-400 mt-0.5">
+                    {agoText(h.at)}{h.by ? ` · ${h.by}` : ''}{h.note ? ` · ${h.note}` : ''}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-sm font-extrabold text-slate-800 tabular-nums">{fmt(h.amount)}</span>
+                  {onUndo && (
+                    <button onClick={() => onUndo(h)} className="text-slate-300 hover:text-red-500"><X size={15} /></button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="text-[11px] text-slate-400 leading-6 px-1">
+        هذا نقدٌ لا ربح: كم في يد كل حساب الآن. وما كسبه الفريق تشوفه في «العمليات» وتقارير البرامج.
       </div>
     </div>
   );

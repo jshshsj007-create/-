@@ -256,6 +256,33 @@ test('والمُباع باقاتٍ يبقى الاختيار فيه — الب�
   assert.equal(publicView(d, d.programs[0]).pickDays, true);
 });
 
+test('واليوم الواحد ما يُسأل عنه — سؤالٌ جوابه واحد', () => {
+  assert.equal(daysView('parent', ['w1']).pickDays, false);
+  assert.equal(daysView(undefined, ['w1']).pickDays, false);
+  // ويُكتب له مع ذلك، فلا ينزل بلا أيام
+  const v = daysView('parent', ['w1']);
+  const out = normalizeSubmission(v, { kids: [{ name: 'محمد' }] });
+  assert.deepEqual(out.kids[0].days, ['w1']);
+});
+
+test('وباقة المدة الكاملة ما فيها ما يُختار، فتُخفى مع «أنا أحدّدها»', () => {
+  const d = base();
+  d.programs[0].signup = {
+    ...d.programs[0].signup, daysMode: 'fixed', price: 0, allowPerDay: false,
+    packages: [{ id: 'k1', name: 'المدة كاملة', price: 200, dayCount: 0 }],
+  };
+  assert.equal(publicView(d, d.programs[0]).pickDays, false);
+});
+
+test('والباقة بعددٍ أقل تُبطل الإخفاء — عددها هو الاختيار', () => {
+  const d = base();
+  d.programs[0].signup = {
+    ...d.programs[0].signup, daysMode: 'fixed', price: 0, allowPerDay: false,
+    packages: [{ id: 'k2', name: 'أسبوع واحد', price: 90, dayCount: 1 }],
+  };
+  assert.equal(publicView(d, d.programs[0]).pickDays, true);
+});
+
 test('وأيامه تُكتب له كما فتحها صاحب البرنامج', () => {
   const v = daysView('fixed');
   const out = normalizeSubmission(v, { kids: [{ name: 'محمد' }, { name: 'خالد' }] });
