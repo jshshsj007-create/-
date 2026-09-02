@@ -10,7 +10,7 @@
 import { getStore } from '@netlify/blobs';
 import crypto from 'node:crypto';
 import { programFor, publicView, validateSubmission, applySubmission, normalizeSubmission, rateLimited, waIntl } from '../../src/signup.js';
-import { questionView, validateAnswer, applyAnswer, answersRateLimited } from '../../src/club.js';
+import { questionView, validateAnswer, applyAnswer, answersRateLimited, makeDraw, applyDraw } from '../../src/club.js';
 import { dedupeByPhone, remapParticipants } from '../../src/people.js';
 import { runBackup, backupStatus, readSnapshot } from '../lib/backup.mjs';
 
@@ -354,6 +354,30 @@ export default async (req) => {
     const id = crypto.createHash('sha256').update(raw).digest('base64url').slice(0, 32);
     await store().set(IMG_PREFIX + id, raw);
     return json({ ok: true, id });
+  }
+
+  /**
+   * قرعة سؤال اليوم.
+   *
+   * تُسحب هنا لا في الجوال: لو سُحبت هناك، قدر صاحبها يعيدها ما شاء ولا يحفظ
+   * إلا التي أعجبته — وهذي قرعةٌ أمام الأولاد، فلا تحتمل ذلك. وهنا تُحسب
+   * وتُكتب في نداءٍ واحد، فأول ضغطةٍ هي القرعة.
+   */
+  if (op === 'question_draw') {
+    if (!allowed(me, 'النادي')) return json({ error: 'forbidden' }, 403);
+    const q = (doc.data?.questions || []).find((x) => x.id === body.questionId);
+    if (!q) return json({ error: 'not_found' }, 404);
+    const draw = makeDraw(q, body.opts || {}, {
+      id: crypto.randomUUID(),
+      by: me.name || me.username || '',
+      // عشوائية الخادم لا `Math.random`: القرعة يُحتجّ بها على الناس
+      rand: () => crypto.randomInt(0, 2 ** 30) / 2 ** 30,
+    });
+    if (!draw) return json({ error: 'empty' }, 409);
+    const data = applyDraw(doc.data, q, draw);
+    const rev = doc.rev + 1;
+    await writeDoc({ ...doc, rev, updatedAt: new Date().toISOString(), data });
+    return json({ ok: true, draw, rev, data: strip(data, me) });
   }
 
   // سحب التحديثات: لو ما تغيّر شي نرجّع ردًّا خفيفًا بدل البيانات كاملة.

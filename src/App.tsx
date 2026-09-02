@@ -27,6 +27,7 @@ import {
   LEAGUE, CUP, leagueFixtures, leagueTable, cupBracket, champion,
   weekRuns, programRuns, clubCounts, usedIn,
   answerVerdict, questionTally, Q_TEXTS, Q_ERRORS,
+  drawPool, pastWinners, makeDraw, applyDraw,
 } from './club.js';
 import {
   SURAHS, PARTS, emptyWird, rangeText, carryAfter, studentTotals,
@@ -39,7 +40,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v6.3';
+const APP_VERSION = 'v6.4';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -514,7 +515,7 @@ export function migrate(loaded) {
   }));
   d.questions = (d.questions || []).map((q) => ({
     mode: 'open', options: [], correctId: '', answer: '', alsoOk: [], levels: [],
-    open: true, answers: [], texts: {}, programId: '', weekId: '', ...q,
+    open: true, answers: [], draws: [], texts: {}, programId: '', weekId: '', ...q,
   }));
   d.khayr = { students: [], sessions: [], ...(d.khayr || {}) };
   /**
@@ -717,6 +718,35 @@ function Field({ label, children, hint }) {
       <label className="block text-sm font-medium text-slate-600 mb-1.5">{label}</label>
       {children}
       {hint && <div className="text-xs text-slate-400 mt-1.5">{hint}</div>}
+    </div>
+  );
+}
+
+/**
+ * تقليب أسماء القرعة.
+ *
+ * حركةٌ لا اختيار: الفائز حُسم في الخادم أول ما ضُغط الزر، وهذا مشهدٌ يُعرض
+ * على الأولاد. ولو أوقفناه على «الفائز يظهر بعد لحظة» بلا تقليب، صارت القرعة
+ * رقمًا يهبط على الشاشة لا حدثًا يُنتظر.
+ */
+function DrawReel({ names }) {
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setI((x) => x + 1), 90);
+    return () => clearInterval(t);
+  }, []);
+  const at = (k) => names[((i + k) % names.length + names.length) % names.length] || '';
+  return (
+    <div className="bg-slate-900 rounded-2xl py-7 px-4 text-center overflow-hidden">
+      <div className="text-[11px] text-slate-500 font-bold mb-3">نسحب من {names.length} اسمًا…</div>
+      <div className="text-[15px] text-slate-700 font-bold leading-7 truncate">{at(-1)}</div>
+      <div className="text-[21px] text-white font-extrabold leading-8 truncate">{at(0)}</div>
+      <div className="text-[15px] text-slate-700 font-bold leading-7 truncate">{at(1)}</div>
+      <div className="flex gap-1 justify-center mt-4">
+        {[0, 1, 2, 3, 4].map((d) => (
+          <i key={d} className={`w-1.5 h-1.5 rounded-full ${i % 5 === d ? 'bg-white' : 'bg-slate-700'}`} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -2359,6 +2389,28 @@ export default function App() {
       ...q, answers: (q.answers || []).filter((a) => a.id !== aid),
     })),
   });
+
+  /**
+   * القرعة: يسحبها الخادم ويكتبها في نداءٍ واحد، فأول ضغطةٍ هي القرعة ولا
+   * يقدر أحد يعيدها في السرّ حتى يطلع الاسم الذي يريده.
+   *
+   * وما رجع به الخادم نردّه على ما لم يُحفظ بعد، وإلا طمست حفظتُنا التالية
+   * القرعةَ وهي مبنيّة على نسخةٍ ما فيها.
+   */
+  const drawWinners = async (qid, opts) => {
+    if (!cloudOn) {
+      const q = data.questions.find((x) => x.id === qid);
+      const draw = q && makeDraw(q, opts, { id: uid(), by: currentUser?.name || '' });
+      if (!draw) return null;
+      await save(applyDraw(data, q, draw));
+      return draw;
+    }
+    const r = await api('question_draw', { token: sess.current.token, questionId: qid, opts });
+    if (r.status !== 200 || !r.body?.draw) return null;
+    if (queueRef.current) queueRef.current = merge3(baseRef.current, queueRef.current, r.body.data);
+    adopt(r.body.data, r.body.rev);
+    return r.body.draw;
+  };
 
   /** أدوات المسابقة: اسم الأداة وكميتها (أقماع ٦، كورة ٢…). */
   const addTool = () => {
@@ -5593,6 +5645,8 @@ export default function App() {
           const url = question.token ? `${location.origin}/q/${question.token}` : '';
           const tally = questionTally(question);
           const optText = (id) => (question.options || []).find((o) => o.id === id)?.text || '';
+          const inDraw = drawPool(question, { pool: 'ok' }).length;
+          const draws = [...(question.draws || [])].sort((a, b) => (b.at || 0) - (a.at || 0));
           return (
             <div>
               <Breadcrumb items={[{ label: 'النادي', onClick: () => { setClubTab('question'); goto('competitions'); } }, { label: 'سؤال' }]} />
@@ -5649,6 +5703,33 @@ export default function App() {
                     <div className="text-[10px] text-slate-400 mt-0.5">{lb}</div>
                   </div>
                 ))}
+              </div>
+
+              {/* القرعة: تُسحب أمام الأولاد، وتبقى مكتوبة بعدها */}
+              <div className={cardCls + ' mb-3'}>
+                <button className={btnPrimary + ' w-full'} disabled={!(question.answers || []).length}
+                  onClick={() => { setForm({ pool: 'ok', count: 1, skipPast: false }); setModal('draw'); }}>
+                  🎲 اسحب فائزًا
+                </button>
+                <div className="text-[11px] text-slate-400 text-center mt-2">
+                  {inDraw ? `${inDraw} اسمًا داخل القرعة.` : 'ما جاوب أحدٌ صح بعد.'}
+                </div>
+                {draws.length > 0 && (
+                  <div className="mt-4">
+                    <div className="text-sm font-semibold text-slate-700 mb-1">سجلّ القرعة</div>
+                    <div className="divide-y divide-slate-100">
+                      {draws.map((d) => (
+                        <div key={d.id} className="flex items-baseline justify-between gap-2 py-2">
+                          <div className="text-sm font-extrabold text-slate-800 truncate">{(d.winners || []).join(' · ')}</div>
+                          <div className="text-[10px] text-slate-400 shrink-0">
+                            {agoText(d.at)} · من {d.poolSize}{d.by ? ` · سحبها ${d.by}` : ''}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-2">السجلّ يتراكم ولا يُمحى.</div>
+                  </div>
+                )}
               </div>
 
               <div className={cardCls}>
@@ -7507,6 +7588,88 @@ export default function App() {
           </div>
         </Modal>
       )}
+
+      {/* القرعة: إعدادٌ قصير، ثم تقليبٌ، ثم فائز */}
+      {modal === 'draw' && question && (() => {
+        const pool = form.pool === 'all' ? 'all' : 'ok';
+        const past = pastWinners(question);
+        const names = drawPool(question, { pool, exclude: form.skipPast ? past : [] });
+        const count = Math.min(Number(form.count) || 1, Math.max(1, names.length));
+        const start = async () => {
+          setForm((f) => ({ ...f, step: 'spin', reel: names, error: '' }));
+          const [drawn] = await Promise.all([
+            drawWinners(question.id, { pool, count, skipPast: Boolean(form.skipPast) }),
+            // التقليب يكمل مشهده حتى لو رجع الخادم في لحظة
+            new Promise((done) => setTimeout(done, 2600)),
+          ]);
+          if (!drawn) { setForm((f) => ({ ...f, step: '', error: 'ما تمت القرعة. تأكد من النت وجرّب.' })); return; }
+          setForm((f) => ({ ...f, step: 'done', drawn }));
+        };
+        const pick = 'flex-1 text-center border rounded-lg py-2 text-sm font-semibold';
+        const on = 'bg-brand-700 text-white border-brand-700';
+        const off = 'bg-white border-slate-200 text-slate-500';
+
+        if (form.step === 'spin') {
+          return (
+            <Modal title="القرعة" onClose={() => {}}>
+              <DrawReel names={form.reel || names} />
+              <div className="text-[11px] text-slate-400 text-center mt-3">القرعة حُسمت أول ما ضغطت — والتقليب عرض.</div>
+            </Modal>
+          );
+        }
+
+        if (form.step === 'done' && form.drawn) {
+          const win = form.drawn.winners || [];
+          const share = `${question.text}\n\n🎉 ${win.join(' · ')}\nمن بين ${form.drawn.poolSize} ${form.drawn.pool === 'all' ? 'جاوبوا' : 'جاوبوا صح'}`;
+          return (
+            <Modal title={win.length > 1 ? 'الفائزون' : 'الفائز'} onClose={closeModal}>
+              <div className="bg-brand-700 rounded-2xl py-6 px-4 text-center text-white">
+                <div className="text-3xl">🎉</div>
+                {win.map((n) => <div key={n} className="text-[21px] font-extrabold mt-1.5 leading-8">{n}</div>)}
+                <div className="text-[11px] text-brand-200 mt-2">
+                  من بين {form.drawn.poolSize} {form.drawn.pool === 'all' ? 'جاوبوا' : 'جاوبوا صح'}
+                </div>
+              </div>
+              <a className={btnGhostBox + ' w-full mt-3'} target="_blank" rel="noreferrer"
+                href={`https://wa.me/?text=${encodeURIComponent(share)}`}>
+                <Send size={16} /> شارك في القروب
+              </a>
+              <div className="text-[11px] text-slate-400 text-center mt-3">انكتبت في سجلّ القرعة.</div>
+              <button className={btnPrimary + ' w-full mt-4'} onClick={closeModal}>تمام</button>
+            </Modal>
+          );
+        }
+
+        return (
+          <Modal title="القرعة" onClose={closeModal}>
+            <Field label="من يدخل؟" hint="الاسم المكرّر له فرصة واحدة.">
+              <div className="flex gap-2">
+                {[['ok', 'اللي جاوبوا صح'], ['all', 'كل من جاوب']].map(([id, lb]) => (
+                  <button key={id} type="button" onClick={() => setForm({ ...form, pool: id, error: '' })}
+                    className={`${pick} ${pool === id ? on : off}`}>{lb}</button>
+                ))}
+              </div>
+            </Field>
+            <Field label="كم فائزًا؟">
+              <div className="flex gap-2">
+                {[1, 2, 3, 5].map((n) => (
+                  <button key={n} type="button" onClick={() => setForm({ ...form, count: n, error: '' })}
+                    className={`${pick} ${count === n ? on : off}`} disabled={n > names.length}>{n}</button>
+                ))}
+              </div>
+            </Field>
+            {past.length > 0 && (
+              <Toggle label="استثنِ من فاز قبل" hint={`${past.join(' · ')}`}
+                on={Boolean(form.skipPast)} onChange={(v) => setForm({ ...form, skipPast: v })} />
+            )}
+            <div className="text-[11px] text-slate-400 mt-2">
+              {names.length ? `${names.length} اسمًا داخل القرعة.` : 'ما بقي أحد في القرعة.'}
+            </div>
+            {form.error && <div className="text-red-500 text-xs mt-2">{form.error}</div>}
+            <button className={btnPrimary + ' w-full mt-5'} disabled={!names.length} onClick={start}>اسحب</button>
+          </Modal>
+        );
+      })()}
 
       {/* نصوص صفحة السؤال: ما يكتبه صاحب الفريق يفوز */}
       {modal === 'questionTexts' && (

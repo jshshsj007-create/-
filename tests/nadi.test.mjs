@@ -5,6 +5,7 @@ import {
   leagueFixtures, leagueTable, winnerOf, cupBracket, roundName, champion, leagueChampion,
   weekRuns, programRuns, clubCounts, usedIn,
   qText, qError, questionView, validateAnswer, applyAnswer, LEAGUE, CUP,
+  drawPool, pastWinners, pickWinners, makeDraw, applyDraw,
 } from '../src/club.js';
 
 let passed = 0;
@@ -380,4 +381,90 @@ test('الجواب يُضاف للسؤال وحده', () => {
   assert.deepEqual(q.answers, []); // ما تغيّر الأصل
 });
 
-console.log(`\n✅ ${passed} اختبارًا للنادي — التصحيح والدوري والبطولة وسؤال اليوم\n`);
+/* -------------------------------- القرعة -------------------------------- */
+
+/** سؤالٌ مفتوح جوابه «خمسة»، وأجوبةٌ فيها الصحيح والخطأ والمكرّر. */
+const dq = {
+  id: 'q9', mode: 'open', answer: 'خمسة',
+  answers: [
+    { id: 'a1', student: 'فهد العتيبي', text: 'خمسه' },      // صح
+    { id: 'a2', student: 'سعد القحطاني', text: '٥' },        // صح (رقم)
+    { id: 'a3', student: 'فهد العتيبي', text: 'خمسة' },      // نفس الاسم مرة ثانية
+    { id: 'a4', student: 'محمد الدوسري', text: 'ستة' },      // خطأ
+    { id: 'a5', student: 'عبدالله الشمري', text: 'خمسه' },   // صح
+  ],
+};
+
+test('القرعة تأخذ من جاوبوا صح وحدهم', () => {
+  assert.deepEqual(drawPool(dq, { pool: 'ok' }), ['فهد العتيبي', 'سعد القحطاني', 'عبدالله الشمري']);
+});
+
+test('و«كل من جاوب» تضمّ المخطئ', () => {
+  assert.equal(drawPool(dq, { pool: 'all' }).length, 4);
+});
+
+test('الاسم المكرّر له فرصة واحدة مهما كتبه بصيغتين', () => {
+  const q2 = { ...dq, answers: [...dq.answers, { id: 'a6', student: '  فَهْد   العتيبي ', text: 'خمسة' }] };
+  assert.equal(drawPool(q2, { pool: 'ok' }).filter((n) => n.startsWith('فهد')).length, 1);
+});
+
+test('و«راجعها» ما تدخل حتى يُحكم عليها', () => {
+  const q2 = { ...dq, answers: [{ id: 'b1', student: 'خالد', text: 'خمسا' }] };
+  assert.equal(answerVerdict(q2, q2.answers[0]), 'check');
+  assert.deepEqual(drawPool(q2, { pool: 'ok' }), []);
+  // ولو حكمت أنت بيدك دخلت
+  const q3 = { ...q2, answers: [{ ...q2.answers[0], mark: 'ok' }] };
+  assert.deepEqual(drawPool(q3, { pool: 'ok' }), ['خالد']);
+});
+
+test('من فاز قبل يُستثنى لو طلبت', () => {
+  const q2 = { ...dq, draws: [{ id: 'd1', winners: ['فهد العتيبي'] }] };
+  assert.deepEqual(pastWinners(q2), ['فهد العتيبي']);
+  assert.deepEqual(drawPool(q2, { pool: 'ok', exclude: pastWinners(q2) }), ['سعد القحطاني', 'عبدالله الشمري']);
+});
+
+test('السحب بلا تكرار: من خرج ما يعود للكيس', () => {
+  const names = ['أ', 'ب', 'ج', 'د'];
+  for (let i = 0; i < 200; i++) {
+    const got = pickWinners(names, 3);
+    assert.equal(got.length, 3);
+    assert.equal(new Set(got).size, 3);
+    assert.ok(got.every((n) => names.includes(n)));
+  }
+});
+
+test('وما نسحب أكثر مما في الكيس', () => {
+  assert.equal(pickWinners(['أ', 'ب'], 5).length, 2);
+  assert.equal(pickWinners(['أ', 'ب'], 0).length, 1);
+});
+
+test('كل اسمٍ في الكيس له نصيب', () => {
+  const names = ['أ', 'ب', 'ج'];
+  const seen = new Set();
+  for (let i = 0; i < 300; i++) seen.add(pickWinners(names, 1)[0]);
+  assert.equal(seen.size, 3);
+});
+
+test('القرعة تُحسب بعشوائيةٍ تُمرَّر، فتُختبر', () => {
+  const d = makeDraw(dq, { pool: 'ok', count: 2 }, { id: 'd1', now: 7, by: 'سعد', rand: () => 0 });
+  assert.deepEqual(d.winners, ['فهد العتيبي', 'سعد القحطاني']);
+  assert.equal(d.poolSize, 3);
+  assert.equal(d.by, 'سعد');
+  assert.equal(d.at, 7);
+  assert.equal(d.pool, 'ok');
+});
+
+test('وما فيه قرعةٌ بلا أسماء', () => {
+  assert.equal(makeDraw({ id: 'q', answers: [] }, { pool: 'ok' }, { id: 'd' }), null);
+});
+
+test('القرعة تُضاف للسجلّ ولا تمحو ما قبلها', () => {
+  const data = { questions: [{ ...dq, draws: [{ id: 'd0', winners: ['سعد القحطاني'] }] }, { id: 'q8' }] };
+  const next = applyDraw(data, dq, { id: 'd1', winners: ['فهد العتيبي'] });
+  assert.deepEqual(next.questions[0].draws.map((d) => d.id), ['d0', 'd1']);
+  assert.deepEqual(next.questions[1], { id: 'q8' });
+  assert.equal(data.questions[0].draws.length, 1); // ما تغيّر الأصل
+});
+
+
+console.log(`\n✅ ${passed} اختبارًا للنادي — التصحيح والدوري والبطولة وسؤال اليوم والقرعة\n`);

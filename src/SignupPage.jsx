@@ -157,23 +157,46 @@ function Facts({ facts }) {
   );
 }
 
+/** «و٥ فعاليات ثانية» — والعدد يغيّر صيغة الكلمة، فما نكتب «و1 فعاليات». */
+const restText = (n) => {
+  if (n === 1) return 'وفعالية ثانية';
+  if (n === 2) return 'وفعاليتان ثانيتان';
+  return n <= 10 ? `و${n} فعاليات ثانية` : `و${n} فعالية ثانية`;
+};
+
 /**
- * الأنشطة.
+ * الأنشطة: سطرٌ واحد يتبدّل.
  *
- * كانت نقاطًا رمادية بجانب «يوم الجمعة» و«من ٧ إلى ١٤» — فبطولة الكرة والملعب
- * الصابوني، وهي التي تُقنع الولد، تُقرأ كما يُقرأ جدول مواعيد. شاراتٌ تُمسح
- * بالعين، وفي صفّين بدل ستة.
+ * كانت شاراتٍ مرصوصة تُقرأ كما يُقرأ جدول مواعيد، فتُمسح بالعين ولا تُرى.
+ * وهذا سطرٌ واحد لا غير، ينقلب لنشاطٍ جديد كل ثانيتين — أصغر ارتفاعًا وأقوى
+ * حركة، والعين تتبع المتحرّك ولا تتبع الساكن.
  */
 function Chips({ chips }) {
-  if (!chips?.length) return null;
+  const n = chips?.length || 0;
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    if (n < 2) return undefined;
+    const t = setInterval(() => setI((x) => (x + 1) % n), 2000);
+    return () => clearInterval(t);
+  }, [n]);
+  if (!n) return null;
+  const c = chips[i % n];
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {chips.map((c, i) => (
-        <span key={i} className="bg-white border border-slate-200 rounded-xl px-2.5 py-[7px] text-[12.5px] font-semibold text-slate-800 flex items-center gap-1.5">
-          {c.icon && <span className="text-[14px] leading-none">{c.icon}</span>}
-          {c.text}
+    <div>
+      <div className="bg-white border border-slate-100 rounded-2xl px-3.5 py-4 flex items-center gap-3">
+        {c.icon && <span className="text-[34px] leading-none shrink-0">{c.icon}</span>}
+        <span className="min-w-0">
+          <b className="block text-[15.5px] font-extrabold text-slate-800 truncate">{c.text}</b>
+          {n > 1 && <span className="block text-[11px] text-slate-400 mt-0.5">{restText(n - 1)}</span>}
         </span>
-      ))}
+      </div>
+      {n > 1 && (
+        <div className="flex gap-1 justify-center mt-2.5">
+          {chips.map((x, k) => (
+            <i key={k} className={`h-[5px] rounded-full transition-all ${k === i ? 'w-3.5 bg-slate-400' : 'w-[5px] bg-slate-200'}`} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

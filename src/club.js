@@ -364,6 +364,75 @@ export const answersRateLimited = (log, now = Date.now()) => {
   return { blocked: recent.length >= 300, recent };
 };
 
+/* -------------------------------- القرعة -------------------------------- */
+
+/**
+ * أسماء القرعة.
+ *
+ * الاسم المكرّر يدخل مرة واحدة: ما فيه جوال يمنع أحدًا يرسل جوابه عشر مرات
+ * بطلب صاحب الفريق، فلو حسبنا كل جوابٍ فرصةً صار حظّه عشرة أضعاف. ونقارن
+ * بالاسم بعد التنظيف، فـ«فهد» و«فَهد.» واحد.
+ *
+ * و«راجعها» ما تدخل قرعة الصحيحين حتى يُحكم عليها — فلا يُدخَل من لم يُحكم
+ * له، ولا يُحرم من لم يُحكم عليه.
+ */
+export const drawPool = (q, { pool = 'ok', exclude = [] } = {}) => {
+  const skip = new Set((exclude || []).map((n) => normalizeAnswer(n)).filter(Boolean));
+  const seen = new Map();
+  for (const a of q?.answers || []) {
+    const name = String(a?.student || '').trim().replace(/\s+/g, ' ');
+    if (!name) continue;
+    const key = normalizeAnswer(name);
+    if (!key || skip.has(key) || seen.has(key)) continue;
+    if (pool !== 'all' && answerVerdict(q, a) !== 'ok') continue;
+    seen.set(key, name);
+  }
+  return [...seen.values()];
+};
+
+/** من فاز في قرعات هذا السؤال قبل. */
+export const pastWinners = (q) => (q?.draws || []).flatMap((d) => d?.winners || []);
+
+/**
+ * سحب عددٍ من الأسماء بلا تكرار: من خرج من الكيس لا يعود إليه، فما يطلع
+ * الواحد فائزًا أولَ وثانيًا في القرعة نفسها.
+ *
+ * و`rand` تُمرَّر من فوق: الخادم يمرّر عشوائيةً آمنة، والاختبار يمرّر ما يعرف
+ * نتيجته — وإلا صار السحب شيئًا لا يُختبر.
+ */
+export const pickWinners = (names, count, rand = Math.random) => {
+  const bag = [...names];
+  const want = Math.min(Math.max(1, Number(count) || 1), bag.length);
+  const out = [];
+  for (let i = 0; i < want; i++) out.push(...bag.splice(Math.floor(rand() * bag.length), 1));
+  return out;
+};
+
+/**
+ * قرعةٌ كاملة. تُحسب مرة واحدة ثم تُكتب في السجلّ فورًا — فما فيه إعادةُ سحبٍ
+ * صامتة حتى يطلع اسمٌ بعينه: كل سحبةٍ تبقى مكتوبة يشوفها كل من يفتح السؤال.
+ */
+export const makeDraw = (q, opts = {}, { id, now = Date.now(), by = '', rand = Math.random } = {}) => {
+  const skipPast = Boolean(opts.skipPast);
+  const names = drawPool(q, { pool: opts.pool, exclude: skipPast ? pastWinners(q) : [] });
+  if (!names.length) return null;
+  return {
+    id,
+    at: now,
+    by,
+    pool: opts.pool === 'all' ? 'all' : 'ok',
+    skipPast,
+    poolSize: names.length,
+    winners: pickWinners(names, opts.count, rand),
+  };
+};
+
+/** القرعة تُضاف للسجلّ ولا تمحو ما قبلها. */
+export const applyDraw = (data, q, draw) => ({
+  ...data,
+  questions: (data?.questions || []).map((x) => (x.id === q.id ? { ...x, draws: [...(x.draws || []), draw] } : x)),
+});
+
 /** إضافة الجواب للسؤال. يرجّع البيانات الجديدة واسم الطالب كما استقرّ. */
 export const applyAnswer = (data, q, body, { id, now = Date.now() } = {}) => {
   const student = String(body?.student || '').trim().replace(/\s+/g, ' ');
