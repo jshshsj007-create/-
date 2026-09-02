@@ -148,6 +148,20 @@ export const dayLabel = (style, week, index, custom) => {
   return week?.name || '';
 };
 
+/**
+ * سعر الجمعة داخل الباقة.
+ *
+ * الجديدة تكتبه صراحةً، والقديمة كانت مبلغًا مقطوعًا لعددٍ من الأيام — فنقسمه
+ * على عدده فتمشي كما كانت بلا أن يعيد أحدٌ كتابتها.
+ */
+export const packWeekPrice = (p, program) => {
+  const per = p?.perWeek;
+  if (per !== undefined && per !== null && per !== '') return Math.max(0, Math.round(Number(per) || 0));
+  const total = Number(p?.price || 0);
+  const n = Number(p?.dayCount || 0) || (program?.weeks || []).length || 1;
+  return Math.max(0, Math.round(total / n));
+};
+
 export const publicView = (data, program) => {
   const s = program.signup || {};
   const openIds = s.openWeeks || [];
@@ -158,43 +172,50 @@ export const publicView = (data, program) => {
     .map((w, i) => ({ id: w.id, name: dayLabel(dayStyle, w, i, names[w.id]), date: w.date || '' }));
 
   /**
-   * البرنامج يُباع بطريقتين معًا: تسجيل بسعر اليوم الواحد، وباقات بأسعارها.
-   * ولي الأمر يختار وحدة منها، وبعدها يطلع سعره — فما نجبره على طريقة.
+   * البرنامج يُباع بطريقتين معًا، ولكلٍّ أيامها.
    *
-   * والباقات في النوعين: في المجمّع تُوزَّع مرة واحدة على دفتر البرنامج،
-   * وفي المنفصل يُقسَّم سعرها على أيام المشترك فينزل نصيبُ كل يومٍ في دفتره.
-   * والمنفصل بلا باقةٍ يبقى كما كان — سعرٌ واحد بلا اختيار.
+   * **اليومي** يُشترى يومًا يومًا، فأيامه ما فتحه صاحب البرنامج للتسجيل —
+   * يفتح الجمعة القادمة وحدها، فما يُعرض على وليّ الأمر عشرُ جمعٍ ليختار
+   * منها واحدة.
+   *
+   * **والباقة** اشتراكُ ما بقي من الموسم، فأيامها كل جمعةٍ لم تُقفل بعد.
+   * ولا تتبع «الأيام المتاحة»: القائمتان تخدمان منتجين لهما أفقان مختلفان،
+   * ولو وحّدناهما لزم فتحُ الموسم كله لأجل الاشتراك — فيرى صاحبُ اليوم
+   * الواحد عشرَ جمعٍ أمامه.
+   *
+   * وسعرها لكل جمعة لا مقطوعًا: العدد ينزل مع كل إقفال، فينزل السعر معه
+   * بلا أن يُعدَّل شيء. وهذا ما كان يُعدَّل بالأصابع كل أسبوع.
    */
   const grouped = program.type === 'مجمع';
+  const packDays = (program.weeks || [])
+    .filter((w) => w.status !== 'مغلق')
+    .map((w, i) => ({ id: w.id, name: dayLabel(dayStyle, w, i, names[w.id]), date: w.date || '' }));
+
   // المخفية ما تنزل الصفحة أصلًا، فما ينفع أحد يسجّل فيها ولو حاول
   const packs = (s.packages || []).filter((p) => p.hidden !== true);
   const perDayPrice = Number(s.price || 0);
-  const perDayOn = s.allowPerDay !== false && perDayPrice > 0;
-  const packages = !(grouped || packs.length) ? [] : [
+  const perDayOn = s.allowPerDay !== false && perDayPrice > 0 && days.length > 0;
+  const packages = [
     ...(perDayOn ? [{
-      id: '__perday', name: grouped ? 'يومي' : 'أسبوعي', price: perDayPrice, dayCount: 0, perDay: true,
+      // «يومي» في النوعين: ولي الأمر يقرأ أسماء أيام، فما يُقال له «أسبوعي»
+      id: '__perday', name: 'يومي', price: perDayPrice, perDay: true,
     }] : []),
-    ...packs.map((p) => ({
-      id: p.id,
-      name: p.name,
-      price: Number(p.price || 0),
-      // صفر = كل الأيام المتاحة؛ وغيره = يختار هذا العدد من الأيام
-      dayCount: Math.min(Number(p.dayCount || 0), days.length),
-      perDay: false,
-    })),
+    ...(packDays.length ? packs.map((p) => {
+      const per = packWeekPrice(p, program);
+      return { id: p.id, name: p.name, perWeek: per, price: per * packDays.length, perDay: false };
+    }).filter((p) => p.price > 0) : []),
   ];
-  const usePackages = packages.length > 0;
+  // المنفصل بلا باقةٍ يبقى كما كان: سعرٌ واحد بلا اختيار
+  const usePackages = grouped ? packages.length > 0 : packages.some((p) => !p.perDay);
 
   /**
    * البرنامج اللي له أيام ولا يوم منها مفتوح ما ينفع يستقبل تسجيلًا: المشترك
    * ينزل بلا أيام فيختفي من كل قوائم الحضور. نقفل الرابط بدل ما نقبل تسجيلًا
    * يضيع، ونقول لصاحب التطبيق السبب.
    */
-  // ما فيه يوم مفتوح = ما فيه مكان يستقر فيه التسجيل، سواء البرنامج بلا أيام
-  // أصلًا أو أيامه كلها مقفلة. الحالتان تنتهيان بمشترك بلا أيام.
-  const blocked = days.length === 0 ? 'no_days'
-    : grouped && !packages.length ? 'no_packages'
-    : '';
+  // ما فيه ما يُشترى = ما فيه مكان يستقر فيه التسجيل. سواء ما فُتح يومٌ لليومي،
+  // أو أُقفلت الأيام كلها فما بقي للباقة شيء. الحالتان تنتهيان بمشترك بلا أيام.
+  const blocked = packages.length ? '' : (days.length === 0 ? 'no_days' : 'no_packages');
 
   return {
     programId: program.id,
@@ -204,8 +225,9 @@ export const publicView = (data, program) => {
     blocked,
     usePackages,
     packages,
-    // المجمّع يختار ولي الأمر أيامه؛ المنفصل يختار أي أسابيع يبي
+    // أيام اليومي: ما فُتح للتسجيل. وأيام الباقة: ما لم يُقفل من الموسم
     days,
+    packDays,
     dayStyle,
     /**
      * من يختار الأيام.
@@ -213,14 +235,10 @@ export const publicView = (data, program) => {
      * اليوم الواحد ما يُسأل عنه أبدًا: سؤالٌ جوابه واحد ضغطةٌ بلا قرار،
      * وعرضُه يوهم ولي الأمر أن أمامه خيارًا. يُكتب له ويمشي.
      *
-     * وفوق ذلك لصاحب البرنامج أن يقرّر بنفسه ويُخفي القسم — إلا أن يكون في
-     * الصفحة ما لا يستقيم بلا اختيار: اليومي مبلغه من عدد أيامه، والباقة
-     * بعددٍ أقل من المفتوح عددُها هو الاختيار نفسه. أما باقة المدة الكاملة
-     * فأيامها كلها، ما فيها ما يُختار أصلًا.
+     * والباقة ما تُسأل عنها أصلًا — أيامها ما بقي من الموسم، لا اختيار فيه.
+     * فهذا لليومي وحده.
      */
-    pickDays: days.length > 1
-      && (packages.some((p) => p.perDay || (p.dayCount > 0 && p.dayCount < days.length))
-        || s.daysMode !== 'fixed'),
+    pickDays: days.length > 1 && s.daysMode !== 'fixed',
     accounts: (data.faidAccounts || [])
       .filter((a) => (s.accounts || []).includes(a.id))
       .map((a) => ({
@@ -375,22 +393,18 @@ export const varNames = (view) => [
 export const packageOf = (view, kid) =>
   (view.packages || []).find((p) => p.id === kid?.packageId) || null;
 
-/**
- * كم يومًا يحق لهذا الخيار؟ اليومي مفتوح على كل الأيام المتاحة،
- * والباقة بعددها — وصفر في تعريفها يعني كل الأيام كذلك.
- */
-export const daysAllowed = (view, pkg) =>
-  (pkg?.perDay || !pkg?.dayCount) ? view.days.length : pkg.dayCount;
+/** أيام هذا الخيار: اليومي من المفتوح، والباقة ما بقي من الموسم. */
+export const daysOf = (view, pkg) =>
+  (pkg && !pkg.perDay ? view?.packDays : view?.days) || [];
 
-/** اليومي يختار أي عدد؛ الباقة لازم بعددها بالضبط. */
-export const daysAreFixed = (pkg) => Boolean(pkg) && !pkg.perDay && Number(pkg.dayCount) > 0;
+/** كم يومًا يحق لهذا الخيار؟ */
+export const daysAllowed = (view, pkg) => daysOf(view, pkg).length;
 
 /**
- * باقة المدة الكاملة: أيامها معروفة سلفًا، فما نسأل ولي الأمر يختارها —
- * نعبّيها له ونعرضها عليه.
+ * الباقة أيامها معروفة سلفًا — ما بقي من الموسم — فما نسأل ولي الأمر عنها،
+ * نعبّيها له ونعرضها عليه. واليومي وحده يُختار.
  */
-export const coversAll = (view, pkg) =>
-  Boolean(pkg) && !pkg.perDay && !Number(pkg.dayCount) && (view?.days || []).length > 0;
+export const coversAll = (view, pkg) => Boolean(pkg) && !pkg.perDay && daysOf(view, pkg).length > 0;
 
 /**
  * يتحقق من مُدخلات ولي الأمر. يرجّع { ok, errors } — errors مفتاحه معرّف الخانة
@@ -404,13 +418,20 @@ export const isGuardianField = (f) => GUARDIAN_FIELDS.includes(f.id);
 /**
  * تسوية التسجيل قبل التحقق منه.
  *
- * لمّا يكون اختيار الأيام لصاحب البرنامج، فما أرسله ولي الأمر ليس رأيًا
- * يُؤخذ: ما عُرضت عليه أصلًا. فنكتبها نحن ونطرح ما جاء — ولو جاء شيء.
+ * أيامٌ لم تُعرض على ولي الأمر ليست رأيًا يُؤخذ منه: الباقة أيامها ما بقي من
+ * الموسم، ومن أطفأ الاختيار كتبها بنفسه. فنكتبها نحن ونطرح ما أُرسل — ولو
+ * أُرسل شيء.
  */
 export const normalizeSubmission = (view, body) => {
-  if (view?.pickDays !== false) return body;
-  const all = (view.days || []).map((d) => d.id);
-  return { ...body, kids: (body?.kids || []).map((k) => ({ ...k, days: all })) };
+  const fix = (k) => {
+    const pkg = view?.usePackages ? packageOf(view, k) : null;
+    if (pkg && !pkg.perDay) return { ...k, days: (view.packDays || []).map((d) => d.id) };
+    if (view?.pickDays === false) return { ...k, days: (view.days || []).map((d) => d.id) };
+    return k;
+  };
+  const kids = (body?.kids || []).map(fix);
+  // ما فيه ما يُصحَّح: نرجّع الطلب كما جاء ولا نلمسه
+  return kids.every((k, i) => k === body.kids[i]) ? body : { ...body, kids };
 };
 
 export const validateSubmission = (view, body) => {
@@ -436,21 +457,16 @@ export const validateSubmission = (view, body) => {
       if (f.required && !v) errors[`kid${i}.${f.id}`] = 'مطلوب';
       else if (f.type === 'number' && v && !/^\d{1,3}$/.test(v)) errors[`kid${i}.${f.id}`] = 'اكتب رقمًا';
     }
-    if (view.usePackages) {
-      const pkg = packageOf(view, kid);
-      if (!pkg) errors[`kid${i}.package`] = 'اختر طريقة التسجيل';
-      else {
-        const n = (kid?.days || []).length;
-        const allowed = daysAllowed(view, pkg);
-        if (!n) errors[`kid${i}.days`] = 'اختر أيامك';
-        else if (daysAreFixed(pkg) && n !== allowed) errors[`kid${i}.days`] = `هذي الباقة ${allowed} أيام — اخترت ${n}`;
+    const pkg = view.usePackages ? packageOf(view, kid) : null;
+    if (view.usePackages && !pkg) {
+      errors[`kid${i}.package`] = 'اختر طريقة التسجيل';
+    } else {
+      const mine = daysOf(view, pkg);
+      if (mine.length && !(kid?.days || []).length) errors[`kid${i}.days`] = 'اختر يومًا واحدًا على الأقل';
+      // أيامٌ ملفّقة ما هي ضمن ما يخصّ خياره
+      for (const d of kid?.days || []) {
+        if (!mine.some((x) => x.id === d)) errors[`kid${i}.days`] = 'فيه يوم غير متاح';
       }
-    } else if (view.days.length && !(kid?.days || []).length) {
-      errors[`kid${i}.days`] = 'اختر يومًا واحدًا على الأقل';
-    }
-    // أيام ملفّقة ما هي ضمن المعروض
-    for (const d of kid?.days || []) {
-      if (!view.days.some((x) => x.id === d)) errors[`kid${i}.days`] = 'فيه يوم غير متاح';
     }
   });
 
@@ -480,8 +496,10 @@ export const dueFor = (view, kid) => {
   if (view.usePackages) {
     const pkg = packageOf(view, kid);
     if (!pkg) return 0;
-    // اليومي يُضرب بعدد الأيام، والباقة سعرها مقطوع
-    return pkg.perDay ? Number(pkg.price || 0) * ((kid?.days || []).length || 0) : Number(pkg.price || 0);
+    // اليومي يُضرب بعدد أيامه، والباقة سعرُ جمعتها × ما بقي من الموسم
+    return pkg.perDay
+      ? Number(pkg.price || 0) * ((kid?.days || []).length || 0)
+      : Number(pkg.perWeek || 0) * daysOf(view, pkg).length;
   }
   const price = Number(view.price || 0);
   if (!price) return 0;
@@ -491,28 +509,11 @@ export const dueFor = (view, kid) => {
 
 export const totalDue = (view, kids) => (kids || []).reduce((s, k) => s + dueFor(view, k), 0);
 
-/**
- * قسمة الاشتراك على أيامه في البرنامج المنفصل.
- *
- * ٣٠٠ على ١٠ = ٣٠ لكل يوم. و٣٠٠ على ٧ = ٤٢ ويفضل ٦، فيُحمَّل الفاضل على أول
- * يومٍ له — لا على آخره: الأول أقربُ للدفع، ولأن آخر الأيام قد يُقفل قبل أن
- * يُراجَع فيبقى الفاضل في يومٍ لا يُفتح.
- *
- * ونكتب أعدادًا صحيحة لا كسورًا: الريال يُعدّ، ولو وزّعنا ٤٢٫٨٥ على سبعة
- * دفاتر طلعت أرقامٌ لا تُجمع على ٣٠٠ ولا تُقرأ.
- */
-export const splitLump = (total, ids) => {
-  const n = (ids || []).length;
-  if (!n) return {};
-  const sum = Math.max(0, Math.round(Number(total) || 0));
-  const each = Math.floor(sum / n);
-  const rest = sum - each * n;
-  return Object.fromEntries(ids.map((id, i) => [id, each + (i === 0 ? rest : 0)]));
-};
-
 /** أيام المشترك بترتيب البرنامج لا بترتيب ضغطه، فـ«أول يومٍ له» أوّلٌ حقًّا. */
-export const orderedDays = (view, kid) =>
-  (view?.days || []).map((d) => d.id).filter((id) => (kid?.days || []).includes(id));
+export const orderedDays = (view, kid) => {
+  const pkg = view?.usePackages ? packageOf(view, kid) : null;
+  return daysOf(view, pkg).map((d) => d.id).filter((id) => (kid?.days || []).includes(id));
+};
 
 /**
  * نصيب كل يومٍ من هذا المشترك في البرنامج المنفصل: الباقة تُقسَم، وغيرها
@@ -521,8 +522,8 @@ export const orderedDays = (view, kid) =>
 export const weekShares = (view, kid) => {
   const ids = orderedDays(view, kid);
   const pkg = view?.usePackages ? packageOf(view, kid) : null;
-  if (pkg && !pkg.perDay) return splitLump(Number(pkg.price || 0), ids);
-  const per = Number((pkg ? pkg.price : view?.price) || 0);
+  // الباقة سعرها لكل جمعة أصلًا، فما فيها قسمةٌ ولا فاضل
+  const per = Number((pkg ? (pkg.perDay ? pkg.price : pkg.perWeek) : view?.price) || 0);
   return Object.fromEntries(ids.map((id) => [id, per]));
 };
 

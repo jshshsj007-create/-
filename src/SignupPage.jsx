@@ -7,7 +7,7 @@ import { Check, AlertTriangle, Plus, X, Copy, Upload, MessageCircle, Share2, Map
 import { api } from './cloud.js';
 import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 import { isValidPhone } from './people.js';
-import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, daysAllowed, daysAreFixed, coversAll, RECEIPT_TYPES, RECEIPT_MAX, txt, TEXTS, CLOSED, waLink, fillTemplate, signupVars } from './signup.js';
+import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, coversAll, daysOf, RECEIPT_TYPES, RECEIPT_MAX, txt, TEXTS, CLOSED, waLink, fillTemplate, signupVars } from './signup.js';
 
 const input = 'w-full border border-slate-200 rounded-xl px-3.5 py-3 text-[15px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent';
 const inputBad = input.replace('border-slate-200', 'border-red-300');
@@ -542,10 +542,15 @@ export default function SignupPage({ token }) {
   };
 
   /**
-   * لمّا يكون اختيار الأيام لصاحب البرنامج، نكتبها للابن بأنفسنا: القسم لا
-   * يُعرض، والمبلغ لا بدّ أن يُحسب على أيامٍ حقيقية لا على فراغ.
+   * الأيام التي لا تُعرض تُكتب للابن بأنفسنا: الباقة أيامها ما بقي من الموسم،
+   * ومن أطفأ الاختيار كتبها بنفسه. والمبلغ لا بدّ أن يُحسب على أيامٍ حقيقية
+   * لا على فراغ. وهو نفس ما يسويه الخادم في `normalizeSubmission`.
    */
-  const fixDays = (k) => (view.pickDays ? k : { ...k, days: view.days.map((d) => d.id) });
+  const fixDays = (k) => {
+    const pkg = view.usePackages ? packageOf(view, k) : null;
+    if (pkg && !pkg.perDay) return { ...k, days: daysOf(view, pkg).map((d) => d.id) };
+    return view.pickDays ? k : { ...k, days: view.days.map((d) => d.id) };
+  };
   const total = totalDue(view, kids.map(fixDays));
   const contactHref = view.wa.contactUrl || waLink(view.wa.number, '');
 
@@ -689,18 +694,18 @@ export default function SignupPage({ token }) {
                     return (
                       <button key={pk.id} type="button"
                         onClick={() => {
-                          // المدة الكاملة تُملأ تلقائيًا، وغيرها يبدأ فاضيًا ليختار
+                          // الباقة تُملأ بما بقي من الموسم، واليومي يبدأ فاضيًا ليختار
                           const all = coversAll(view, pk);
-                          setKid(i, { packageId: pk.id, days: all ? view.days.map((d) => d.id) : [] });
+                          setKid(i, { packageId: pk.id, days: all ? daysOf(view, pk).map((d) => d.id) : [] });
                           setErrors({ ...errors, [`kid${i}.package`]: null, [`kid${i}.days`]: null });
                         }}
                         className={`w-full text-right px-4 py-3 rounded-xl border flex items-center justify-between ${on ? 'border-brand-600 bg-brand-50' : 'border-slate-200'}`}>
                         <span className="min-w-0">
                           <span className="block font-semibold text-slate-800">{pk.name}</span>
                           <span className="block text-[11px] text-slate-400">
-                            {pk.perDay ? 'تختار أي أيام تبيها'
-                              : pk.dayCount ? `${pk.dayCount} أيام`
-                              : `كل الأيام (${view.days.length})`}
+                            {pk.perDay
+                              ? (view.days.length === 1 ? view.days[0].name : 'تختار أي أيام تبيها')
+                              : `${(view.packDays || []).length} أيام باقية · ${fmt(pk.perWeek)} لليوم`}
                           </span>
                         </span>
                         <span className="shrink-0 font-bold text-brand-700 text-left">
@@ -715,33 +720,30 @@ export default function SignupPage({ token }) {
             </div>
           )}
 
-          {/* باقة المدة الكاملة أيامها معروفة سلفًا، فما نسأله عنها */}
-          {view.usePackages && coversAll(view, packageOf(view, kid)) && (
-            <div className="mb-4 bg-brand-50 rounded-xl px-3.5 py-3 text-sm text-brand-900">
-              <div className="font-semibold mb-1">
-                {packageOf(view, kid).name} · {fmt(dueFor(view, kid))} ر.س
+          {/* الباقة أيامها ما بقي من الموسم، فما نسأله عنها — نعرضها عليه */}
+          {view.usePackages && coversAll(view, packageOf(view, kid)) && (() => {
+            const pkg = packageOf(view, kid);
+            const mine = daysOf(view, pkg);
+            return (
+              <div className="mb-4 bg-brand-50 rounded-xl px-3.5 py-3 text-sm text-brand-900">
+                <div className="font-semibold mb-1">{pkg.name} · {fmt(dueFor(view, kid))} ر.س</div>
+                <div className="text-xs text-brand-700">
+                  تشمل {mine.length} {mine.length === 1 ? 'يومًا' : 'أيام'}: {mine.map((d) => d.name).join(' · ')}
+                </div>
               </div>
-              <div className="text-xs text-brand-700">
-                تشمل كل الأيام ({view.days.length}): {view.days.map((d) => d.name).join(' · ')}
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {view.pickDays && view.days.length > 0 && (!view.usePackages || kid.packageId)
             && !(view.usePackages && coversAll(view, packageOf(view, kid))) && (() => {
-            const pkg = packageOf(view, kid);
-            const allowed = view.usePackages ? daysAllowed(view, pkg) : view.days.length;
             const picked = (kid.days || []).length;
-            // الباقة بعدد ثابت تُقفل لما تمتلئ؛ واليومي مفتوح
-            const full = daysAreFixed(pkg) && picked >= allowed;
+            const full = false; // اليومي مفتوح على ما فُتح، بلا حدٍّ لعدده
             return (
               <div data-bad={errors[`kid${i}.days`] ? '1' : undefined}>
                 <Row label={txt(view, 'days')} required error={errors[`kid${i}.days`]}>
                   {view.usePackages && (
                     <div className="text-xs text-slate-500 mb-2">
-                      {daysAreFixed(pkg)
-                        ? <>اختر <b>{allowed}</b> {allowed === 1 ? 'يوم' : 'أيام'} — اخترت {picked}</>
-                        : <>اختر الأيام اللي تبيها — اخترت {picked} من {view.days.length}</>}
+                      اختر الأيام اللي تبيها — اخترت {picked} من {view.days.length}
                     </div>
                   )}
                   {/*

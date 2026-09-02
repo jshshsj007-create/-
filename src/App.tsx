@@ -14,7 +14,7 @@ import {
 import { STATES, TONES, studentState, stateCounts, stateOpts, NEAR, FAR } from './status.js';
 import { stamped, traceText, agoText } from './trace.js';
 import { trashed, pruned, sortedTrash, leftText, kindLabel, TRASH_DAYS } from './trash.js';
-import { makeToken as makeSignupToken, TEXTS, CLOSED, waIntl, waLink, varNames, fieldsFor, dayLabel, mapHref, waGroupLink, placeOf, DEFAULT_WA_TEMPLATE } from './signup.js';
+import { makeToken as makeSignupToken, packWeekPrice, TEXTS, CLOSED, waIntl, waLink, varNames, fieldsFor, dayLabel, mapHref, waGroupLink, placeOf, DEFAULT_WA_TEMPLATE } from './signup.js';
 import { readImage, POSTER, GALLERY } from './img.js';
 import { qrDataUrl, qrPngBlob } from './qr.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
@@ -41,7 +41,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v6.6';
+const APP_VERSION = 'v6.7';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -1862,6 +1862,19 @@ export default function App() {
     };
   };
 
+  /**
+   * باقات هذا البرنامج كما تُعرض: سعرُ الجمعة، وما بقي من الموسم، والمجموع.
+   * يقرأها الرابط والتسجيل اليدوي من مصدرٍ واحد، فلا يفترقان في رقم.
+   */
+  const packsHere = () => {
+    const left = (program?.weeks || []).filter((w) => w.status !== 'مغلق');
+    const packs = (program?.signup?.packages || [])
+      .filter((x) => x.hidden !== true)
+      .map((x) => { const per = packWeekPrice(x, program); return { id: x.id, name: x.name, per, total: per * left.length }; })
+      .filter((x) => x.per > 0);
+    return { left, packs: left.length ? packs : [] };
+  };
+
   const addParticipant = () => {
     if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب اسم الطالب' }); return; }
     const accountId = form.accountId || data.faidAccounts[0]?.id;
@@ -1871,6 +1884,44 @@ export default function App() {
       setForm({ ...form, error: 'رقم الجوال غير صحيح. امسحه أو صحّحه.' }); return;
     }
     const { next, studentId } = linkByPhone(data);
+
+    /**
+     * الاشتراك اليدوي: لمن يدفع المدة كلها عندك مباشرة.
+     *
+     * ينزل صفًّا في كل جمعةٍ لم تُقفل بنصيبها، لا صفًّا واحدًا بالمبلغ كله —
+     * وإلا دخل إيرادُ جمعٍ لم تقم. والجمعة التي أنت فيها تدخل الآن، وما بعدها
+     * «مدفوع مقدّمًا» حتى تصير. تمامًا كما ينزل من الرابط.
+     */
+    const { left, packs } = packsHere();
+    const pack = !isGrouped && packs.find((x) => x.id === form.packId);
+    if (pack) {
+      const ref = nextRef(next, yearOf(program?.termKey));
+      const here = left.some((w) => w.id === selectedWeekId) ? selectedWeekId : left[0]?.id;
+      save({
+        ...next,
+        programs: next.programs.map((p) => (p.id !== program.id ? p : {
+          ...p,
+          weeks: (p.weeks || []).map((w) => {
+            if (w.status === 'مغلق') return w;
+            const base = isQuick(w) ? { ...w, ...quickToNamed(w) } : w;
+            return {
+              ...base, mode: 'named',
+              participants: [...(base.participants || []), mark({
+                id: uid(), ref, name: form.name.trim(), packageName: pack.name,
+                amount: accountId === 'unpaid' ? 0 : pack.per,
+                accountId, attendance: 'معلق',
+                ...(studentId ? { studentId } : {}),
+                ...(w.id === here ? {} : { pending: true, prepaid: accountId !== 'unpaid' }),
+              }, true)],
+            };
+          }),
+        })),
+      });
+      setSearch('');
+      closeModal();
+      return;
+    }
+
     save(withLedger(next, activeRef, (l) => {
       const patch = {
         participants: [...(l.participants || []), mark({
@@ -3006,30 +3057,25 @@ export default function App() {
   /**
    * حفظ الباقة — جديدةً أو معدَّلة.
    *
-   * والتعديل يمسّ من يسجّل بعده لا من سجّل قبله: مبالغ السابقين مكتوبةٌ في
-   * دفاتر أيامهم، ولو تحرّكت لانقلب حساب يومٍ وُزّع.
+   * سعرها لكل جمعة لا مقطوعًا، وأيامها ما لم يُقفل من الموسم — فما تُعدَّل مع
+   * كل إقفال. والتعديل يمسّ من يسجّل بعده لا من سجّل قبله: مبالغ السابقين
+   * مكتوبةٌ في دفاتر أيامهم، ولو تحرّكت لانقلب حساب يومٍ وُزّع.
    */
   const savePackage = () => {
     const name = (form.name || '').trim();
-    const price = Number(form.price || 0);
-    const dayCount = Number(form.dayCount || 0);
+    const perWeek = Number(form.perWeek || 0);
     if (!name) { setForm({ ...form, error: 'اكتب اسم الباقة' }); return; }
-    if (!(price > 0)) { setForm({ ...form, error: 'اكتب سعر الباقة' }); return; }
-    const open = ((program.signup || {}).openWeeks || []).length;
-    if (dayCount < 0 || dayCount > open) {
-      setForm({ ...form, error: `عدد الأيام لازم يكون بين صفر و${open} — هذي الأيام اللي فتحتها للتسجيل` });
-      return;
-    }
+    if (!(perWeek > 0)) { setForm({ ...form, error: 'اكتب سعر الجمعة' }); return; }
     const list = (program.signup || {}).packages || [];
     patchSignup({
       packages: form.id
-        ? list.map((x) => (x.id !== form.id ? x : { ...x, name, price, dayCount }))
-        : [...list, { id: uid(), name, price, dayCount }],
+        // القديمة كان لها مبلغٌ مقطوع وعددُ أيام، ويُشالان عند أول تعديل
+        ? list.map((x) => (x.id !== form.id ? x : { id: x.id, name, perWeek, ...(x.hidden ? { hidden: true } : {}) }))
+        : [...list, { id: uid(), name, perWeek }],
     });
     closeModal();
   };
 
-  /** تسليم مبلغٍ من حسابٍ إلى حساب. الفحص في `cash.js` عشان يُختبر. */
   const saveHandover = () => {
     const err = validHandover(data, form);
     if (err) { setForm({ ...form, error: err }); return; }
@@ -4348,28 +4394,26 @@ export default function App() {
 
                         <Field label="الباقات"
                           hint={isGrouped
-                            ? 'سعر مقطوع لعدد أيام. تنعرض جنب اليومي، وولي الأمر يختار وحدة.'
-                            : 'سعر مقطوع لعدة أسابيع — يُقسم على أسابيع المشترك، فينزل نصيب كل أسبوع في دفتره.'}>
+                            ? 'اشتراك بما بقي من الأيام غير المقفلة. تنعرض جنب اليومي، وولي الأمر يختار وحدة.'
+                            : 'اشتراك بما بقي من الجمع غير المقفلة — ينزل نصيب كل جمعة في دفترها. ولا يتبع «الأسابيع المتاحة» تحت.'}>
                           {(s.packages || []).length > 0 && (
                             <div className="space-y-2 mb-3">
                               {s.packages.map((pk) => {
                                 const off = pk.hidden === true;
-                                const over = Number(pk.dayCount) || (s.openWeeks || []).length;
+                                const per = packWeekPrice(pk, program);
+                                const left = (program.weeks || []).filter((w) => w.status !== 'مغلق').length;
                                 return (
                                 <div key={pk.id} className={`flex items-center justify-between rounded-lg px-3 py-2.5 ${off ? 'bg-slate-50/60' : 'bg-slate-50'}`}>
                                   <div className="min-w-0">
                                     <div className={`text-sm font-semibold truncate ${off ? 'text-slate-400' : 'text-slate-800'}`}>{pk.name}</div>
                                     <div className="text-[11px] text-slate-400">
-                                      {fmt(pk.price)} ر.س · {Number(pk.dayCount)
-                                        ? `${pk.dayCount} ${isGrouped ? 'أيام' : 'أسابيع'}`
-                                        : `كل الأ${isGrouped ? 'يام' : 'سابيع'} المتاحة (${(s.openWeeks || []).length})`}
-                                      {!isGrouped && over > 0 && ` · ${fmt(Math.floor(Number(pk.price || 0) / over))} للأسبوع`}
+                                      {fmt(per)} لل{isGrouped ? 'يوم' : 'جمعة'} · {left} باقية = <b className="text-slate-600">{fmt(per * left)} ر.س</b>
                                       {off && ' · مخفية'}
                                     </div>
                                   </div>
                                   <div className="flex items-center gap-1 shrink-0">
                                     <button className="text-slate-400 p-1" title="عدّلها"
-                                      onClick={() => { setForm({ id: pk.id, name: pk.name, price: pk.price, dayCount: pk.dayCount || '' }); setModal('addPackage'); }}>
+                                      onClick={() => { setForm({ id: pk.id, name: pk.name, perWeek: per }); setModal('addPackage'); }}>
                                       <Pencil size={15} />
                                     </button>
                                     {/*
@@ -4391,13 +4435,15 @@ export default function App() {
                             </div>
                           )}
                           <button className={btnGhost + ' w-full border border-dashed border-slate-300'}
-                            onClick={() => { setForm({ dayCount: '' }); setModal('addPackage'); }}>
+                            onClick={() => { setForm({}); setModal('addPackage'); }}>
                             <Plus size={15} /> باقة جديدة
                           </button>
                         </Field>
 
                         <Field label={isGrouped ? 'الأيام المتاحة للتسجيل' : 'الأسابيع المتاحة للتسجيل'}
-                          hint="اللي ما تختاره ما يظهر لولي الأمر أصلًا.">
+                          hint={livePacks.length
+                            ? 'للتسجيل اليومي وحده. افتح الجاية فقط فما يشوف ولي الأمر عشرًا — والاشتراك ما يتبعها.'
+                            : 'اللي ما تختاره ما يظهر لولي الأمر أصلًا.'}>
                           <div className="flex items-center gap-2 mb-2">
                             <button type="button" className="text-xs text-brand-600"
                               onClick={() => patchSignup({ openWeeks: program.weeks.map((w) => w.id) })}>تحديد الكل</button>
@@ -4429,12 +4475,6 @@ export default function App() {
                               : 'مشغّل: يختار من الأيام اللي فتحتها فوق.'}
                             on={s.daysMode !== 'fixed'}
                             onChange={(v) => patchSignup({ daysMode: v ? 'parent' : 'fixed' })} />
-                        )}
-                        {/* والباقة بعددٍ أقل من الأيام تُبطل الإطفاء: عددها هو الاختيار */}
-                        {s.daysMode === 'fixed' && livePacks.some((p) => Number(p.dayCount) > 0 && Number(p.dayCount) < (s.openWeeks || []).length) && (
-                          <div className="text-[11px] text-amber-700 leading-6 -mt-1 mb-2">
-                            عندك باقةٌ بعددٍ أقل من المفتوح، فلازم يختار أيامه — والمفتاح ما يشتغل معها.
-                          </div>
                         )}
 
                         {/*
@@ -7191,7 +7231,46 @@ export default function App() {
               <div className="text-xs text-slate-500 mt-2">مسجّل في <b>{(form.days || []).length}</b> من {(program?.weeks || []).length} يوم</div>
             </Field>
           )}
-          {form.accountId !== 'unpaid' && (
+          {/* الاشتراك في التسجيل اليدوي: نفس خيارَي الرابط، لمن يدفع عندك */}
+          {modal === 'addParticipant' && !isGrouped && (() => {
+            const { left, packs } = packsHere();
+            if (!packs.length) return null;
+            const pick = 'w-full text-right px-3.5 py-2.5 rounded-xl border flex items-center justify-between gap-3 mb-2';
+            const on = 'border-brand-600 bg-brand-50';
+            const off = 'border-slate-200';
+            return (
+              <Field label="التسجيل">
+                {packs.map((pk) => (
+                  <button key={pk.id} type="button" className={`${pick} ${form.packId === pk.id ? on : off}`}
+                    onClick={() => setForm({ ...form, packId: pk.id, amount: pk.total, amountTouched: false, error: '' })}>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-slate-800">{pk.name}</span>
+                      <span className="block text-[11px] text-slate-400">{left.length} جمعة باقية · {fmt(pk.per)} للجمعة</span>
+                    </span>
+                    <span className="shrink-0 font-bold text-brand-700">{fmt(pk.total)}</span>
+                  </button>
+                ))}
+                <button type="button" className={`${pick} ${form.packId ? off : on}`}
+                  onClick={() => setForm({ ...form, packId: '', error: '' })}>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold text-slate-800">هذي الجمعة</span>
+                    <span className="block text-[11px] text-slate-400">{week?.name || 'اليوم اللي أنت فيه'}</span>
+                  </span>
+                </button>
+              </Field>
+            );
+          })()}
+          {/* الاشتراك مبلغه محسوب من سعر الجمعة، فما يُكتب بيد */}
+          {form.packId && form.accountId !== 'unpaid' && (() => {
+            const pk = packsHere().packs.find((x) => x.id === form.packId);
+            if (!pk) return null;
+            return (
+              <div className="bg-brand-50 border border-brand-100 rounded-xl px-3.5 py-2.5 text-[12px] text-brand-800 font-semibold leading-7 mb-4">
+                يدفع <b>{fmt(pk.total)} ر.س</b> — وينزل <b>{fmt(pk.per)}</b> في دفتر كل جمعة باقية.
+              </div>
+            );
+          })()}
+          {!form.packId && form.accountId !== 'unpaid' && (
             <Field
               label={isGrouped ? 'مبلغ الاشتراك (ر.س)' : 'المبلغ (ر.س)'}
               hint={isGrouped
@@ -8262,41 +8341,27 @@ export default function App() {
       )}
 
       {modal === 'addPackage' && (() => {
-        const unit = isGrouped ? 'يوم' : 'أسبوع';
-        const open = ((program?.signup || {}).openWeeks || []).length;
-        const over = Number(form.dayCount || 0) || open;
-        const price = Number(form.price || 0);
+        const unit = isGrouped ? 'يوم' : 'جمعة';
+        const left = (program?.weeks || []).filter((w) => w.status !== 'مغلق').length;
+        const per = Number(form.perWeek || 0);
         return (
           <Modal title={form.id ? 'تعديل الباقة' : 'باقة جديدة'} onClose={closeModal}>
             <Field label="اسم الباقة">
-              <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} placeholder="مثال: الموسم كامل" />
+              <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} placeholder="مثال: اشتراك" />
             </Field>
-            <Field label="السعر (ر.س)">
-              <input type="number" className={inputCls} value={form.price ?? ''} onChange={(e) => setForm({ ...form, price: e.target.value, error: '' })} placeholder="800" />
+            <Field label={`سعر ال${unit} داخل الاشتراك (ر.س)`}
+              hint={`الباقة تشمل كل ${unit}ٍ لم تُقفل. تقفل واحدة فينزل سعرها من نفسه.`}>
+              <input type="number" className={inputCls} value={form.perWeek ?? ''}
+                onChange={(e) => setForm({ ...form, perWeek: e.target.value, error: '' })} placeholder="30" />
             </Field>
-            <Field label={`عدد الأ${isGrouped ? 'يام' : 'سابيع'}`}
-              hint={`اتركه فاضيًا (أو صفر) لو الباقة تشمل كل الأ${isGrouped ? 'يام' : 'سابيع'} المتاحة. وإلا يختار ولي الأمر هذا العدد.`}>
-              <input type="number" className={inputCls} value={form.dayCount ?? ''} onChange={(e) => setForm({ ...form, dayCount: e.target.value, error: '' })} placeholder="4" />
-            </Field>
-            {/*
-              «كل المتاحة» رقمٌ يتغيّر بما تفتحه تحت، فيُقال له الآن: باقةُ
-              موسمٍ كامل على أسبوعٍ واحدٍ مفتوح تصير أسبوعًا، ولا يدري إلا
-              حين يفتحها وليّ أمر.
-            */}
-            {!Number(form.dayCount || 0) && (
-              <div className={`rounded-xl px-3.5 py-2.5 text-[12px] font-semibold leading-6 mb-4 border ${
-                open > 1 ? 'bg-slate-50 border-slate-200 text-slate-600' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
-                كل الأ{isGrouped ? 'يام' : 'سابيع'} المتاحة = <b>{open}</b> الآن
-                {open <= 1 && ' — افتح الباقي من «الأيام المتاحة للتسجيل» تحت.'}
-              </div>
-            )}
-            {/* نصيب اليوم يُحسب أمامه وهو يكتب، فما يحتاج يحسبه بيده */}
-            {!isGrouped && price > 0 && over > 0 && (
-              <div className="bg-brand-50 border border-brand-100 rounded-xl px-3.5 py-2.5 text-[12px] text-brand-800 font-semibold leading-6 mb-4">
-                {fmt(price)} ÷ {over} = <b>{fmt(Math.floor(price / over))} ر.س</b> تنزل في دفتر كل {unit}
-                {price % over ? ` (وفاضل ${fmt(price % over)} على أول ${unit})` : ''}.
-              </div>
-            )}
+            {/* المبلغ الذي يشوفه ولي الأمر يُحسب أمامك وأنت تكتب */}
+            <div className={`rounded-xl px-3.5 py-2.5 text-[12px] font-semibold leading-7 mb-4 border ${
+              left ? 'bg-brand-50 border-brand-100 text-brand-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+              {left
+                ? <>الباقي من الموسم: <b>{left}</b> {unit === 'يوم' ? 'يوم' : 'جمعة'}
+                    {per > 0 && <> · {left} × {fmt(per)} = <b>{fmt(left * per)} ر.س</b></>}</>
+                : <>ما بقي {unit}ٌ مفتوحة — الباقة ما تنعرض حتى تفتح واحدة.</>}
+            </div>
             {form.id && (
               <div className="text-[11px] text-slate-400 leading-6 mb-4">
                 التعديل يمسّ من يسجّل بعده. من سجّل ودفع يبقى مبلغه كما هو.

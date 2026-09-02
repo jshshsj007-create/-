@@ -246,14 +246,15 @@ test('و«أنا أحدّدها» تُخفي القسم عنه', () => {
   assert.equal(daysView('fixed').pickDays, false);
 });
 
-test('والمُباع باقاتٍ يبقى الاختيار فيه — الباقة نفسها اختيار أيام', () => {
+test('والباقة ما تُسأل عن أيامها أصلًا — أيامها ما بقي من الموسم', () => {
   const d = base();
-  d.programs[0].type = 'مجمع';
   d.programs[0].signup = {
-    ...d.programs[0].signup, daysMode: 'fixed',
-    packages: [{ id: 'k1', name: 'المدة كاملة', price: 200, dayCount: 0 }],
+    ...d.programs[0].signup, daysMode: 'fixed', price: 0, allowPerDay: false,
+    packages: [{ id: 'k1', name: 'المدة كاملة', perWeek: 100 }],
   };
-  assert.equal(publicView(d, d.programs[0]).pickDays, true);
+  const v = publicView(d, d.programs[0]);
+  assert.equal(v.pickDays, false, 'ما فيه يومي، والباقة بلا اختيار');
+  assert.equal(v.packages[0].price, 200, '2 × 100');
 });
 
 test('واليوم الواحد ما يُسأل عنه — سؤالٌ جوابه واحد', () => {
@@ -265,22 +266,15 @@ test('واليوم الواحد ما يُسأل عنه — سؤالٌ جوابه
   assert.deepEqual(out.kids[0].days, ['w1']);
 });
 
-test('وباقة المدة الكاملة ما فيها ما يُختار، فتُخفى مع «أنا أحدّدها»', () => {
+test('والمفتوح للتسجيل يبقى لليومي وحده', () => {
   const d = base();
   d.programs[0].signup = {
-    ...d.programs[0].signup, daysMode: 'fixed', price: 0, allowPerDay: false,
-    packages: [{ id: 'k1', name: 'المدة كاملة', price: 200, dayCount: 0 }],
+    ...d.programs[0].signup, openWeeks: ['w2'], price: 70, allowPerDay: true,
+    packages: [{ id: 'k1', name: 'اشتراك', perWeek: 100 }],
   };
-  assert.equal(publicView(d, d.programs[0]).pickDays, false);
-});
-
-test('والباقة بعددٍ أقل تُبطل الإخفاء — عددها هو الاختيار', () => {
-  const d = base();
-  d.programs[0].signup = {
-    ...d.programs[0].signup, daysMode: 'fixed', price: 0, allowPerDay: false,
-    packages: [{ id: 'k2', name: 'أسبوع واحد', price: 90, dayCount: 1 }],
-  };
-  assert.equal(publicView(d, d.programs[0]).pickDays, true);
+  const v = publicView(d, d.programs[0]);
+  assert.deepEqual(v.days.map((x) => x.id), ['w2'], 'اليومي: جمعةٌ واحدة');
+  assert.deepEqual(v.packDays.map((x) => x.id), ['w1', 'w2'], 'والاشتراك: ما لم يُقفل');
 });
 
 test('وأيامه تُكتب له كما فتحها صاحب البرنامج', () => {
