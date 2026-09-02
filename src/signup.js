@@ -158,18 +158,23 @@ export const publicView = (data, program) => {
     .map((w, i) => ({ id: w.id, name: dayLabel(dayStyle, w, i, names[w.id]), date: w.date || '' }));
 
   /**
-   * المجمّع يُباع بطريقتين معًا: تسجيل يومي بسعر اليوم، وباقات بأسعارها.
+   * البرنامج يُباع بطريقتين معًا: تسجيل بسعر اليوم الواحد، وباقات بأسعارها.
    * ولي الأمر يختار وحدة منها، وبعدها يطلع سعره — فما نجبره على طريقة.
+   *
+   * والباقات في النوعين: في المجمّع تُوزَّع مرة واحدة على دفتر البرنامج،
+   * وفي المنفصل يُقسَّم سعرها على أيام المشترك فينزل نصيبُ كل يومٍ في دفتره.
+   * والمنفصل بلا باقةٍ يبقى كما كان — سعرٌ واحد بلا اختيار.
    */
   const grouped = program.type === 'مجمع';
+  // المخفية ما تنزل الصفحة أصلًا، فما ينفع أحد يسجّل فيها ولو حاول
+  const packs = (s.packages || []).filter((p) => p.hidden !== true);
   const perDayPrice = Number(s.price || 0);
-  const perDayOn = grouped && s.allowPerDay !== false && perDayPrice > 0;
-  const packages = !grouped ? [] : [
+  const perDayOn = s.allowPerDay !== false && perDayPrice > 0;
+  const packages = !(grouped || packs.length) ? [] : [
     ...(perDayOn ? [{
-      id: '__perday', name: 'يومي', price: perDayPrice, dayCount: 0, perDay: true,
+      id: '__perday', name: grouped ? 'يومي' : 'أسبوعي', price: perDayPrice, dayCount: 0, perDay: true,
     }] : []),
-    // المخفية ما تنزل الصفحة أصلًا، فما ينفع أحد يسجّل فيها ولو حاول
-    ...(s.packages || []).filter((p) => p.hidden !== true).map((p) => ({
+    ...packs.map((p) => ({
       id: p.id,
       name: p.name,
       price: Number(p.price || 0),
@@ -484,6 +489,41 @@ export const dueFor = (view, kid) => {
 export const totalDue = (view, kids) => (kids || []).reduce((s, k) => s + dueFor(view, k), 0);
 
 /**
+ * قسمة الاشتراك على أيامه في البرنامج المنفصل.
+ *
+ * ٣٠٠ على ١٠ = ٣٠ لكل يوم. و٣٠٠ على ٧ = ٤٢ ويفضل ٦، فيُحمَّل الفاضل على أول
+ * يومٍ له — لا على آخره: الأول أقربُ للدفع، ولأن آخر الأيام قد يُقفل قبل أن
+ * يُراجَع فيبقى الفاضل في يومٍ لا يُفتح.
+ *
+ * ونكتب أعدادًا صحيحة لا كسورًا: الريال يُعدّ، ولو وزّعنا ٤٢٫٨٥ على سبعة
+ * دفاتر طلعت أرقامٌ لا تُجمع على ٣٠٠ ولا تُقرأ.
+ */
+export const splitLump = (total, ids) => {
+  const n = (ids || []).length;
+  if (!n) return {};
+  const sum = Math.max(0, Math.round(Number(total) || 0));
+  const each = Math.floor(sum / n);
+  const rest = sum - each * n;
+  return Object.fromEntries(ids.map((id, i) => [id, each + (i === 0 ? rest : 0)]));
+};
+
+/** أيام المشترك بترتيب البرنامج لا بترتيب ضغطه، فـ«أول يومٍ له» أوّلٌ حقًّا. */
+export const orderedDays = (view, kid) =>
+  (view?.days || []).map((d) => d.id).filter((id) => (kid?.days || []).includes(id));
+
+/**
+ * نصيب كل يومٍ من هذا المشترك في البرنامج المنفصل: الباقة تُقسَم، وغيرها
+ * سعرٌ ثابت لكل يوم كما كان.
+ */
+export const weekShares = (view, kid) => {
+  const ids = orderedDays(view, kid);
+  const pkg = view?.usePackages ? packageOf(view, kid) : null;
+  if (pkg && !pkg.perDay) return splitLump(Number(pkg.price || 0), ids);
+  const per = Number((pkg ? pkg.price : view?.price) || 0);
+  return Object.fromEntries(ids.map((id) => [id, per]));
+};
+
+/**
  * يطبّق التسجيل على البيانات: يوحّد ولي الأمر وأبناءه بلا تكرار، ويضيف كل ابن
  * مشاركًا في البرنامج معلَّمًا «ينتظر التأكيد» — فما يُحسب إيرادًا قبل ما
  * يتأكد صاحب التطبيق إن الفلوس وصلت فعلًا.
@@ -539,6 +579,7 @@ export const applySubmission = (data, program, view, body, { newId, now = Date.n
   });
 
   // المجمّع دفتره على البرنامج، والمنفصل على كل أسبوع
+  const shares = kids.map((kid) => weekShares(view, kid));
   let programs;
   if (grouped) {
     programs = data.programs.map((p) => (p.id !== program.id ? p
@@ -549,10 +590,18 @@ export const applySubmission = (data, program, view, body, { newId, now = Date.n
       return {
         ...p,
         weeks: (p.weeks || []).map((w) => {
-          const forWeek = newParts.filter((_, i) => (kids[i]?.days || []).includes(w.id));
+          const forWeek = newParts
+            .map((part, i) => ({ part, i }))
+            .filter(({ i }) => (kids[i]?.days || []).includes(w.id));
           if (!forWeek.length) return w;
-          // المشترك في المنفصل يدفع سعر الأسبوع الواحد، مو مجموع أسابيعه
-          const perWeek = forWeek.map((part) => ({ ...part, id: newId(), amount: Number(view.price || 0) }));
+          /**
+           * المشترك في المنفصل ينزل في دفتر كل يومٍ بنصيبه منه، لا بمجموع
+           * أيامه: سعر اليوم الواحد، أو حصّته من الباقة. والإيصال يجمعها
+           * كلها برقمه المشترك، فيبقى المبلغ الذي دفعه واحدًا كما هو.
+           */
+          const perWeek = forWeek.map(({ part, i }) => ({
+            ...part, id: newId(), amount: shares[i]?.[w.id] ?? 0,
+          }));
           return { ...w, mode: 'named', participants: [...(w.participants || []), ...perWeek] };
         }),
       };

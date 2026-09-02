@@ -40,7 +40,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v6.4';
+const APP_VERSION = 'v6.5';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -2979,6 +2979,12 @@ export default function App() {
     );
   };
 
+  /**
+   * حفظ الباقة — جديدةً أو معدَّلة.
+   *
+   * والتعديل يمسّ من يسجّل بعده لا من سجّل قبله: مبالغ السابقين مكتوبةٌ في
+   * دفاتر أيامهم، ولو تحرّكت لانقلب حساب يومٍ وُزّع.
+   */
   const savePackage = () => {
     const name = (form.name || '').trim();
     const price = Number(form.price || 0);
@@ -2990,7 +2996,12 @@ export default function App() {
       setForm({ ...form, error: `عدد الأيام لازم يكون بين صفر و${open} — هذي الأيام اللي فتحتها للتسجيل` });
       return;
     }
-    patchSignup({ packages: [...((program.signup || {}).packages || []), { id: uid(), name, price, dayCount }] });
+    const list = (program.signup || {}).packages || [];
+    patchSignup({
+      packages: form.id
+        ? list.map((x) => (x.id !== form.id ? x : { ...x, name, price, dayCount }))
+        : [...list, { id: uid(), name, price, dayCount }],
+    });
     closeModal();
   };
 
@@ -4112,6 +4123,7 @@ export default function App() {
               const s = { ...emptySignup(), ...(program.signup || {}) };
               const url = s.token ? `${location.origin}/r/${s.token}` : '';
               const pending = signupPending(program);
+              const livePacks = (s.packages || []).filter((x) => x.hidden !== true);
               return (
                 <div className="space-y-4">
                   <div className={cardCls}>
@@ -4263,66 +4275,85 @@ export default function App() {
 
                       <div className={cardCls}>
                         {isGrouped ? (
-                          <>
-                            <Field label="التسجيل اليومي"
-                              hint="ولي الأمر يختار أي أيام يبيها، والمبلغ = السعر × عدد أيامه.">
+                          <Field label="التسجيل اليومي"
+                            hint="ولي الأمر يختار أي أيام يبيها، والمبلغ = السعر × عدد أيامه.">
+                            <label className="flex items-center gap-2 mb-3 text-sm text-slate-700">
+                              <input type="checkbox" checked={s.allowPerDay !== false}
+                                onChange={(e) => patchSignup({ allowPerDay: e.target.checked })} />
+                              اعرضه لولي الأمر
+                            </label>
+                            {s.allowPerDay !== false && (
+                              <input type="number" className={inputCls} value={s.price ?? ''}
+                                onChange={(e) => typeSignup({ price: e.target.value })} placeholder="سعر اليوم — 40" />
+                            )}
+                          </Field>
+                        ) : (
+                          <Field label="سعر الأسبوع (ر.س)"
+                            hint="يُستخدم في الرابط فقط، وتبقى تكتب المبلغ اللي تبي في تسجيلك اليدوي.">
+                            {/* المفتاح ما يظهر إلا مع باقة: بدونها إطفاؤه يقفل التسجيل كله */}
+                            {livePacks.length > 0 && (
                               <label className="flex items-center gap-2 mb-3 text-sm text-slate-700">
                                 <input type="checkbox" checked={s.allowPerDay !== false}
                                   onChange={(e) => patchSignup({ allowPerDay: e.target.checked })} />
-                                اعرضه لولي الأمر
+                                اعرضه لولي الأمر جنب الباقات
                               </label>
-                              {s.allowPerDay !== false && (
-                                <input type="number" className={inputCls} value={s.price ?? ''}
-                                  onChange={(e) => typeSignup({ price: e.target.value })} placeholder="سعر اليوم — 40" />
-                              )}
-                            </Field>
-
-                            <Field label="الباقات" hint="سعر مقطوع لعدد أيام. تنعرض جنب اليومي، وولي الأمر يختار وحدة.">
-                            {(s.packages || []).length > 0 && (
-                              <div className="space-y-2 mb-3">
-                                {s.packages.map((pk) => {
-                                  const off = pk.hidden === true;
-                                  return (
-                                  <div key={pk.id} className={`flex items-center justify-between rounded-lg px-3 py-2.5 ${off ? 'bg-slate-50/60' : 'bg-slate-50'}`}>
-                                    <div className="min-w-0">
-                                      <div className={`text-sm font-semibold truncate ${off ? 'text-slate-400' : 'text-slate-800'}`}>{pk.name}</div>
-                                      <div className="text-[11px] text-slate-400">
-                                        {fmt(pk.price)} ر.س · {Number(pk.dayCount) ? `${pk.dayCount} أيام` : 'كل الأيام المتاحة'}
-                                        {off && ' · مخفية'}
-                                      </div>
-                                    </div>
-                                    <div className="flex items-center gap-1 shrink-0">
-                                      {/*
-                                        بعد ما يمشي البرنامج أسبوعين، «الموسم كامل» ظلمٌ لمن جاء
-                                        اليوم الثاني — تخفيها وتبقى محفوظة للموسم الجاي.
-                                      */}
-                                      <button className="text-slate-400 p-1" title={off ? 'أظهرها لولي الأمر' : 'أخفها عن ولي الأمر'}
-                                        onClick={() => patchSignup({ packages: s.packages.map((x) => (x.id !== pk.id ? x : { ...x, hidden: !off })) })}>
-                                        {off ? <EyeOff size={15} /> : <Eye size={15} />}
-                                      </button>
-                                      <button className="text-red-400 p-1"
-                                        onClick={() => patchSignup({ packages: s.packages.filter((x) => x.id !== pk.id) })}>
-                                        <Trash2 size={15} />
-                                      </button>
-                                    </div>
-                                  </div>
-                                  );
-                                })}
-                              </div>
                             )}
-                            <button className={btnGhost + ' w-full border border-dashed border-slate-300'}
-                              onClick={() => { setForm({ dayCount: '' }); setModal('addPackage'); }}>
-                              <Plus size={15} /> باقة جديدة
-                            </button>
-                            </Field>
-                          </>
-                        ) : (
-                          <Field label="سعر الاشتراك (ر.س)"
-                            hint="لكل أسبوع. يُستخدم في الرابط فقط، وتبقى تكتب المبلغ اللي تبي في تسجيلك اليدوي.">
-                            <input type="number" className={inputCls} value={s.price ?? ''}
-                              onChange={(e) => typeSignup({ price: e.target.value })} placeholder="50" />
+                            {(!livePacks.length || s.allowPerDay !== false) && (
+                              <input type="number" className={inputCls} value={s.price ?? ''}
+                                onChange={(e) => typeSignup({ price: e.target.value })} placeholder="50" />
+                            )}
                           </Field>
                         )}
+
+                        <Field label="الباقات"
+                          hint={isGrouped
+                            ? 'سعر مقطوع لعدد أيام. تنعرض جنب اليومي، وولي الأمر يختار وحدة.'
+                            : 'سعر مقطوع لعدة أسابيع — يُقسم على أسابيع المشترك، فينزل نصيب كل أسبوع في دفتره.'}>
+                          {(s.packages || []).length > 0 && (
+                            <div className="space-y-2 mb-3">
+                              {s.packages.map((pk) => {
+                                const off = pk.hidden === true;
+                                const over = Number(pk.dayCount) || (s.openWeeks || []).length;
+                                return (
+                                <div key={pk.id} className={`flex items-center justify-between rounded-lg px-3 py-2.5 ${off ? 'bg-slate-50/60' : 'bg-slate-50'}`}>
+                                  <div className="min-w-0">
+                                    <div className={`text-sm font-semibold truncate ${off ? 'text-slate-400' : 'text-slate-800'}`}>{pk.name}</div>
+                                    <div className="text-[11px] text-slate-400">
+                                      {fmt(pk.price)} ر.س · {Number(pk.dayCount)
+                                        ? `${pk.dayCount} ${isGrouped ? 'أيام' : 'أسابيع'}`
+                                        : `كل الأ${isGrouped ? 'يام' : 'سابيع'} المتاحة`}
+                                      {!isGrouped && over > 0 && ` · ${fmt(Math.floor(Number(pk.price || 0) / over))} للأسبوع`}
+                                      {off && ' · مخفية'}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    <button className="text-slate-400 p-1" title="عدّلها"
+                                      onClick={() => { setForm({ id: pk.id, name: pk.name, price: pk.price, dayCount: pk.dayCount || '' }); setModal('addPackage'); }}>
+                                      <Pencil size={15} />
+                                    </button>
+                                    {/*
+                                      بعد ما يمشي البرنامج أسبوعين، «الموسم كامل» ظلمٌ لمن جاء
+                                      اليوم الثاني — تخفيها وتبقى محفوظة للموسم الجاي.
+                                    */}
+                                    <button className="text-slate-400 p-1" title={off ? 'أظهرها لولي الأمر' : 'أخفها عن ولي الأمر'}
+                                      onClick={() => patchSignup({ packages: s.packages.map((x) => (x.id !== pk.id ? x : { ...x, hidden: !off })) })}>
+                                      {off ? <EyeOff size={15} /> : <Eye size={15} />}
+                                    </button>
+                                    <button className="text-red-400 p-1"
+                                      onClick={() => patchSignup({ packages: s.packages.filter((x) => x.id !== pk.id) })}>
+                                      <Trash2 size={15} />
+                                    </button>
+                                  </div>
+                                </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                          <button className={btnGhost + ' w-full border border-dashed border-slate-300'}
+                            onClick={() => { setForm({ dayCount: '' }); setModal('addPackage'); }}>
+                            <Plus size={15} /> باقة جديدة
+                          </button>
+                        </Field>
 
                         <Field label={isGrouped ? 'الأيام المتاحة للتسجيل' : 'الأسابيع المتاحة للتسجيل'}
                           hint="اللي ما تختاره ما يظهر لولي الأمر أصلًا.">
@@ -4350,7 +4381,7 @@ export default function App() {
                           الباقات هي اختيار أيامٍ في نفسها، فما نعرض المفتاح معها:
                           إخفاء الأيام هناك يُخفي ما يُشترى.
                         */}
-                        {!(s.packages || []).some((x) => !x.hidden) && (
+                        {!livePacks.length && (
                           <Toggle label="ولي الأمر يختار أيامه"
                             hint={s.daysMode === 'fixed'
                               ? 'مطفي: ما يشوف الأيام أصلًا، ونسجّله في اللي فتحته فوق.'
@@ -8164,24 +8195,43 @@ export default function App() {
         </Modal>
       )}
 
-      {modal === 'addPackage' && (
-        <Modal title="باقة جديدة" onClose={closeModal}>
-          <Field label="اسم الباقة">
-            <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} placeholder="مثال: الموسم كامل" />
-          </Field>
-          <Field label="السعر (ر.س)">
-            <input type="number" className={inputCls} value={form.price ?? ''} onChange={(e) => setForm({ ...form, price: e.target.value, error: '' })} placeholder="800" />
-          </Field>
-          <Field label="عدد الأيام" hint="اتركه فاضيًا (أو صفر) لو الباقة تشمل كل الأيام المتاحة. وإلا يختار ولي الأمر هذا العدد من الأيام.">
-            <input type="number" className={inputCls} value={form.dayCount ?? ''} onChange={(e) => setForm({ ...form, dayCount: e.target.value, error: '' })} placeholder="4" />
-          </Field>
-          {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
-          <div className="flex gap-2 mt-2">
-            <button className={btnPrimary + ' flex-1'} onClick={savePackage}>إضافة</button>
-            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
-          </div>
-        </Modal>
-      )}
+      {modal === 'addPackage' && (() => {
+        const unit = isGrouped ? 'يوم' : 'أسبوع';
+        const open = ((program?.signup || {}).openWeeks || []).length;
+        const over = Number(form.dayCount || 0) || open;
+        const price = Number(form.price || 0);
+        return (
+          <Modal title={form.id ? 'تعديل الباقة' : 'باقة جديدة'} onClose={closeModal}>
+            <Field label="اسم الباقة">
+              <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} placeholder="مثال: الموسم كامل" />
+            </Field>
+            <Field label="السعر (ر.س)">
+              <input type="number" className={inputCls} value={form.price ?? ''} onChange={(e) => setForm({ ...form, price: e.target.value, error: '' })} placeholder="800" />
+            </Field>
+            <Field label={`عدد الأ${isGrouped ? 'يام' : 'سابيع'}`}
+              hint={`اتركه فاضيًا (أو صفر) لو الباقة تشمل كل الأ${isGrouped ? 'يام' : 'سابيع'} المتاحة. وإلا يختار ولي الأمر هذا العدد.`}>
+              <input type="number" className={inputCls} value={form.dayCount ?? ''} onChange={(e) => setForm({ ...form, dayCount: e.target.value, error: '' })} placeholder="4" />
+            </Field>
+            {/* نصيب اليوم يُحسب أمامه وهو يكتب، فما يحتاج يحسبه بيده */}
+            {!isGrouped && price > 0 && over > 0 && (
+              <div className="bg-brand-50 border border-brand-100 rounded-xl px-3.5 py-2.5 text-[12px] text-brand-800 font-semibold leading-6 mb-4">
+                {fmt(price)} ÷ {over} = <b>{fmt(Math.floor(price / over))} ر.س</b> تنزل في دفتر كل {unit}
+                {price % over ? ` (وفاضل ${fmt(price % over)} على أول ${unit})` : ''}.
+              </div>
+            )}
+            {form.id && (
+              <div className="text-[11px] text-slate-400 leading-6 mb-4">
+                التعديل يمسّ من يسجّل بعده. من سجّل ودفع يبقى مبلغه كما هو.
+              </div>
+            )}
+            {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+            <div className="flex gap-2 mt-2">
+              <button className={btnPrimary + ' flex-1'} onClick={savePackage}>{form.id ? 'حفظ' : 'إضافة'}</button>
+              <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {modal === 'addSignupField' && (
         <Modal title="سؤال جديد" onClose={closeModal}>
@@ -8523,7 +8573,13 @@ function ParticipantsTable({ participants, accounts, showAttendance, statusOf, o
                   </td>
                 );
               })()}
-              {showMoney && <td className="px-4 py-3 text-slate-600">{p.accountId === 'unpaid' ? '-' : fmt(p.amount) + ' ر.س'}</td>}
+              {showMoney && (
+                <td className="px-4 py-3 text-slate-600">
+                  {p.accountId === 'unpaid' ? '-' : fmt(p.amount) + ' ر.س'}
+                  {/* رقمُ اليوم حصّةٌ من باقة، فيُقال من أين جاء */}
+                  {p.packageName && <div className="text-[11px] text-slate-400 mt-0.5 truncate">{p.packageName}</div>}
+                </td>
+              )}
               {showMoney && (
                 <td className="px-4 py-3">
                   {p.accountId === 'unpaid'

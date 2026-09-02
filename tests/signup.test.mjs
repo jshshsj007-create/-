@@ -7,6 +7,7 @@ import {
   makeToken, programByToken, publicView, validateSubmission,
   dueFor, totalDue, applySubmission, rateLimited, daysAllowed, daysAreFixed, coversAll, isReceipt, RECEIPT_MAX,
   waIntl, waLink, fillTemplate, signupVars, txt, TEXTS, varNames, DEFAULT_WA_TEMPLATE,
+  splitLump, orderedDays, weekShares,
 } from '../src/signup.js';
 import { studentsOf } from '../src/people.js';
 
@@ -707,5 +708,121 @@ test('أسئلة البرنامج تصير متغيّرات جاهزة', () => {
   assert.ok(varNames(v).includes('الطالب'));
   assert.ok(!varNames(v).includes('جوال ولي الأمر'), 'خانات ولي الأمر ما تتكرر لكل ابن');
 });
+
+/* ------------------------- باقة في البرنامج المنفصل ------------------------- */
+
+/** منفصل بخمسة أسابيع، وباقة اشتراك ٣٠٠ تشمل كلها. */
+const withSubscription = (price = 300, dayCount = 0) => {
+  const d = baseData();
+  d.programs[0].weeks = ['w1', 'w2', 'w3', 'w4', 'w5']
+    .map((id, i) => ({ id, name: `الأسبوع ${i + 1}`, participants: [] }));
+  d.programs[0].signup.openWeeks = ['w1', 'w2', 'w3', 'w4', 'w5'];
+  d.programs[0].signup.allowPerDay = false;
+  d.programs[0].signup.packages = [{ id: 'sub', name: 'اشتراك', price, dayCount }];
+  return d;
+};
+
+test('القسمة تُعطي كل يومٍ نصيبه، والفاضل على أوّله', () => {
+  assert.deepEqual(splitLump(300, ['a', 'b', 'c']), { a: 100, b: 100, c: 100 });
+  assert.deepEqual(splitLump(300, ['a', 'b', 'c', 'd', 'e', 'f', 'g']),
+    { a: 48, b: 42, c: 42, d: 42, e: 42, f: 42, g: 42 });
+  assert.equal(Object.values(splitLump(300, ['a', 'b', 'c', 'd', 'e', 'f', 'g'])).reduce((x, y) => x + y), 300);
+  assert.deepEqual(splitLump(300, []), {});
+});
+
+test('«أول يوم» أوّلُ البرنامج لا أوّلَ ما ضغط', () => {
+  const d = withSubscription();
+  const v = publicView(d, d.programs[0]);
+  assert.deepEqual(orderedDays(v, { days: ['w3', 'w1'] }), ['w1', 'w3']);
+});
+
+test('الباقة تظهر في المنفصل — وبدونها يبقى كما كان', () => {
+  const plain = publicView(baseData(), baseData().programs[0]);
+  assert.equal(plain.usePackages, false, 'منفصل بلا باقة: سعرٌ واحد بلا اختيار');
+  const v = publicView(withSubscription(), withSubscription().programs[0]);
+  assert.equal(v.usePackages, true);
+  assert.deepEqual(v.packages.map((p) => p.name), ['اشتراك']);
+});
+
+test('واليومي يُعرض جنبها لو تركته مفتوحًا', () => {
+  const d = withSubscription();
+  d.programs[0].signup.allowPerDay = true;
+  const v = publicView(d, d.programs[0]);
+  assert.deepEqual(v.packages.map((p) => [p.name, p.price]), [['أسبوعي', 50], ['اشتراك', 300]]);
+});
+
+test('٣٠٠ على خمسة أسابيع = ٦٠ في دفتر كل أسبوع', () => {
+  const d = withSubscription();
+  const v = publicView(d, d.programs[0]);
+  const r = applySubmission(d, d.programs[0], v, {
+    answers: goodBody.answers, accountId: 'rajhi',
+    kids: [{ name: 'سعد القاسم', age: '10', packageId: 'sub', days: ['w1', 'w2', 'w3', 'w4', 'w5'] }],
+  }, { newId, now: 1000 });
+  const rows = r.data.programs[0].weeks.map((w) => w.participants.find((p) => p.name === 'سعد القاسم'));
+  assert.deepEqual(rows.map((x) => x.amount), [60, 60, 60, 60, 60]);
+  assert.equal(rows.reduce((s, x) => s + x.amount, 0), 300, 'المجموع هو ما دفعه');
+  assert.equal(new Set(rows.map((x) => x.ref)).size, 1, 'رقمٌ واحد يجمعها في إيصال واحد');
+  assert.equal(rows[0].packageName, 'اشتراك');
+});
+
+test('والمتأخّر: ٣٠٠ على ثلاثة أسابيع بقيت له', () => {
+  const d = withSubscription(300, 3);
+  const v = publicView(d, d.programs[0]);
+  const r = applySubmission(d, d.programs[0], v, {
+    answers: goodBody.answers, accountId: 'rajhi',
+    kids: [{ name: 'سعد القاسم', age: '10', packageId: 'sub', days: ['w3', 'w4', 'w5'] }],
+  }, { newId, now: 1000 });
+  const got = d.programs[0].weeks.map((w) => w.id)
+    .map((id) => r.data.programs[0].weeks.find((w) => w.id === id))
+    .map((w) => w.participants.find((p) => p.name === 'سعد القاسم')?.amount ?? null);
+  assert.deepEqual(got, [null, null, 100, 100, 100]);
+});
+
+test('والفاضل ينزل على أول أسبوعٍ له لا على آخره', () => {
+  const d = withSubscription(100, 3);
+  const v = publicView(d, d.programs[0]);
+  const r = applySubmission(d, d.programs[0], v, {
+    answers: goodBody.answers, accountId: 'rajhi',
+    kids: [{ name: 'سعد القاسم', age: '10', packageId: 'sub', days: ['w2', 'w3', 'w4'] }],
+  }, { newId, now: 1000 });
+  const amt = (id) => r.data.programs[0].weeks.find((w) => w.id === id)
+    .participants.find((p) => p.name === 'سعد القاسم')?.amount;
+  assert.deepEqual([amt('w2'), amt('w3'), amt('w4')], [34, 33, 33]);
+});
+
+test('واليومي في المنفصل يبقى سعر الأسبوع لكل أسبوع', () => {
+  const d = withSubscription();
+  d.programs[0].signup.allowPerDay = true;
+  const v = publicView(d, d.programs[0]);
+  const r = applySubmission(d, d.programs[0], v, {
+    answers: goodBody.answers, accountId: 'rajhi',
+    kids: [{ name: 'سعد القاسم', age: '10', packageId: '__perday', days: ['w1', 'w2'] }],
+  }, { newId, now: 1000 });
+  const amt = (id) => r.data.programs[0].weeks.find((w) => w.id === id)
+    .participants.find((p) => p.name === 'سعد القاسم')?.amount;
+  assert.deepEqual([amt('w1'), amt('w2')], [50, 50]);
+});
+
+test('وتعديل الباقة ما يمسّ من سجّل قبله', () => {
+  const d = withSubscription();
+  const v = publicView(d, d.programs[0]);
+  const r = applySubmission(d, d.programs[0], v, {
+    answers: goodBody.answers, accountId: 'rajhi',
+    kids: [{ name: 'سعد القاسم', age: '10', packageId: 'sub', days: ['w1', 'w2', 'w3', 'w4', 'w5'] }],
+  }, { newId, now: 1000 });
+  // صاحب البرنامج نزّل السعر بعدها
+  const after = { ...r.data, programs: r.data.programs.map((p) => ({
+    ...p, signup: { ...p.signup, packages: [{ id: 'sub', name: 'اشتراك', price: 200, dayCount: 0 }] },
+  })) };
+  const rows = after.programs[0].weeks.map((w) => w.participants.find((p) => p.name === 'سعد القاسم'));
+  assert.deepEqual(rows.map((x) => x.amount), [60, 60, 60, 60, 60], 'مبالغ الدفاتر مكتوبةٌ لا تُحسب من جديد');
+});
+
+test('ونصيب الأسبوع يُحسب من الباقة نفسها', () => {
+  const d = withSubscription();
+  const v = publicView(d, d.programs[0]);
+  assert.deepEqual(weekShares(v, { packageId: 'sub', days: ['w1', 'w2'] }), { w1: 150, w2: 150 });
+});
+
 
 console.log(`\n${passed} اختبار نجح.`);
