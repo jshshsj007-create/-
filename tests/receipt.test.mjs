@@ -250,7 +250,7 @@ test('والباقة ما تُسأل عن أيامها أصلًا — أيامه
   const d = base();
   d.programs[0].signup = {
     ...d.programs[0].signup, daysMode: 'fixed', price: 0, allowPerDay: false,
-    packages: [{ id: 'k1', name: 'المدة كاملة', perWeek: 100 }],
+    packages: [{ id: 'k1', name: 'المدة كاملة', price: 200 }],
   };
   const v = publicView(d, d.programs[0]);
   assert.equal(v.pickDays, false, 'ما فيه يومي، والباقة بلا اختيار');
@@ -270,7 +270,7 @@ test('والمفتوح للتسجيل يبقى لليومي وحده', () => {
   const d = base();
   d.programs[0].signup = {
     ...d.programs[0].signup, openWeeks: ['w2'], price: 70, allowPerDay: true,
-    packages: [{ id: 'k1', name: 'اشتراك', perWeek: 100 }],
+    packages: [{ id: 'k1', name: 'اشتراك', price: 200 }],
   };
   const v = publicView(d, d.programs[0]);
   assert.deepEqual(v.days.map((x) => x.id), ['w2'], 'اليومي: جمعةٌ واحدة');

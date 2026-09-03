@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import {
   makeToken, programByToken, publicView, validateSubmission,
-  dueFor, totalDue, applySubmission, rateLimited, coversAll, isReceipt, RECEIPT_MAX, packWeekPrice, normalizeSubmission,
+  dueFor, totalDue, applySubmission, rateLimited, coversAll, isReceipt, RECEIPT_MAX, packTotal, splitLump, normalizeSubmission,
   waIntl, waLink, fillTemplate, signupVars, txt, TEXTS, varNames, DEFAULT_WA_TEMPLATE,
   orderedDays, weekShares,
 } from '../src/signup.js';
@@ -184,7 +184,7 @@ const withPackages = () => {
   d.programs[0].type = 'مجمع';
   d.programs[0].signup.openWeeks = ['w1', 'w2', 'w3'];
   d.programs[0].signup.allowPerDay = false;
-  d.programs[0].signup.packages = [{ id: 'pk', name: 'الموسم كامل', perWeek: 40 }];
+  d.programs[0].signup.packages = [{ id: 'pk', name: 'الموسم كامل', price: 120 }];
   return d;
 };
 
@@ -195,22 +195,21 @@ test('اليومي والباقة يتعايشان، وولي الأمر يخت�
   const v = publicView(d, d.programs[0]);
   assert.deepEqual(v.packages.map((p) => [p.name, p.price]), [['يومي', 50], ['الموسم كامل', 120]]);
   assert.equal(v.packages[0].perDay, true);
-  assert.equal(v.packages[1].perWeek, 40, 'سعر اليوم داخل الاشتراك');
 });
 
-test('سعر الباقة = سعر اليوم × ما لم يُقفل', () => {
+test('سعر الباقة مقطوعٌ كما كُتب — هو ما يُعلن', () => {
   const d = withPackages();
   const v = publicView(d, d.programs[0]);
-  assert.equal(dueFor(v, { packageId: 'pk' }), 120, '3 × 40');
+  assert.equal(dueFor(v, { packageId: 'pk' }), 120);
   assert.equal(dueFor(v, { packageId: 'مو موجودة' }), 0);
 });
 
-test('وينزل مع كل إقفال بلا ما يُعدَّل شيء', () => {
+test('وأيامها تنقص مع الإقفال، والمبلغ يبقى كما كتبه صاحبه', () => {
   const d = withPackages();
   d.programs[0].weeks[0].status = 'مغلق';
   const v = publicView(d, d.programs[0]);
   assert.deepEqual(v.packDays.map((x) => x.id), ['w2', 'w3']);
-  assert.equal(v.packages.find((p) => p.id === 'pk').price, 80, '2 × 40');
+  assert.equal(v.packages.find((p) => p.id === 'pk').price, 120, 'المقطوع ما يتغيّر');
 });
 
 test('وأيام الباقة ما تتبع «المتاح للتسجيل»', () => {
@@ -298,13 +297,18 @@ test('التسجيل بباقة يوصل بسعرها واسمها', () => {
   assert.ok(added.pending);
 });
 
-test('والباقة القديمة (مبلغ مقطوع) تتحوّل لسعر يومٍ بلا ما يُعاد كتابتها', () => {
-  const d = withPackages();
-  d.programs[0].signup.packages = [{ id: 'old', name: 'الموسم كامل', price: 300, dayCount: 10 }];
-  assert.equal(packWeekPrice(d.programs[0].signup.packages[0], d.programs[0]), 30, '300 ÷ 10');
-  // وبلا عددٍ مكتوب تُقسم على أيام البرنامج
-  const noCount = { id: 'x', name: 'كذا', price: 120 };
-  assert.equal(packWeekPrice(noCount, d.programs[0]), 40, '120 ÷ 3 أيام');
+test('وباقة النسخة الماضية (سعر اليوم) تُضرب في أيامها', () => {
+  assert.equal(packTotal({ price: 300 }, 10), 300, 'المقطوع يفوز');
+  assert.equal(packTotal({ perWeek: 30 }, 10), 300, '30 × 10');
+  assert.equal(packTotal({ perWeek: 30 }, 0), 0);
+});
+
+test('والقسمة تُعطي كل يومٍ نصيبه، والفاضل على أوّله', () => {
+  assert.deepEqual(splitLump(300, ['a', 'b', 'c']), { a: 100, b: 100, c: 100 });
+  assert.deepEqual(splitLump(300, ['a', 'b', 'c', 'd', 'e', 'f', 'g']),
+    { a: 48, b: 42, c: 42, d: 42, e: 42, f: 42, g: 42 });
+  assert.equal(Object.values(splitLump(300, ['a', 'b', 'c', 'd', 'e', 'f', 'g'])).reduce((x, y) => x + y), 300);
+  assert.deepEqual(splitLump(300, []), {});
 });
 
 /* ---------------------- الاسم اللي يشوفه ولي الأمر ---------------------- */
@@ -659,14 +663,14 @@ test('أسئلة البرنامج تصير متغيّرات جاهزة', () => {
 
 /* ------------------------- باقة في البرنامج المنفصل ------------------------- */
 
-/** منفصل بخمس جمع، واشتراكٌ سعر جمعته ٦٠. */
-const withSubscription = (perWeek = 60) => {
+/** منفصل بخمس جمع، واشتراكٌ مقطوعٌ بـ٣٠٠ — ٦٠ للجمعة. */
+const withSubscription = (price = 300) => {
   const d = baseData();
   d.programs[0].weeks = ['w1', 'w2', 'w3', 'w4', 'w5']
     .map((id, i) => ({ id, name: `الأسبوع ${i + 1}`, participants: [] }));
   d.programs[0].signup.openWeeks = ['w1', 'w2', 'w3', 'w4', 'w5'];
   d.programs[0].signup.allowPerDay = false;
-  d.programs[0].signup.packages = [{ id: 'sub', name: 'اشتراك', perWeek }];
+  d.programs[0].signup.packages = [{ id: 'sub', name: 'اشتراك', price }];
   return d;
 };
 
@@ -684,7 +688,7 @@ test('الباقة تظهر في المنفصل — وبدونها يبقى كم
   assert.equal(plain.usePackages, false, 'منفصل بلا باقة: سعرٌ واحد بلا اختيار');
   const v = publicView(withSubscription(), withSubscription().programs[0]);
   assert.equal(v.usePackages, true);
-  assert.deepEqual(v.packages.map((p) => [p.name, p.price]), [['اشتراك', 300]], '5 × 60');
+  assert.deepEqual(v.packages.map((p) => [p.name, p.price]), [['اشتراك', 300]]);
 });
 
 test('واليومي يُعرض جنبها لو تركته مفتوحًا', () => {
@@ -708,9 +712,9 @@ test('والمتأخّر ما يدفع عن جمعةٍ أُقفلت', () => {
   d.programs[0].weeks[0].status = 'مغلق';
   d.programs[0].weeks[1].status = 'مغلق';
   const v = publicView(d, d.programs[0]);
-  assert.equal(v.packages.find((p) => p.id === 'sub').price, 180, '3 × 60');
+  assert.equal(v.packages.find((p) => p.id === 'sub').price, 300, 'المقطوع كما هو');
   const r = enroll(d, { name: 'سعد القاسم', age: '10', packageId: 'sub' });
-  assert.deepEqual(subRows(r).map((x) => (x ? x.amount : null)), [null, null, 60, 60, 60]);
+  assert.deepEqual(subRows(r).map((x) => (x ? x.amount : null)), [null, null, 100, 100, 100], '300 على ثلاثة');
 });
 
 test('واليومي في المنفصل يبقى سعر الأسبوع لكل أسبوع', () => {
@@ -725,16 +729,16 @@ test('وتعديل الباقة ما يمسّ من سجّل قبله', () => {
   const r = enroll(withSubscription(), { name: 'سعد القاسم', age: '10', packageId: 'sub' });
   // صاحب البرنامج نزّل السعر بعدها
   const after = { ...r.data, programs: r.data.programs.map((p) => ({
-    ...p, signup: { ...p.signup, packages: [{ id: 'sub', name: 'اشتراك', perWeek: 40 }] },
+    ...p, signup: { ...p.signup, packages: [{ id: 'sub', name: 'اشتراك', price: 200 }] },
   })) };
   const rows = after.programs[0].weeks.map((w) => w.participants.find((p) => p.name === 'سعد القاسم'));
   assert.deepEqual(rows.map((x) => x.amount), [60, 60, 60, 60, 60], 'مبالغ الدفاتر مكتوبةٌ لا تُحسب من جديد');
 });
 
-test('ونصيب الجمعة هو سعرها في الباقة، بلا قسمةٍ ولا فاضل', () => {
+test('ونصيب الجمعة قسمةُ المقطوع على أيامه', () => {
   const d = withSubscription();
   const v = publicView(d, d.programs[0]);
-  assert.deepEqual(weekShares(v, { packageId: 'sub', days: ['w1', 'w2'] }), { w1: 60, w2: 60 });
+  assert.deepEqual(weekShares(v, { packageId: 'sub', days: ['w1', 'w2'] }), { w1: 150, w2: 150 });
   assert.deepEqual(orderedDays(v, { packageId: 'sub', days: ['w3', 'w1'] }), ['w1', 'w3'], 'بترتيب البرنامج');
 });
 

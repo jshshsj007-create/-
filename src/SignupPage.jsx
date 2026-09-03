@@ -35,7 +35,7 @@ function Shell({ children }) {
  * ثابت الارتفاع والصورة تُحتوى داخله كاملة: ما تُقصّ منها زاوية، وما تبلع الصفحة.
  * والتفاصيل الدقيقة تُقرأ بالضغط — تنفتح بملء الشاشة.
  */
-function Gallery({ ids, alt }) {
+function Gallery({ ids, alt, share }) {
   const [at, setAt] = useState(0);
   const [full, setFull] = useState(false);
   const touch = React.useRef(null);
@@ -66,16 +66,22 @@ function Gallery({ ids, alt }) {
         {/*
           كان تحتها شريط مصغّرات يأكل ستين بكسل من الشاشة الأولى. والنقاط
           والعدّاد يقولان نفس الشيء — «فيه غيرها، اسحب» — في عُشر المساحة.
+
+          والمشاركة هنا لا في ذيل الصفحة: من أعجبه البرنامج أعجبه من صورته،
+          فيرسله ساعتَها لا بعد ما ينزل النموذج كله.
         */}
-        {ids.length > 1 && (
-          <div className="flex items-center justify-center gap-2 pt-2 pb-0.5">
-            {ids.map((id, i) => (
-              <button key={id} type="button" onClick={() => setAt(i)} aria-label={`صورة ${i + 1}`}
-                className={`h-1.5 rounded-full transition-all ${i === at ? 'w-5 bg-brand-700' : 'w-1.5 bg-slate-300'}`} />
-            ))}
-            <span className="text-[11px] text-slate-400 mr-1.5">{at + 1} من {ids.length}</span>
-          </div>
-        )}
+        <div className="relative flex items-center justify-center gap-2 pt-2 pb-0.5 min-h-[26px]">
+          {ids.length > 1 && (
+            <>
+              {ids.map((id, i) => (
+                <button key={id} type="button" onClick={() => setAt(i)} aria-label={`صورة ${i + 1}`}
+                  className={`h-1.5 rounded-full transition-all ${i === at ? 'w-5 bg-brand-700' : 'w-1.5 bg-slate-300'}`} />
+              ))}
+              <span className="text-[11px] text-slate-400 mr-1.5">{at + 1} من {ids.length}</span>
+            </>
+          )}
+          {share && <span className="absolute left-0 top-1/2 -translate-y-1/2">{share}</span>}
+        </div>
       </div>
 
       {full && (
@@ -233,13 +239,13 @@ function ShareButton({ title, label, wide = false }) {
     );
   }
   return (
-    <div className="mt-4 flex items-center gap-2">
+    <>
       <button type="button" onClick={go} title={label} aria-label={label}
-        className="w-11 h-11 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center shrink-0">
-        <Share2 size={19} />
+        className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center shrink-0">
+        <Share2 size={15} />
       </button>
-      {said && <span className="text-xs text-slate-500">{said}</span>}
-    </div>
+      {said && <span className="absolute left-0 top-9 whitespace-nowrap text-[10px] text-slate-500">{said}</span>}
+    </>
   );
 }
 
@@ -555,13 +561,17 @@ export default function SignupPage({ token }) {
   const contactHref = view.wa.contactUrl || waLink(view.wa.number, '');
 
   /**
-   * السعر في الرأس. والبرنامج المُباع باقاتٍ له أسعار، فنعرض أرخصها مسبوقًا
-   * بـ«من» — رقمٌ واحدٌ مطلقٌ يكذب على من اختار الأغلى.
+   * السعر في الرأس: سعر اليوم الواحد.
+   *
+   * كان أرخص الخيارات مسبوقًا بـ«من» — فلمّا قلّ الباقي من الموسم صار الاشتراك
+   * أرخص من اليوم، فطلع في الإعلان رقمٌ يظنّه ولي الأمر سعر البرنامج. وسعر
+   * اليوم ثابتٌ معروف، والاشتراك يشوفه في الخيارات تحت.
    */
-  const prices = (view.usePackages ? view.packages.map((p) => Number(p.price || 0)) : [Number(view.price || 0)])
-    .filter((n) => n > 0);
-  const headline = prices.length ? Math.min(...prices) : 0;
-  const fromPrice = prices.length > 1 && Math.max(...prices) !== headline;
+  const daily = (view.packages || []).find((p) => p.perDay);
+  const packMin = (view.packages || []).map((p) => Number(p.price || 0)).filter((n) => n > 0);
+  const headline = daily ? Number(daily.price || 0)
+    : view.usePackages ? (packMin.length ? Math.min(...packMin) : 0)
+      : Number(view.price || 0);
 
   /**
    * خانات ولي الأمر تنزل داخل بطاقة الابن الأول، تحت اسمه مباشرة — لأنها
@@ -587,8 +597,15 @@ export default function SignupPage({ token }) {
 
   return (
     <Shell>
-      {/* الصور أولًا: يشوف قبل ما يقرأ. ثم النص، وفي ذيله زر المشاركة */}
-      <Gallery ids={[view.poster, ...(view.gallery || [])].filter(Boolean)} alt={view.programName} />
+      {/* الصور أولًا: يشوف قبل ما يقرأ. وعلامة المشاركة في ذيلها */}
+      {(() => {
+        const ids = [view.poster, ...(view.gallery || [])].filter(Boolean);
+        const share = <ShareButton title={shareTitle} label={txt(view, 'share')} />;
+        // وبرنامجٌ بلا صور ما له ذيلٌ تُعلَّق فيه، فتنزل وحدها في سطرٍ نحيف
+        return ids.length
+          ? <Gallery ids={ids} alt={view.programName} share={share} />
+          : <div className="relative flex justify-end mb-2">{share}</div>;
+      })()}
 
       <div className="bg-white rounded-2xl p-4 mb-3">
         {txt(view, 'intro') && <div className="text-[11.5px] text-slate-400 mb-0.5">{txt(view, 'intro')}</div>}
@@ -596,9 +613,8 @@ export default function SignupPage({ token }) {
           <div className="font-extrabold text-[19px] text-slate-800 leading-[1.4] flex-1 min-w-0">{view.programName}</div>
           {/* السعر يُعرف قبل ما يعبّي، فما يقف في نص النموذج */}
           {headline > 0 && (
-            <span className="shrink-0 bg-green-50 border border-green-200 text-green-900 rounded-lg px-2 py-1 text-[13px] font-extrabold">
-              {fromPrice && <span className="font-bold">من </span>}
-              <span dir="ltr">{fmt(headline)}</span> ر.س
+            <span className="shrink-0 bg-green-50 border border-green-200 text-green-900 rounded-lg px-2.5 py-1 text-[14px] font-extrabold" dir="ltr">
+              {fmt(headline)}
             </span>
           )}
         </div>
@@ -705,7 +721,7 @@ export default function SignupPage({ token }) {
                           <span className="block text-[11px] text-slate-400">
                             {pk.perDay
                               ? (view.days.length === 1 ? view.days[0].name : 'تختار أي أيام تبيها')
-                              : `${(view.packDays || []).length} أيام باقية · ${fmt(pk.perWeek)} لليوم`}
+                              : `${(view.packDays || []).length} أيام باقية`}
                           </span>
                         </span>
                         <span className="shrink-0 font-bold text-brand-700 text-left">
@@ -887,7 +903,6 @@ export default function SignupPage({ token }) {
         {state === 'sending' ? 'جاري الإرسال...' : txt(view, 'submit')}
       </button>
       <div className="text-center text-[11px] text-slate-400 mt-3">بياناتك تُستخدم لتنظيم البرنامج فقط.</div>
-      <div className="mt-4"><ShareButton title={shareTitle} label={txt(view, 'share')} wide /></div>
 
       {/*
         من اقتنع من أول شاشة يسجّل من موضعه، فما ينزل الصفحة كلها يدوّر أين

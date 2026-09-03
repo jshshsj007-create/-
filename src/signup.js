@@ -149,17 +149,16 @@ export const dayLabel = (style, week, index, custom) => {
 };
 
 /**
- * سعر الجمعة داخل الباقة.
+ * مبلغ الاشتراك كاملًا — هو ما يكتبه صاحب البرنامج وما يراه وليّ الأمر.
  *
- * الجديدة تكتبه صراحةً، والقديمة كانت مبلغًا مقطوعًا لعددٍ من الأيام — فنقسمه
- * على عدده فتمشي كما كانت بلا أن يعيد أحدٌ كتابتها.
+ * ونصيب اليوم يُشتقّ منه بالقسمة، لا العكس: لو كتبنا سعر اليوم وضربناه، طلع
+ * في الإعلان رقمٌ محسوبٌ لا يعرفه أحد. والنسخة الماضية كتبت سعر اليوم، فمجموعها
+ * ضربُه في أيامها — فتمشي بلا أن يعيد أحدٌ كتابتها.
  */
-export const packWeekPrice = (p, program) => {
-  const per = p?.perWeek;
-  if (per !== undefined && per !== null && per !== '') return Math.max(0, Math.round(Number(per) || 0));
+export const packTotal = (p, count) => {
   const total = Number(p?.price || 0);
-  const n = Number(p?.dayCount || 0) || (program?.weeks || []).length || 1;
-  return Math.max(0, Math.round(total / n));
+  if (total > 0) return Math.max(0, Math.round(total));
+  return Math.max(0, Math.round(Number(p?.perWeek || 0) * (Number(count) || 0)));
 };
 
 export const publicView = (data, program) => {
@@ -183,8 +182,8 @@ export const publicView = (data, program) => {
    * ولو وحّدناهما لزم فتحُ الموسم كله لأجل الاشتراك — فيرى صاحبُ اليوم
    * الواحد عشرَ جمعٍ أمامه.
    *
-   * وسعرها لكل جمعة لا مقطوعًا: العدد ينزل مع كل إقفال، فينزل السعر معه
-   * بلا أن يُعدَّل شيء. وهذا ما كان يُعدَّل بالأصابع كل أسبوع.
+   * وسعرها مبلغٌ مقطوع يكتبه صاحب البرنامج، ويُقسَّم على أيامها فينزل نصيبُ
+   * كل يومٍ في دفتره. والمقطوع هو ما يُعلن، فلا يرى وليّ الأمر رقمًا محسوبًا.
    */
   const grouped = program.type === 'مجمع';
   const packDays = (program.weeks || [])
@@ -200,10 +199,9 @@ export const publicView = (data, program) => {
       // «يومي» في النوعين: ولي الأمر يقرأ أسماء أيام، فما يُقال له «أسبوعي»
       id: '__perday', name: 'يومي', price: perDayPrice, perDay: true,
     }] : []),
-    ...(packDays.length ? packs.map((p) => {
-      const per = packWeekPrice(p, program);
-      return { id: p.id, name: p.name, perWeek: per, price: per * packDays.length, perDay: false };
-    }).filter((p) => p.price > 0) : []),
+    ...(packDays.length ? packs
+      .map((p) => ({ id: p.id, name: p.name, price: packTotal(p, packDays.length), perDay: false }))
+      .filter((p) => p.price > 0) : []),
   ];
   // المنفصل بلا باقةٍ يبقى كما كان: سعرٌ واحد بلا اختيار
   const usePackages = grouped ? packages.length > 0 : packages.some((p) => !p.perDay);
@@ -496,10 +494,8 @@ export const dueFor = (view, kid) => {
   if (view.usePackages) {
     const pkg = packageOf(view, kid);
     if (!pkg) return 0;
-    // اليومي يُضرب بعدد أيامه، والباقة سعرُ جمعتها × ما بقي من الموسم
-    return pkg.perDay
-      ? Number(pkg.price || 0) * ((kid?.days || []).length || 0)
-      : Number(pkg.perWeek || 0) * daysOf(view, pkg).length;
+    // اليومي يُضرب بعدد أيامه، والباقة مبلغها مقطوع
+    return pkg.perDay ? Number(pkg.price || 0) * ((kid?.days || []).length || 0) : Number(pkg.price || 0);
   }
   const price = Number(view.price || 0);
   if (!price) return 0;
@@ -508,6 +504,25 @@ export const dueFor = (view, kid) => {
 };
 
 export const totalDue = (view, kids) => (kids || []).reduce((s, k) => s + dueFor(view, k), 0);
+
+/**
+ * قسمة الاشتراك على أيامه.
+ *
+ * ٣٠٠ على ١٠ = ٣٠ لكل يوم. و٣٠٠ على ٧ = ٤٢ ويفضل ٦، فيُحمَّل الفاضل على أول
+ * يومٍ له — لا على آخره: الأول أقربُ للدفع، ولأن آخر الأيام قد يُقفل قبل أن
+ * يُراجَع فيبقى الفاضل في يومٍ لا يُفتح.
+ *
+ * ونكتب أعدادًا صحيحة لا كسورًا: الريال يُعدّ، ولو وزّعنا ٤٢٫٨٥ على سبعة
+ * دفاتر طلعت أرقامٌ لا تُجمع على ٣٠٠ ولا تُقرأ.
+ */
+export const splitLump = (total, ids) => {
+  const n = (ids || []).length;
+  if (!n) return {};
+  const sum = Math.max(0, Math.round(Number(total) || 0));
+  const each = Math.floor(sum / n);
+  const rest = sum - each * n;
+  return Object.fromEntries(ids.map((id, i) => [id, each + (i === 0 ? rest : 0)]));
+};
 
 /** أيام المشترك بترتيب البرنامج لا بترتيب ضغطه، فـ«أول يومٍ له» أوّلٌ حقًّا. */
 export const orderedDays = (view, kid) => {
@@ -522,8 +537,8 @@ export const orderedDays = (view, kid) => {
 export const weekShares = (view, kid) => {
   const ids = orderedDays(view, kid);
   const pkg = view?.usePackages ? packageOf(view, kid) : null;
-  // الباقة سعرها لكل جمعة أصلًا، فما فيها قسمةٌ ولا فاضل
-  const per = Number((pkg ? (pkg.perDay ? pkg.price : pkg.perWeek) : view?.price) || 0);
+  if (pkg && !pkg.perDay) return splitLump(Number(pkg.price || 0), ids);
+  const per = Number((pkg ? pkg.price : view?.price) || 0);
   return Object.fromEntries(ids.map((id) => [id, per]));
 };
 
