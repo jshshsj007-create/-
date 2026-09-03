@@ -727,7 +727,6 @@ export default function SignupPage({ token }) {
                         </span>
                         <span className="shrink-0 font-bold text-brand-700 text-left">
                           {fmt(pk.price)} ر.س
-                          {pk.perDay && <span className="block text-[11px] font-normal text-slate-400">لكل يوم</span>}
                         </span>
                       </button>
                     );
