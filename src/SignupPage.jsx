@@ -718,13 +718,12 @@ export default function SignupPage({ token }) {
                         className={`w-full text-right px-4 py-3 rounded-xl border flex items-center justify-between ${on ? 'border-brand-600 bg-brand-50' : 'border-slate-200'}`}>
                         <span className="min-w-0">
                           <span className="block font-semibold text-slate-800">{pk.name}</span>
-                          {/* اليوم الواحد يُسمّى، وما فوقه القائمةُ تحته تغني عن وصفه */}
-                          {(() => {
-                            const sub = pk.perDay
-                              ? (view.days.length === 1 ? view.days[0].name : '')
-                              : `${(view.packDays || []).length} أيام باقية`;
-                            return sub ? <span className="block text-[11px] text-slate-400">{sub}</span> : null;
-                          })()}
+                          {/* اليومي سطرٌ واحد: اسمه وسعره. واسم اليوم يقوله الملخّص تحته */}
+                          {!pk.perDay && (
+                            <span className="block text-[11px] text-slate-400">
+                              {(view.packDays || []).length} أيام باقية
+                            </span>
+                          )}
                         </span>
                         <span className="shrink-0 font-bold text-brand-700 text-left">
                           {fmt(pk.price)} ر.س
