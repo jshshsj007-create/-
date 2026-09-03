@@ -7,7 +7,7 @@ import {
   makeToken, programByToken, publicView, validateSubmission,
   dueFor, totalDue, applySubmission, rateLimited, coversAll, isReceipt, RECEIPT_MAX, packTotal, splitLump, normalizeSubmission,
   waIntl, waLink, fillTemplate, signupVars, txt, TEXTS, varNames, DEFAULT_WA_TEMPLATE,
-  orderedDays, weekShares,
+  orderedDays, weekShares, packSpan, shareAt, subsFor,
 } from '../src/signup.js';
 import { studentsOf } from '../src/people.js';
 
@@ -735,11 +735,91 @@ test('وتعديل الباقة ما يمسّ من سجّل قبله', () => {
   assert.deepEqual(rows.map((x) => x.amount), [60, 60, 60, 60, 60], 'مبالغ الدفاتر مكتوبةٌ لا تُحسب من جديد');
 });
 
-test('ونصيب الجمعة قسمةُ المقطوع على أيامه', () => {
+test('ونصيب الجمعة قسمةُ المقطوع على مدّته لا على ما اختير منها', () => {
   const d = withSubscription();
   const v = publicView(d, d.programs[0]);
-  assert.deepEqual(weekShares(v, { packageId: 'sub', days: ['w1', 'w2'] }), { w1: 150, w2: 150 });
+  assert.deepEqual(weekShares(v, { packageId: 'sub', days: ['w1', 'w2'] }), { w1: 60, w2: 60 });
   assert.deepEqual(orderedDays(v, { packageId: 'sub', days: ['w3', 'w1'] }), ['w1', 'w3'], 'بترتيب البرنامج');
+});
+
+/* --------------------------- مدّة الباقة المعلنة --------------------------- */
+
+/** موسمٌ مدّته عشر، وما أُنشئ منه في التطبيق إلا جمعتان — والثانية مقفلة. */
+const withSpan = () => {
+  const d = withSubscription();
+  d.programs[0].weeks = ['w1', 'w2'].map((id, i) => ({
+    id, name: `الأسبوع ${i + 1}`, participants: [], status: i === 0 ? 'مغلق' : 'مفتوح',
+  }));
+  d.programs[0].signup.openWeeks = ['w2'];
+  d.programs[0].signup.packages = [{ id: 'sub', name: 'الموسم كامل', price: 300, days: 10 }];
+  return d;
+};
+
+test('المدّة تُكتب ولا تُحصى من الأيام المنشأة', () => {
+  const d = withSpan();
+  const v = publicView(d, d.programs[0]);
+  const pk = v.packages.find((p) => p.id === 'sub');
+  assert.equal(pk.days, 10, 'يُعلن عشرًا وإن لم يُنشأ إلا واحد');
+  assert.equal(pk.price, 300);
+  assert.equal(v.packDays.length, 1, 'وأيامها الفعلية اليوم واحدة — هي غير المقفلة');
+});
+
+test('والإقفال ما يغيّر نصيب اليوم', () => {
+  const d = withSpan();
+  const r = enroll(d, { name: 'سعد القاسم', age: '10', packageId: 'sub' });
+  const rows = subRows(r);
+  assert.equal(rows[0], undefined, 'المقفلة ما تمسّه');
+  assert.equal(rows[1].amount, 300 - Math.floor(300 / 10) * 9, 'أوّل أيامه يحمل الفاضل');
+  assert.equal(rows[1].sub.span, 10);
+  assert.equal(rows[1].sub.total, 300);
+});
+
+test('وباقةٌ بلا مدّة مكتوبة تمشي على ما بقي من موسمها', () => {
+  const d = withSubscription();
+  const v = publicView(d, d.programs[0]);
+  assert.equal(v.packages.find((p) => p.id === 'sub').days, 5, 'خمس جمع مفتوحة');
+});
+
+test('shareAt: الفاضل على أوّل يوم، وما بعد المدّة صفر', () => {
+  assert.equal(shareAt(300, 7, 0), 48, '42 وفاضل 6');
+  assert.equal(shareAt(300, 7, 1), 42);
+  assert.equal(shareAt(300, 7, 7), 0, 'خارج المدّة');
+  assert.equal([0, 1, 2, 3, 4, 5, 6].reduce((s, i) => s + shareAt(300, 7, i), 0), 300);
+});
+
+/* ------------------- الجمعة الجديدة تجرّ مشتركي الموسم ------------------- */
+
+const subWeeks = (used, span = 10) => [{
+  id: 'w1',
+  participants: [
+    ...Array.from({ length: used }, (_, i) => ({
+      id: `p${i}`, name: 'سعد القاسم', ref: 'FA-1448-0001', accountId: 'rajhi',
+      amount: shareAt(300, span, i), attendance: 'حاضر', arrivedAt: 5, packageName: 'الموسم كامل',
+      sub: { id: 's1', packId: 'sub', total: 300, span, i },
+    })),
+    { id: 'x', name: 'ماجد', amount: 50, attendance: 'حاضر' },
+  ],
+}];
+
+test('من لم يستوفِ مدّته ينزل في الجمعة الجديدة بنصيبها', () => {
+  let n = 0;
+  const seats = subsFor(subWeeks(3), () => `n${++n}`);
+  assert.equal(seats.length, 1, 'المشترك وحده — واليومي ما يُجرّ');
+  assert.equal(seats[0].name, 'سعد القاسم');
+  assert.equal(seats[0].amount, 30, 'اليوم الرابع من عشرة');
+  assert.equal(seats[0].sub.i, 3);
+  assert.equal(seats[0].attendance, 'معلق', 'الحضور يُسجَّل في يومه');
+  assert.equal(seats[0].arrivedAt, undefined);
+  assert.equal(seats[0].ref, 'FA-1448-0001', 'ونفس الإيصال');
+});
+
+test('ومن استوفاها ما ينزل', () => {
+  assert.equal(subsFor(subWeeks(10), () => 'n1').length, 0);
+  assert.equal(subsFor(subWeeks(11), () => 'n1').length, 0, 'ولا يتجاوزها');
+});
+
+test('ولا يُجرّ من ليس له اشتراك', () => {
+  assert.deepEqual(subsFor([{ id: 'w1', participants: [{ id: 'x', name: 'ماجد', amount: 50 }] }], () => 'n1'), []);
 });
 
 

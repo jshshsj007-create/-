@@ -14,7 +14,7 @@ import {
 import { STATES, TONES, studentState, stateCounts, stateOpts, NEAR, FAR } from './status.js';
 import { stamped, traceText, agoText } from './trace.js';
 import { trashed, pruned, sortedTrash, leftText, kindLabel, TRASH_DAYS } from './trash.js';
-import { makeToken as makeSignupToken, packTotal, splitLump, TEXTS, CLOSED, waIntl, waLink, varNames, fieldsFor, dayLabel, mapHref, waGroupLink, placeOf, DEFAULT_WA_TEMPLATE } from './signup.js';
+import { makeToken as makeSignupToken, packTotal, packSpan, splitLump, subsFor, TEXTS, CLOSED, waIntl, waLink, varNames, fieldsFor, dayLabel, mapHref, waGroupLink, placeOf, DEFAULT_WA_TEMPLATE } from './signup.js';
 import { readImage, POSTER, GALLERY } from './img.js';
 import { qrDataUrl, qrPngBlob } from './qr.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
@@ -41,7 +41,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v6.8';
+const APP_VERSION = 'v6.9';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -1863,15 +1863,15 @@ export default function App() {
   };
 
   /**
-   * باقات هذا البرنامج كما تُعرض: سعرُ الجمعة، وما بقي من الموسم، والمجموع.
-   * يقرأها الرابط والتسجيل اليدوي من مصدرٍ واحد، فلا يفترقان في رقم.
+   * باقات هذا البرنامج كما تُعرض: المبلغ المقطوع، ومدّته المعلنة، والجمع التي
+   * لم تُقفل. يقرأها الرابط والتسجيل اليدوي من مصدرٍ واحد، فلا يفترقان في رقم.
    */
   const packsHere = () => {
     const left = (program?.weeks || []).filter((w) => w.status !== 'مغلق');
     const packs = (program?.signup?.packages || [])
       .filter((x) => x.hidden !== true)
-      .map((x) => ({ id: x.id, name: x.name, total: packTotal(x, left.length) }))
-      .filter((x) => x.total > 0);
+      .map((x) => ({ id: x.id, name: x.name, total: packTotal(x, left.length), span: packSpan(x, left.length) }))
+      .filter((x) => x.total > 0 && x.span > 0);
     return { left, packs: left.length ? packs : [] };
   };
 
@@ -1897,13 +1897,17 @@ export default function App() {
     if (pack) {
       const ref = nextRef(next, yearOf(program?.termKey));
       const here = left.some((w) => w.id === selectedWeekId) ? selectedWeekId : left[0]?.id;
-      const share = splitLump(pack.total, left.map((w) => w.id));
+      // المدّة تحكم: عشرةُ أيامٍ عشرة، ولو كان الباقي من الموسم أكثر منها
+      const mine = left.slice(0, pack.span);
+      const ids = mine.map((w) => w.id);
+      const share = splitLump(pack.total, ids, pack.span);
+      const subId = uid();
       save({
         ...next,
         programs: next.programs.map((p) => (p.id !== program.id ? p : {
           ...p,
           weeks: (p.weeks || []).map((w) => {
-            if (w.status === 'مغلق') return w;
+            if (!ids.includes(w.id)) return w;
             const base = isQuick(w) ? { ...w, ...quickToNamed(w) } : w;
             return {
               ...base, mode: 'named',
@@ -1911,6 +1915,7 @@ export default function App() {
                 id: uid(), ref, name: form.name.trim(), packageName: pack.name,
                 amount: accountId === 'unpaid' ? 0 : (share[w.id] || 0),
                 accountId, attendance: 'معلق',
+                sub: { id: subId, packId: pack.id, total: pack.total, span: pack.span, i: ids.indexOf(w.id) },
                 ...(studentId ? { studentId } : {}),
                 ...(w.id === here ? {} : { pending: true, prepaid: accountId !== 'unpaid' }),
               }, true)],
@@ -2217,10 +2222,22 @@ export default function App() {
   };
   const addWeek = () => {
     if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب اسم اليوم' }); return; }
-    patchLedger({ kind: 'program', programId: selectedProgramId }, (p) => ({
-      weeks: [...p.weeks, { id: uid(), name: form.name.trim(), date: form.date || '', status: 'مفتوح',
-        ...emptyLedger('named') }],
-    }));
+    patchLedger({ kind: 'program', programId: selectedProgramId }, (p) => {
+      /**
+       * مشتركو الموسم ينزلون في الجمعة الجديدة بأنفسهم.
+       *
+       * دفعوا مرةً واحدة عن مدّةٍ كاملة، فإعادةُ تسجيلهم كل جمعةٍ عملٌ يُنسى،
+       * ونسيانُه يُخرج إيرادَ اليوم ناقصًا فيُوزَّع ناقصًا. ومن استوفى مدّته
+       * ما ينزل.
+       */
+      const seats = subsFor(p.weeks || [], uid);
+      return {
+        weeks: [...p.weeks, {
+          id: uid(), name: form.name.trim(), date: form.date || '', status: 'مفتوح',
+          ...emptyLedger('named'), participants: seats,
+        }],
+      };
+    });
     closeModal();
   };
   const patchWeek = (patch) => patchLedger({ kind: 'week', programId: selectedProgramId, weekId: selectedWeekId }, () => patch);
@@ -3065,14 +3082,17 @@ export default function App() {
   const savePackage = () => {
     const name = (form.name || '').trim();
     const price = Number(form.price || 0);
+    const days = Math.round(Number(form.days || 0));
     if (!name) { setForm({ ...form, error: 'اكتب اسم الباقة' }); return; }
     if (!(price > 0)) { setForm({ ...form, error: 'اكتب سعر الاشتراك' }); return; }
+    if (!(days > 0)) { setForm({ ...form, error: 'اكتب مدّة الباقة بالأيام' }); return; }
     const list = (program.signup || {}).packages || [];
     patchSignup({
       packages: form.id
-        // القديمة قد تحمل حقولًا انقرضت (سعر اليوم وعدد الأيام)، فتُكتب من جديد
-        ? list.map((x) => (x.id !== form.id ? x : { id: x.id, name, price, ...(x.hidden ? { hidden: true } : {}) }))
-        : [...list, { id: uid(), name, price }],
+        // القديمة قد تحمل حقولًا انقرضت (سعر اليوم)، فتُكتب من جديد
+        ? list.map((x) => (x.id !== form.id ? x
+          : { id: x.id, name, price, days, ...(x.hidden ? { hidden: true } : {}) }))
+        : [...list, { id: uid(), name, price, days }],
     });
     closeModal();
   };
@@ -4395,27 +4415,40 @@ export default function App() {
 
                         <Field label="الباقات"
                           hint={isGrouped
-                            ? 'اشتراك بما بقي من الأيام غير المقفلة. تنعرض جنب اليومي، وولي الأمر يختار وحدة.'
-                            : 'اشتراك بما بقي من الجمع غير المقفلة — ينزل نصيب كل جمعة في دفترها. ولا يتبع «الأسابيع المتاحة» تحت.'}>
+                            ? 'اشتراكٌ بمبلغٍ مقطوع ومدّةٍ تكتبها. تنعرض جنب اليومي، وولي الأمر يختار وحدة.'
+                            : 'اشتراكٌ بمبلغٍ مقطوع ومدّةٍ تكتبها — يُقسَم على مدّته، وينزل نصيب كل جمعة في دفترها. ولا يتبع «الأسابيع المتاحة» تحت.'}>
                           {(s.packages || []).length > 0 && (
                             <div className="space-y-2 mb-3">
                               {s.packages.map((pk) => {
                                 const off = pk.hidden === true;
                                 const left = (program.weeks || []).filter((w) => w.status !== 'مغلق').length;
                                 const total = packTotal(pk, left);
+                                const span = packSpan(pk, left);
                                 return (
                                 <div key={pk.id} className={`flex items-center justify-between rounded-lg px-3 py-2.5 ${off ? 'bg-slate-50/60' : 'bg-slate-50'}`}>
                                   <div className="min-w-0">
                                     <div className={`text-sm font-semibold truncate ${off ? 'text-slate-400' : 'text-slate-800'}`}>{pk.name}</div>
                                     <div className="text-[11px] text-slate-400">
-                                      <b className="text-slate-600">{fmt(total)} ر.س</b> · {left} باقية
-                                      {left > 0 && ` · ${fmt(Math.floor(total / left))} لل${isGrouped ? 'يوم' : 'جمعة'}`}
+                                      <b className="text-slate-600">{fmt(total)} ر.س</b>
+                                      {span > 0 && ` · ${span} ${isGrouped ? 'أيام' : 'جمع'} · ${fmt(Math.floor(total / span))} لل${isGrouped ? 'يوم' : 'جمعة'}`}
                                       {off && ' · مخفية'}
                                     </div>
+                                    {/*
+                                      عددُ الجمع المفتوحة خبرٌ عن دفاترك لا عن الباقة:
+                                      المشترك ينزل اليوم في المفتوح، وفي كل جديدةٍ تنشئها.
+                                      وكُتب صريحًا لئلا يُقرأ «١ من ١٠» فيُظنّ الباقةَ يومًا.
+                                    */}
+                                    {span > 0 && !off && (
+                                      <div className="text-[11px] text-slate-400">
+                                        {left > 0
+                                          ? `ينزل الآن في ${left} ${isGrouped ? 'يوم' : 'جمعة'} مفتوحة، وفي كل جديدة`
+                                          : 'ما فيه يومٌ مفتوح ينزل فيه'}
+                                      </div>
+                                    )}
                                   </div>
                                   <div className="flex items-center gap-1 shrink-0">
                                     <button className="text-slate-400 p-1" title="عدّلها"
-                                      onClick={() => { setForm({ id: pk.id, name: pk.name, price: total }); setModal('addPackage'); }}>
+                                      onClick={() => { setForm({ id: pk.id, name: pk.name, price: total, days: span }); setModal('addPackage'); }}>
                                       <Pencil size={15} />
                                     </button>
                                     {/*
@@ -7247,7 +7280,7 @@ export default function App() {
                     onClick={() => setForm({ ...form, packId: pk.id, amount: pk.total, amountTouched: false, error: '' })}>
                     <span className="min-w-0">
                       <span className="block text-sm font-semibold text-slate-800">{pk.name}</span>
-                      <span className="block text-[11px] text-slate-400">{left.length} جمعة باقية</span>
+                      <span className="block text-[11px] text-slate-400">{pk.span} جمع</span>
                     </span>
                     <span className="shrink-0 font-bold text-brand-700">{fmt(pk.total)}</span>
                   </button>
@@ -7267,9 +7300,18 @@ export default function App() {
             const { left, packs } = packsHere();
             const pk = packs.find((x) => x.id === form.packId);
             if (!pk) return null;
+            /**
+             * من جاء متأخّرًا تبدأ باقته من جمعته، فما مضى ما يمسّه. ونصيب
+             * الجمعة قسمةُ المبلغ على المدّة المعلنة — لا على ما بقي منها.
+             */
+            const mine = left.slice(0, pk.span);
+            const each = Math.floor(pk.total / Math.max(1, pk.span));
             return (
               <div className="bg-brand-50 border border-brand-100 rounded-xl px-3.5 py-2.5 text-[12px] text-brand-800 font-semibold leading-7 mb-4">
-                يدفع <b>{fmt(pk.total)} ر.س</b> — تُقسم على {left.length} جمعة، فينزل نصيبُ كلٍّ في دفترها.
+                يدفع <b>{fmt(pk.total)} ر.س</b> — ينزل <b>{fmt(each)}</b> في دفتر كل جمعة.
+                {mine.length > 0 && (
+                  <><br /><span className="font-normal">يبدأ من <b>{mine[0].name}</b> — {mine.length} من {pk.span}.</span></>
+                )}
               </div>
             );
           })()}
@@ -8347,27 +8389,46 @@ export default function App() {
         const unit = isGrouped ? 'يوم' : 'جمعة';
         const left = (program?.weeks || []).filter((w) => w.status !== 'مغلق').length;
         const total = Number(form.price || 0);
-        const each = left > 0 ? Math.floor(total / left) : 0;
-        const rest = left > 0 ? total - each * left : 0;
+        const span = Math.round(Number(form.days || 0));
+        const each = span > 0 ? Math.floor(total / span) : 0;
+        const rest = span > 0 ? total - each * span : 0;
         return (
           <Modal title={form.id ? 'تعديل الباقة' : 'باقة جديدة'} onClose={closeModal}>
             <Field label="اسم الباقة">
               <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} placeholder="مثال: الموسم كامل" />
             </Field>
-            <Field label="سعر الاشتراك (ر.س)"
-              hint={`مبلغٌ مقطوع، هو الذي يشوفه ولي الأمر. والباقة تشمل كل ${unit}ٍ لم تُقفل.`}>
-              <input type="number" className={inputCls} value={form.price ?? ''}
-                onChange={(e) => setForm({ ...form, price: e.target.value, error: '' })} placeholder="300" />
-            </Field>
-            {/* القسمة على الدفاتر تُحسب أمامك، وما تُعرض على ولي الأمر */}
-            <div className={`rounded-xl px-3.5 py-2.5 text-[12px] font-semibold leading-7 mb-4 border ${
-              left ? 'bg-brand-50 border-brand-100 text-brand-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
-              {left
-                ? <>الباقي من الموسم: <b>{left}</b> {unit}
-                    {total > 0 && <> · ينزل <b>{fmt(each)}</b> في دفتر كل {unit}
-                      {rest ? <> (وفاضل {fmt(rest)} على أوّلها)</> : null}</>}</>
-                : <>ما بقي {unit}ٌ مفتوحة — الباقة ما تنعرض حتى تفتح واحدة.</>}
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <Field label="المبلغ (ر.س)">
+                  <input type="number" className={inputCls} value={form.price ?? ''}
+                    onChange={(e) => setForm({ ...form, price: e.target.value, error: '' })} placeholder="300" />
+                </Field>
+              </div>
+              <div className="w-[42%]">
+                <Field label={`المدّة (${unit === 'يوم' ? 'أيام' : 'جمع'})`}>
+                  <input type="number" className={inputCls} value={form.days ?? ''}
+                    onChange={(e) => setForm({ ...form, days: e.target.value, error: '' })} placeholder="10" />
+                </Field>
+              </div>
             </div>
+            {/**
+             * المدّة عددٌ تكتبه، وما تُحصى من الأيام المنشأة: أنت تنشئ الجمعة
+             * كلما جاءت وتقفل ما مضى، فلو عددنا الموجود قال الإعلان «يوم واحد».
+             * والقسمة تُحسب أمامك، وما تُعرض على ولي الأمر.
+             */}
+            <div className={`rounded-xl px-3.5 py-2.5 text-[12px] font-semibold leading-7 mb-4 border ${
+              span > 0 ? 'bg-brand-50 border-brand-100 text-brand-800' : 'bg-slate-50 border-slate-200 text-slate-500'}`}>
+              {span > 0 && total > 0
+                ? <>ينزل <b>{fmt(each)}</b> في دفتر كل {unit} من <b>{span}</b>
+                    {rest ? <> (وفاضل {fmt(rest)} على أوّلها)</> : null}
+                    <br /><span className="font-normal">وما يُعلن لولي الأمر إلا <b>{fmt(total)}</b> و<b>{span}</b> {unit === 'يوم' ? 'أيام' : 'جمع'}.</span></>
+                : <>اكتب المبلغ والمدّة، وأقسمها لك على الدفاتر.</>}
+            </div>
+            {span > 0 && left === 0 && (
+              <div className="rounded-xl px-3.5 py-2.5 text-[12px] font-semibold mb-4 border bg-amber-50 border-amber-200 text-amber-800">
+                ما بقي {unit}ٌ مفتوحة — الباقة ما تنعرض حتى تفتح واحدة.
+              </div>
+            )}
             {form.id && (
               <div className="text-[11px] text-slate-400 leading-6 mb-4">
                 التعديل يمسّ من يسجّل بعده. من سجّل ودفع يبقى مبلغه كما هو.

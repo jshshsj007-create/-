@@ -161,6 +161,22 @@ export const packTotal = (p, count) => {
   return Math.max(0, Math.round(Number(p?.perWeek || 0) * (Number(count) || 0)));
 };
 
+/**
+ * مدّة الباقة — كم يومًا تشمل.
+ *
+ * وهي عددٌ يكتبه صاحب البرنامج، لا يُحصى من أيامٍ أنشأها في التطبيق: هو يبيع
+ * موسمًا مدّته عشرة، ثم ينشئ جمعةً جمعة كلما جاءت، ويقفل ما مضى. فلو عددنا
+ * الموجود لقال الإعلان «يوم واحد» وصاحبه يعلن عشرة — وهذا الذي كان.
+ *
+ * ومن كتب باقةً قبل هذه النسخة ما عنده مدّة، فمدّته ما بقي من موسمه — تمشي
+ * كما كانت تمشي.
+ */
+export const packSpan = (p, fallback) => {
+  const n = Number(p?.days || 0);
+  if (n > 0) return Math.round(n);
+  return Math.max(0, Math.round(Number(fallback) || 0));
+};
+
 export const publicView = (data, program) => {
   const s = program.signup || {};
   const openIds = s.openWeeks || [];
@@ -177,12 +193,18 @@ export const publicView = (data, program) => {
    * يفتح الجمعة القادمة وحدها، فما يُعرض على وليّ الأمر عشرُ جمعٍ ليختار
    * منها واحدة.
    *
-   * **والباقة** اشتراكُ ما بقي من الموسم، فأيامها كل جمعةٍ لم تُقفل بعد.
+   * **والباقة** اشتراكُ الموسم، ولها عددان لا واحد:
+   *
+   * - **مدّتها المعلنة** (`days`) — عددٌ يكتبه صاحب البرنامج، هو ما يُقرأ في
+   *   الإعلان وما يُقسَم عليه المبلغ.
+   * - **وأيامها الفعلية** (`packDays`) — الجمع التي لم تُقفل، وهي المكان الذي
+   *   ينزل فيه المشترك اليوم. تنقص بالإقفال وتزيد بإنشاء جمعةٍ جديدة.
+   *
    * ولا تتبع «الأيام المتاحة»: القائمتان تخدمان منتجين لهما أفقان مختلفان،
    * ولو وحّدناهما لزم فتحُ الموسم كله لأجل الاشتراك — فيرى صاحبُ اليوم
    * الواحد عشرَ جمعٍ أمامه.
    *
-   * وسعرها مبلغٌ مقطوع يكتبه صاحب البرنامج، ويُقسَّم على أيامها فينزل نصيبُ
+   * وسعرها مبلغٌ مقطوع يكتبه صاحب البرنامج، ويُقسَّم على مدّتها فينزل نصيبُ
    * كل يومٍ في دفتره. والمقطوع هو ما يُعلن، فلا يرى وليّ الأمر رقمًا محسوبًا.
    */
   const grouped = program.type === 'مجمع';
@@ -200,7 +222,11 @@ export const publicView = (data, program) => {
       id: '__perday', name: 'يومي', price: perDayPrice, perDay: true,
     }] : []),
     ...(packDays.length ? packs
-      .map((p) => ({ id: p.id, name: p.name, price: packTotal(p, packDays.length), perDay: false }))
+      .map((p) => ({
+        id: p.id, name: p.name, perDay: false,
+        price: packTotal(p, packDays.length),
+        days: packSpan(p, packDays.length),
+      }))
       .filter((p) => p.price > 0) : []),
   ];
   // المنفصل بلا باقةٍ يبقى كما كان: سعرٌ واحد بلا اختيار
@@ -515,13 +541,25 @@ export const totalDue = (view, kids) => (kids || []).reduce((s, k) => s + dueFor
  * ونكتب أعدادًا صحيحة لا كسورًا: الريال يُعدّ، ولو وزّعنا ٤٢٫٨٥ على سبعة
  * دفاتر طلعت أرقامٌ لا تُجمع على ٣٠٠ ولا تُقرأ.
  */
-export const splitLump = (total, ids) => {
-  const n = (ids || []).length;
-  if (!n) return {};
+export const shareAt = (total, span, index) => {
+  const n = Math.max(1, Math.round(Number(span) || 0));
+  const i = Math.round(Number(index) || 0);
+  if (i < 0 || i >= n) return 0;
   const sum = Math.max(0, Math.round(Number(total) || 0));
   const each = Math.floor(sum / n);
-  const rest = sum - each * n;
-  return Object.fromEntries(ids.map((id, i) => [id, each + (i === 0 ? rest : 0)]));
+  return each + (i === 0 ? sum - each * n : 0);
+};
+
+/**
+ * والقسمة على المدّة المعلنة لا على الأيام الموجودة: من باع موسمًا عشرة أيام
+ * فنصيب يومه ثلاثون، أنشأ منها اليوم يومين أو عشرة. ولو قسمنا على الموجود
+ * لتغيّر نصيب اليوم كلما أقفل صاحبُ البرنامج يومًا — والمبلغ ما تغيّر.
+ */
+export const splitLump = (total, ids, span) => {
+  const list = ids || [];
+  if (!list.length) return {};
+  const n = Number(span) > 0 ? Math.round(Number(span)) : list.length;
+  return Object.fromEntries(list.map((id, i) => [id, shareAt(total, n, i)]));
 };
 
 /** أيام المشترك بترتيب البرنامج لا بترتيب ضغطه، فـ«أول يومٍ له» أوّلٌ حقًّا. */
@@ -537,7 +575,7 @@ export const orderedDays = (view, kid) => {
 export const weekShares = (view, kid) => {
   const ids = orderedDays(view, kid);
   const pkg = view?.usePackages ? packageOf(view, kid) : null;
-  if (pkg && !pkg.perDay) return splitLump(Number(pkg.price || 0), ids);
+  if (pkg && !pkg.perDay) return splitLump(Number(pkg.price || 0), ids, pkg.days);
   const per = Number((pkg ? pkg.price : view?.price) || 0);
   return Object.fromEntries(ids.map((id) => [id, per]));
 };
@@ -599,6 +637,8 @@ export const applySubmission = (data, program, view, body, { newId, now = Date.n
 
   // المجمّع دفتره على البرنامج، والمنفصل على كل أسبوع
   const shares = kids.map((kid) => weekShares(view, kid));
+  // معرّفٌ واحد لاشتراك الابن يجمع صفوفه في كل الجمع، فيُعرف أنها اشتراكٌ واحد
+  const subIds = kids.map(() => newId());
   let programs;
   if (grouped) {
     programs = data.programs.map((p) => (p.id !== program.id ? p
@@ -618,9 +658,17 @@ export const applySubmission = (data, program, view, body, { newId, now = Date.n
            * أيامه: سعر اليوم الواحد، أو حصّته من الباقة. والإيصال يجمعها
            * كلها برقمه المشترك، فيبقى المبلغ الذي دفعه واحدًا كما هو.
            */
-          const perWeek = forWeek.map(({ part, i }) => ({
-            ...part, id: newId(), amount: shares[i]?.[w.id] ?? 0,
-          }));
+          const perWeek = forWeek.map(({ part, i }) => {
+            const pkg = view.usePackages ? packageOf(view, kids[i]) : null;
+            const order = orderedDays(view, kids[i]).indexOf(w.id);
+            return {
+              ...part, id: newId(), amount: shares[i]?.[w.id] ?? 0,
+              // ختمُ الاشتراك: به تعرف الجمعةُ الجديدة من يستحق النزول فيها
+              ...(pkg && !pkg.perDay ? {
+                sub: { id: subIds[i], packId: pkg.id, total: Number(pkg.price || 0), span: pkg.days, i: order },
+              } : {}),
+            };
+          });
           return { ...w, mode: 'named', participants: [...(w.participants || []), ...perWeek] };
         }),
       };
@@ -633,6 +681,43 @@ export const applySubmission = (data, program, view, body, { newId, now = Date.n
     count: newParts.length,
     refs: newParts.map((p) => p.ref),
   };
+};
+
+/**
+ * المشتركون الذين يستحقّون النزول في جمعةٍ أُنشئت الآن.
+ *
+ * من اشترك في الموسم دفع مرةً واحدة عن أيامٍ كثيرة، فما يُعقل أن يُعاد تسجيله
+ * كلما جاءت جمعة. نجمع صفوفه في الجمع الماضية بختم اشتراكه، فإن كان ما نزل
+ * إلا في ثلاثٍ ومدّته عشر، نزل في هذه الرابعةَ بنصيبها.
+ *
+ * ومن استوفى مدّته ما ينزل: العشرة عشرة، ولو بقي في الموسم جمعٌ بعدها.
+ */
+export const subsFor = (weeks, newId, { attendance = 'معلق' } = {}) => {
+  const groups = new Map();
+  for (const w of weeks || []) {
+    for (const x of w?.participants || []) {
+      if (!x?.sub?.id) continue;
+      const g = groups.get(x.sub.id) || [];
+      g.push(x);
+      groups.set(x.sub.id, g);
+    }
+  }
+  const out = [];
+  for (const rows of groups.values()) {
+    // الحضور والإيصال يخصّان يومهما، فما يُورَّثان إلى يومٍ لم يجئ
+    const { arrivedAt, receipt, ...last } = rows[rows.length - 1];
+    const span = Math.max(0, Math.round(Number(last.sub.span) || 0));
+    const used = rows.length;
+    if (!span || used >= span) continue;
+    out.push({
+      ...last,
+      id: newId(),
+      amount: shareAt(last.sub.total, span, used),
+      sub: { ...last.sub, i: used },
+      attendance,
+    });
+  }
+  return out;
 };
 
 /**

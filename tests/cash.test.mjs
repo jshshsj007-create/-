@@ -136,3 +136,37 @@ test('والمجمّع دفتره على البرنامج لا على أيامه
 });
 
 console.log(`\n✅ ${passed} اختبارًا لـ«كم معك» والتسليم\n`);
+
+/* --------------- بقيّة الاشتراك: مالٌ في اليد بلا دفتر --------------- */
+
+const withSub = (over = {}) => ({
+  faidAccounts: [{ id: 'abu', name: 'أبو فارس' }],
+  programs: [{
+    id: 'p1', type: 'منفصل', weeks: [
+      { id: 'w1', status: 'مفتوح', participants: [{
+        id: 'a', name: 'ماجد', amount: 30, accountId: 'abu',
+        sub: { id: 's1', packId: 'sub', total: 300, span: 10, i: 0 }, ...over,
+      }] },
+    ],
+  }],
+});
+
+test('الاشتراك كله في يده، وما لم ينزل دفترًا محفوظ', () => {
+  const r = cashOf(withSub(), 'abu');
+  assert.equal(r.balance, 300, 'دفع ثلاثمئة، فثلاثمئة في يده');
+  assert.equal(r.held, 270, 'وتسعة أيام ما صارت');
+});
+
+test('وما لم يتأكّد وصوله ما يُعدّ', () => {
+  assert.equal(cashOf(withSub({ pending: true }), 'abu').balance, 0);
+  assert.equal(cashOf(withSub({ pending: true, prepaid: true }), 'abu').balance, 300, 'المقدّم في اليد');
+});
+
+test('ومتى نزلت أيامه كلها ما بقي فاضل', () => {
+  const d = withSub();
+  d.programs[0].weeks[0].participants[0].amount = 300;
+  d.programs[0].weeks[0].participants[0].sub.span = 1;
+  const r = cashOf(d, 'abu');
+  assert.equal(r.balance, 300);
+  assert.equal(r.held, 0);
+});

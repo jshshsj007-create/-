@@ -718,10 +718,10 @@ export default function SignupPage({ token }) {
                         className={`w-full text-right px-4 py-3 rounded-xl border flex items-center justify-between ${on ? 'border-brand-600 bg-brand-50' : 'border-slate-200'}`}>
                         <span className="min-w-0">
                           <span className="block font-semibold text-slate-800">{pk.name}</span>
-                          {/* اليومي سطرٌ واحد: اسمه وسعره. واسم اليوم يقوله الملخّص تحته */}
-                          {!pk.perDay && (
+                          {/* اليومي سطرٌ واحد: اسمه وسعره. والباقة تقول مدّتها */}
+                          {!pk.perDay && pk.days > 0 && (
                             <span className="block text-[11px] text-slate-400">
-                              {(view.packDays || []).length} أيام باقية
+                              {pk.days} {pk.days === 1 ? 'يوم' : 'أيام'}
                             </span>
                           )}
                         </span>
@@ -739,13 +739,15 @@ export default function SignupPage({ token }) {
           {/* الباقة أيامها ما بقي من الموسم، فما نسأله عنها — نعرضها عليه */}
           {view.usePackages && coversAll(view, packageOf(view, kid)) && (() => {
             const pkg = packageOf(view, kid);
-            const mine = daysOf(view, pkg);
+            const span = Number(pkg.days || 0);
             return (
               <div className="mb-4 bg-brand-50 rounded-xl px-3.5 py-3 text-sm text-brand-900">
                 <div className="font-semibold mb-1">{pkg.name} · {fmt(dueFor(view, kid))} ر.س</div>
-                <div className="text-xs text-brand-700">
-                  تشمل {mine.length} {mine.length === 1 ? 'يومًا' : 'أيام'}: {mine.map((d) => d.name).join(' · ')}
-                </div>
+                {span > 0 && (
+                  <div className="text-xs text-brand-700">
+                    يشمل {span} {span === 1 ? 'يومًا' : 'أيام'}
+                  </div>
+                )}
               </div>
             );
           })()}

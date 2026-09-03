@@ -30,6 +30,39 @@ export const inHand = (x) =>
 const OUT_KEYS = ['expenseItems', 'schoolPayouts', 'faidPayouts'];
 
 /**
+ * بقيّة الاشتراك التي ما نزلت دفترًا بعد.
+ *
+ * من اشترك موسمًا عشرة أيام دفع ثلاثمئة في يومه، وما نزل من دفاتر البرنامج
+ * إلا ما أُنشئ منه. فلو عددنا الدفاتر وحدها قلنا لصاحب الحساب «معك ثلاثون»
+ * وفي يده ثلاثمئة.
+ *
+ * فنحسب ما بقي من مبلغ الاشتراك — مالٌ في يده، محفوظٌ لأيامٍ ما صارت، فما
+ * يُوزَّع على المدارس وفيض حتى تصير.
+ */
+export const subRests = (data) => {
+  const subs = new Map();
+  for (const p of data?.programs || []) {
+    for (const l of ledgersOf(p)) {
+      for (const x of l?.participants || []) {
+        if (!x?.sub?.id) continue;
+        const g = subs.get(x.sub.id) || { accountId: x.accountId, total: num(x.sub.total), paid: 0, last: x };
+        g.paid += num(x.amount);
+        g.accountId = x.accountId;
+        g.last = x;
+        subs.set(x.sub.id, g);
+      }
+    }
+  }
+  const out = [];
+  for (const g of subs.values()) {
+    const rest = g.total - g.paid;
+    // ما تأكّد وصوله ما يُعدّ في اليد، ولا نعدّ فاضلًا سالبًا
+    if (rest > 0 && inHand(g.last)) out.push({ accountId: g.accountId, amount: rest });
+  }
+  return out;
+};
+
+/**
  * رصيد حسابٍ واحد، ومعه كم منه محفوظ.
  *
  * `held` جزءٌ من `balance` لا يُطرح منه: هو مالٌ في يدك، لكنه ليس إيرادك بعد
@@ -51,6 +84,12 @@ export const cashOf = (data, accountId) => {
         for (const it of l?.[key] || []) if (it.accountId === accountId) outflow += num(it.amount);
       }
     }
+  }
+  // وبقيّة الاشتراك في يده، محفوظةً لأيامها
+  for (const r of subRests(data)) {
+    if (r.accountId !== accountId) continue;
+    inflow += r.amount;
+    held += r.amount;
   }
   // ما سلّمه لغيره يخرج، وما سُلّم إليه يدخل
   for (const h of data?.handovers || []) {
