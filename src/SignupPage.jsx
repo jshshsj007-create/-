@@ -92,6 +92,17 @@ function Gallery({ ids, alt }) {
   const [full, setFull] = useState(false);
   // آخر لمسةٍ من ولي الأمر: بعدها نسكت قليلًا ثم نعود نتقلّب
   const [touchedAt, setTouchedAt] = useState(0);
+  /**
+   * الإطار يأخذ شكل الملصق نفسه.
+   *
+   * ملصقاتنا طولية، والإطارُ العريض يترك على جنبيها ضبابًا عريضًا. فنقيس أول
+   * صورةٍ لمّا تصل ونعطي الإطار نسبتَها — فتملؤه، ويبقى الضباب لما خالفها من
+   * أخواتها. ونسبةٌ واحدةٌ ثابتة لكلّهنّ: لو تبدّل الطولُ مع كل صورةٍ تتقلّب،
+   * قفزت الصفحةُ تحت إصبع وليّ الأمر وهو يقرأ.
+   *
+   * ونحدّها: أطولُ من ذلك يبلع الشاشةَ فلا يُرى تحته شيء.
+   */
+  const [ratio, setRatio] = useState(0);
   const touch = React.useRef(null);
   const n = ids.length;
 
@@ -141,7 +152,8 @@ function Gallery({ ids, alt }) {
         صورة. وخلفها الآن هي نفسها مموّهةً معتمة، فما بقي حدٌّ ثانٍ تراه العين،
         ولا يُقصّ من الملصق شيء.
       */}
-      <div className="relative rounded-2xl overflow-hidden h-[38vh] min-h-[190px] max-h-[330px] mb-2">
+      <div className="relative rounded-2xl overflow-hidden mb-2 max-h-[72vh] min-h-[190px]"
+        style={{ aspectRatio: ratio || '4 / 5' }}>
         {/*
           الصور كلها موضوعةٌ فوق بعض وتُذاب واحدةً في الأخرى، لا تُقطع قطعًا:
           الذوبان يُقرأ حركةً، والقطع يُقرأ خللًا. وهي محمّلةٌ سلفًا فما
@@ -153,7 +165,12 @@ function Gallery({ ids, alt }) {
             <div aria-hidden className="absolute inset-0 bg-center bg-cover scale-125 blur-2xl brightness-[.68]"
               style={{ backgroundImage: `url(${src(id)})` }} />
             <div className="relative w-full h-full flex items-center justify-center">
-              <img src={src(id)} alt={i === at ? (alt || '') : ''} className="max-w-full max-h-full object-contain block" />
+              <img src={src(id)} alt={i === at ? (alt || '') : ''} className="max-w-full max-h-full object-contain block"
+                onLoad={i === 0 ? (e) => {
+                  const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
+                  // صورةٌ شاذّة الأبعاد ما تحكم الصفحة، فنحصرها بين الطولي المعقول والعريض
+                  if (w > 0 && h > 0) setRatio(Math.min(1.6, Math.max(0.6, w / h)));
+                } : undefined} />
             </div>
           </div>
         ))}
