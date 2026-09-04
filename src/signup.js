@@ -218,8 +218,13 @@ export const publicView = (data, program) => {
   const perDayOn = s.allowPerDay !== false && perDayPrice > 0 && days.length > 0;
   const packages = [
     ...(perDayOn ? [{
-      // «يومي» في النوعين: ولي الأمر يقرأ أسماء أيام، فما يُقال له «أسبوعي»
-      id: '__perday', name: 'يومي', price: perDayPrice, perDay: true,
+      /**
+       * اسمه يكتبه صاحب البرنامج: «يومي» تصلح لبرنامجٍ يتكرّر، وبرنامجُ يومٍ
+       * بعينه أولى به تاريخُه — «الجمعة ٥ ربيع». وخيارٌ بلا اسمٍ ما يُختار،
+       * فالفاضي يرجع إلى «يومي» ولا يختفي كبقيّة النصوص.
+       */
+      id: '__perday', name: String(s.texts?.perDayName || '').trim() || TEXTS.perDayName,
+      price: perDayPrice, perDay: true,
     }] : []),
     ...(packDays.length ? packs
       .map((p) => ({
@@ -318,6 +323,7 @@ export const TEXTS = {
   student: 'بيانات الطالب',
   days: 'الأيام',
   packageLabel: 'طريقة التسجيل',
+  perDayName: 'يومي',
   dueLabel: 'المبلغ المستحق',
   payLabel: 'طريقة الدفع',
   submit: 'إرسال التسجيل',

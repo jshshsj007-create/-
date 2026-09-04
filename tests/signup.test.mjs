@@ -824,3 +824,19 @@ test('ولا يُجرّ من ليس له اشتراك', () => {
 
 
 console.log(`\n${passed} اختبار نجح.`);
+
+test('اسم خيار «يومي» يكتبه صاحب البرنامج', () => {
+  const d = withSubscription();
+  d.programs[0].signup.allowPerDay = true;
+  d.programs[0].signup.texts = { perDayName: 'الجمعة ٥ ربيع' };
+  const v = publicView(d, d.programs[0]);
+  assert.equal(v.packages.find((p) => p.perDay).name, 'الجمعة ٥ ربيع');
+});
+
+test('والفاضي يرجع «يومي» — خيارٌ بلا اسمٍ ما يُختار', () => {
+  const d = withSubscription();
+  d.programs[0].signup.allowPerDay = true;
+  d.programs[0].signup.texts = { perDayName: '   ' };
+  const v = publicView(d, d.programs[0]);
+  assert.equal(v.packages.find((p) => p.perDay).name, 'يومي');
+});
