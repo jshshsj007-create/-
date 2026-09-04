@@ -103,8 +103,20 @@ function Gallery({ ids, alt }) {
    * ونحدّها: أطولُ من ذلك يبلع الشاشةَ فلا يُرى تحته شيء.
    */
   const [ratio, setRatio] = useState(0);
+  /**
+   * ما يُحمَّل من الصور: ما رآه وما يليه.
+   *
+   * الذوبان يحتاج الصورَ موضوعةً فوق بعض، ولو أعطيناها كلها عناوينها نزلت
+   * كلها ساعةَ الفتح — عشرةُ ملصقاتٍ على بيانات وليّ الأمر دفعةً واحدة. فتنزل
+   * واحدةً واحدة مع التقلّب، وما نزل يبقى فما يُطلب مرتين.
+   */
+  const [seen, setSeen] = useState(() => new Set([0]));
   const touch = React.useRef(null);
   const n = ids.length;
+
+  useEffect(() => {
+    setSeen((old) => (old.has(at) ? old : new Set(old).add(at)));
+  }, [at]);
 
   /**
    * الصور تتقلّب من نفسها.
@@ -159,21 +171,25 @@ function Gallery({ ids, alt }) {
           الذوبان يُقرأ حركةً، والقطع يُقرأ خللًا. وهي محمّلةٌ سلفًا فما
           تُنتظر عند التقلّب.
         */}
-        {ids.map((id, i) => (
-          <div key={id} aria-hidden={i !== at}
-            className={`absolute inset-0 transition-opacity duration-700 ${i === at ? 'opacity-100' : 'opacity-0'}`}>
-            <div aria-hidden className="absolute inset-0 bg-center bg-cover scale-125 blur-2xl brightness-[.68]"
-              style={{ backgroundImage: `url(${src(id)})` }} />
-            <div className="relative w-full h-full flex items-center justify-center">
-              <img src={src(id)} alt={i === at ? (alt || '') : ''} className="max-w-full max-h-full object-contain block"
-                onLoad={i === 0 ? (e) => {
-                  const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
-                  // صورةٌ شاذّة الأبعاد ما تحكم الصفحة، فنحصرها بين الطولي المعقول والعريض
-                  if (w > 0 && h > 0) setRatio(Math.min(1.6, Math.max(0.6, w / h)));
-                } : undefined} />
+        {ids.map((id, i) => {
+          // ما رآه، ومن يليه استعدادًا للتقلّبة الجاية
+          if (!seen.has(i) && i !== (at + 1) % n) return null;
+          return (
+            <div key={id} aria-hidden={i !== at}
+              className={`absolute inset-0 transition-opacity duration-700 ${i === at ? 'opacity-100' : 'opacity-0'}`}>
+              <div aria-hidden className="absolute inset-0 bg-center bg-cover scale-125 blur-2xl brightness-[.68]"
+                style={{ backgroundImage: `url(${src(id)})` }} />
+              <div className="relative w-full h-full flex items-center justify-center">
+                <img src={src(id)} alt={i === at ? (alt || '') : ''} className="max-w-full max-h-full object-contain block"
+                  onLoad={i === 0 ? (e) => {
+                    const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
+                    // صورةٌ شاذّة الأبعاد ما تحكم الصفحة، فنحصرها بين الطولي المعقول والعريض
+                    if (w > 0 && h > 0) setRatio(Math.min(1.6, Math.max(0.6, w / h)));
+                  } : undefined} />
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
         <button type="button" onClick={() => setFull(true)} {...swipe} aria-label="تكبير الصورة"
           className="absolute inset-0 w-full h-full" />
       </div>
