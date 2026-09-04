@@ -121,7 +121,7 @@ function Gallery({ ids, alt }) {
     if (n < 2 || full) return undefined;
     const still = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (still) return undefined;
-    const wait = Date.now() - touchedAt < 10000 ? 10000 : 4000;
+    const wait = Date.now() - touchedAt < 10000 ? 10000 : 2000;
     const t = setTimeout(() => setAt((i) => (i + 1) % n), wait);
     return () => clearTimeout(t);
   }, [at, n, full, touchedAt]);
