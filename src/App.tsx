@@ -42,7 +42,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v7.6';
+const APP_VERSION = 'v7.7';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -1336,6 +1336,8 @@ export default function App() {
   const [selectedTourId, setSelectedTourId] = useState(null);
   const [selectedQId, setSelectedQId] = useState(null);
   const [selectedGuardianId, setSelectedGuardianId] = useState(null);
+  /** الطالب الذي ذهب وليُّ أمره — يُفتح وحده، فما يبقى محبوسًا في القائمة. */
+  const [selectedStudentId, setSelectedStudentId] = useState(null);
   const [guardianSearch, setGuardianSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('الكل');  // تصفية المشتركين بحالتهم
   const [tripScope, setTripScope] = useState('term');       // سفرات الموسم أو كلها
@@ -3773,7 +3775,7 @@ export default function App() {
     (id === 'reports' && view === 'seasons') ||
     (id === 'programs' && (view === 'programDetail' || view === 'weekDetail' || view === 'unpaid')) ||
     (id === 'home' && (view === 'competitions' || view === 'trips' || view === 'tripDetail'
-      || view === 'competitionDetail' || view === 'guardians' || view === 'guardianDetail'
+      || view === 'competitionDetail' || view === 'guardians' || view === 'guardianDetail' || view === 'lostStudent'
       || view === 'khayr' || view === 'khayrSession' || view === 'khayrMe'));
 
   /** فلترة حسب طريقة الدفع: حساب معيّن، أو «ما دفع»، أو الكل. */
@@ -7057,8 +7059,17 @@ export default function App() {
                     const wa = waLink(g?.phone, '');
                     return (
                       <div key={s.id} className="bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3">
+                        {/*
+                          طالبٌ ذهب وليُّ أمره: كان الصفُّ يفتح على وليٍّ لا وجود
+                          له، فتقول الشاشة «ما لقيت ولي الأمر هذا» وينتهي الأمر —
+                          فما يُفتح ولا يُحذف، يبقى في القائمة أبدًا. فيفتح على
+                          نفسه، وله شاشتُه وزرُّ حذفه.
+                        */}
                         <button className="min-w-0 flex-1 text-right flex items-center gap-3"
-                          onClick={() => { setSelectedGuardianId(s.guardianId); goto('guardianDetail'); }}>
+                          onClick={() => {
+                            if (g) { setSelectedGuardianId(s.guardianId); goto('guardianDetail'); return; }
+                            setSelectedStudentId(s.id); goto('lostStudent');
+                          }}>
                           <span className="w-10 h-10 rounded-full bg-brand-100 text-brand-800 font-bold flex items-center justify-center shrink-0">
                             {(s.name || '؟').slice(0, 1)}
                           </span>
@@ -7067,10 +7078,12 @@ export default function App() {
                             <span className="block text-xs text-slate-400 truncate">
                               {[s.age && `${s.age} سنة`, s.grade, s.school].filter(Boolean).join(' · ') || 'بلا تفاصيل'}
                             </span>
-                            {g && (
+                            {g ? (
                               <span className="block text-xs text-slate-500 mt-1 truncate">
                                 {g.name} · <span dir="ltr">{formatPhone(g.phone)}</span>
                               </span>
+                            ) : (
+                              <span className="block text-xs text-amber-700 font-semibold mt-1">بلا وليّ أمر</span>
                             )}
                             {s.health && <span className="block text-[11px] text-amber-700 mt-1 truncate">⚠ {s.health}</span>}
                           </span>
@@ -7090,6 +7103,52 @@ export default function App() {
                     );
                   })}
                 </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/*
+          طالبٌ ذهب وليُّ أمره.
+          يقع هذا حين يُحذف وليٌّ من جهازٍ ويُعدَّل ابنُه من آخر، أو من بياناتٍ
+          قديمة. وكان يبقى في القائمة لا يُفتح ولا يُحذف — فحذفُ الأبناء يمرّ
+          عبر وليّهم، ووليُّه ذهب. فله بابُه: يُوصَل بوليٍّ موجود، أو يُحذف.
+        */}
+        {view === 'lostStudent' && canGuardians && (() => {
+          const s = data.students.find((x) => x.id === selectedStudentId);
+          if (!s) return <div className={emptyCls}>ما لقيت هذا الطالب.</div>;
+          const regs = historyOf(s.id);
+          return (
+            <div>
+              <Breadcrumb items={[{ label: 'المشتركين', onClick: () => goto('guardians') }, { label: s.name }]} />
+              <h2 className="text-xl font-extrabold text-slate-800 mt-2 mb-1">{s.name}</h2>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-3 text-sm text-amber-900 leading-6 mb-4">
+                وليُّ أمره ما عاد موجودًا في قاعدة البيانات.
+                {regs.length > 0 && <> وله <b>{regs.length}</b> تسجيلًا في البرامج — تبقى كما هي مهما فعلت هنا.</>}
+              </div>
+
+              <Field label="اربطه بوليّ أمر">
+                <select className={inputCls} value=""
+                  onChange={(e) => {
+                    const gid = e.target.value;
+                    if (!gid) return;
+                    save({ ...data, students: data.students.map((x) => (x.id === s.id ? { ...x, guardianId: gid } : x)) });
+                    setSelectedGuardianId(gid);
+                    goto('guardianDetail');
+                  }}>
+                  <option value="">— اختر وليّ أمر —</option>
+                  {data.guardians.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+                    .map((x) => <option key={x.id} value={x.id}>{x.name}{x.phone ? ` · ${x.phone}` : ''}</option>)}
+                </select>
+              </Field>
+
+              {isAdmin && (
+                <button className="w-full text-red-600 border border-red-200 bg-red-50 rounded-xl py-3 text-sm font-semibold mt-2"
+                  onClick={() => askConfirm(
+                    `حذف «${s.name}» من قاعدة البيانات؟ تسجيلاته في البرامج تبقى كما هي.`,
+                    () => { removeStudent(s.id); goto('guardians'); })}>
+                  احذفه من قاعدة البيانات
+                </button>
               )}
             </div>
           );
