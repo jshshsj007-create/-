@@ -336,6 +336,7 @@ export const TEXTS = {
   packageLabel: 'طريقة التسجيل',
   perDayName: 'يومي',
   perDayNote: '',
+  required: 'مطلوب',
   addKid: 'أضف ابناً آخر',
   dueLabel: 'المبلغ المستحق',
   payLabel: 'طريقة الدفع',
@@ -480,6 +481,18 @@ export const normalizeSubmission = (view, body) => {
 export const validateSubmission = (view, body) => {
   const errors = {};
   const kids = Array.isArray(body?.kids) ? body.kids : [];
+  /**
+   * كلمةُ النقص — يكتبها صاحب البرنامج في نصوص الصفحة.
+   *
+   * وهي وحدها من النصوص لا تُمحى: الحُمرةُ وقفزةُ الصفحة إلى أول خانةٍ ناقصة
+   * كلتاهما معلَّقةٌ على وجود رسالة، فمن محاها ضغط وليّ الأمر «إرسال» فما
+   * تحرّكت الصفحة ولا احمرّ شيء — نموذجٌ يرفض بصمت. فالفاضي يرجع إلى
+   * «مطلوب».
+   *
+   * أما رسائل الغلط («رقم جوال غير صحيح») فتبقى كما هي: تصف خطأً في
+   * المكتوب لا فراغًا، ولا يُغني عنها لون.
+   */
+  const need = txt(view, 'required').trim() || TEXTS.required;
 
   // ما ينفع نقبل تسجيلًا ما له مكان يستقر فيه
   if (view.blocked) return { ok: false, errors: { _: 'التسجيل مو متاح حاليًا في هذا البرنامج.' } };
@@ -487,25 +500,25 @@ export const validateSubmission = (view, body) => {
   for (const f of view.fields) {
     if (!isGuardianField(f)) continue;
     const v = String(body?.answers?.[f.id] ?? '').trim();
-    if (f.required && !v) errors[f.id] = 'مطلوب';
+    if (f.required && !v) errors[f.id] = need;
     else if (f.id === 'gPhone' && v && !isValidPhone(v)) errors[f.id] = 'رقم جوال غير صحيح';
   }
 
   if (!kids.length) errors.kids = 'أضف طالبًا واحدًا على الأقل';
   kids.forEach((kid, i) => {
-    if (!String(kid?.name || '').trim()) errors[`kid${i}.name`] = 'مطلوب';
+    if (!String(kid?.name || '').trim()) errors[`kid${i}.name`] = need;
     for (const f of view.fields) {
       if (f.id === 'name' || isGuardianField(f)) continue;
       const v = String(kid?.[f.id] ?? '').trim();
-      if (f.required && !v) errors[`kid${i}.${f.id}`] = 'مطلوب';
+      if (f.required && !v) errors[`kid${i}.${f.id}`] = need;
       else if (f.type === 'number' && v && !/^\d{1,3}$/.test(v)) errors[`kid${i}.${f.id}`] = 'اكتب رقمًا';
     }
     const pkg = view.usePackages ? packageOf(view, kid) : null;
     if (view.usePackages && !pkg) {
-      errors[`kid${i}.package`] = 'مطلوب';
+      errors[`kid${i}.package`] = need;
     } else {
       const mine = daysOf(view, pkg);
-      if (mine.length && !(kid?.days || []).length) errors[`kid${i}.days`] = 'مطلوب';
+      if (mine.length && !(kid?.days || []).length) errors[`kid${i}.days`] = need;
       // أيامٌ ملفّقة ما هي ضمن ما يخصّ خياره
       for (const d of kid?.days || []) {
         if (!mine.some((x) => x.id === d)) errors[`kid${i}.days`] = 'فيه يوم غير متاح';
@@ -515,7 +528,7 @@ export const validateSubmission = (view, body) => {
 
   const acc = view.accounts.find((a) => a.id === body?.accountId);
   if (view.accounts.length && !acc) {
-    errors.accountId = 'مطلوب';
+    errors.accountId = need;
   } else if (acc?.needsReceipt && !isReceipt(body?.receipt)) {
     errors.receipt = 'أرفق صورة الإيصال أو المستند';
   }

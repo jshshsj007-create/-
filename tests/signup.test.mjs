@@ -840,3 +840,28 @@ test('والفاضي يرجع «يومي» — خيارٌ بلا اسمٍ ما �
   const v = publicView(d, d.programs[0]);
   assert.equal(v.packages.find((p) => p.perDay).name, 'يومي');
 });
+
+test('كلمة الخانة الناقصة يكتبها صاحب البرنامج', () => {
+  const d = baseData();
+  d.programs[0].signup.texts = { required: 'لازم تعبّيها' };
+  const v = publicView(d, d.programs[0]);
+  const r = validateSubmission(v, { ...goodBody, answers: { ...goodBody.answers, gPhone: '' } });
+  assert.equal(r.errors.gPhone, 'لازم تعبّيها');
+});
+
+test('وما تُمحى: الفاضي يرجع «مطلوب» فما يرفض النموذجُ بصمت', () => {
+  const d = baseData();
+  d.programs[0].signup.texts = { required: '   ' };
+  const v = publicView(d, d.programs[0]);
+  const r = validateSubmission(v, { ...goodBody, answers: { ...goodBody.answers, gPhone: '' } });
+  assert.equal(r.errors.gPhone, 'مطلوب', 'الحُمرة وقفزة الصفحة معلّقتان على وجود رسالة');
+  assert.equal(r.ok, false);
+});
+
+test('ورسائل الغلط تبقى كما هي — تصف خطأً لا فراغًا', () => {
+  const d = baseData();
+  d.programs[0].signup.texts = { required: 'لازم تعبّيها' };
+  const v = publicView(d, d.programs[0]);
+  const r = validateSubmission(v, { ...goodBody, answers: { ...goodBody.answers, gPhone: '05512' } });
+  assert.equal(r.errors.gPhone, 'رقم جوال غير صحيح');
+});
