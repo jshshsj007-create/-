@@ -3,7 +3,7 @@
  * وما تعرف شيئًا عن بقية البيانات — تستقبل فقط.
  */
 import React, { useState, useEffect } from 'react';
-import { Check, AlertTriangle, Plus, X, Copy, Upload, MessageCircle, Share2, MapPin, ChevronLeft } from 'lucide-react';
+import { Check, AlertTriangle, Plus, X, Copy, Upload, MessageCircle, Share2, MapPin, ChevronLeft, CalendarDays, Clock, Users } from 'lucide-react';
 import { api } from './cloud.js';
 import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 import { isValidPhone } from './people.js';
@@ -241,17 +241,28 @@ function Place({ place }) {
     : <div className={box}>{body}</div>;
 }
 
-/** الحقائق الثلاث: شريط واحد مقسوم — لا ثلاث بطاقات ولا ثلاثة أسطر. */
+/**
+ * الحقائق الثلاث: شريط واحد مقسوم — لا ثلاث بطاقات ولا ثلاثة أسطر.
+ *
+ * وتحت كل قيمةٍ أيقونتها لا اسمها: «الجمعة» و«4-8» و«7-14» تُقرأ بذاتها،
+ * فكلمةُ «اليوم» تحتها إخبارٌ بما عُلم. والأيقونة تُميّز الخانات بلمحةٍ
+ * وتترك الفراغ للقيمة.
+ */
+const FACT_ICON = { day: CalendarDays, time: Clock, age: Users };
+
 function Facts({ facts }) {
   if (!facts?.length) return null;
   return (
     <div className="mt-3 flex rounded-xl border border-slate-100 bg-slate-50 overflow-hidden">
-      {facts.map((f, i) => (
-        <div key={f.id} className={`flex-1 py-2 px-1 text-center ${i ? 'border-r border-slate-100' : ''}`}>
-          <div className="text-[13px] font-extrabold text-slate-800 whitespace-nowrap">{f.value}</div>
-          <div className="text-[9.5px] text-slate-400 mt-px">{f.label}</div>
-        </div>
-      ))}
+      {facts.map((f, i) => {
+        const Icon = FACT_ICON[f.id];
+        return (
+          <div key={f.id} className={`flex-1 py-2.5 px-1 flex flex-col items-center gap-1 ${i ? 'border-r border-slate-100' : ''}`}>
+            {Icon && <Icon size={15} className="text-brand-600 shrink-0" aria-label={f.label} />}
+            <div className="text-[13px] font-extrabold text-slate-800 whitespace-nowrap">{f.value}</div>
+          </div>
+        );
+      })}
     </div>
   );
 }
