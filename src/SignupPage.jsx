@@ -808,10 +808,14 @@ export default function SignupPage({ token }) {
                         className={`w-full text-right px-4 py-3 rounded-xl border flex items-center justify-between ${on ? 'border-brand-600 bg-brand-50' : 'border-slate-200'}`}>
                         <span className="min-w-0">
                           <span className="block font-semibold text-slate-800">{pk.name}</span>
-                          {/* اليومي سطرٌ واحد: اسمه وسعره. والباقة تقول مدّتها */}
-                          {!pk.perDay && pk.days > 0 && (
+                          {/*
+                            الاسم فوق بلونه، وتحته سطرٌ أخفّ: مدّةُ الباقة، أو
+                            ما كتبتَه تحت اليومي — تاريخُه غالبًا. فالعين تقرأ
+                            الاسم أولًا ثم تنزل للتفصيل، ولا يزاحمه في سطره.
+                          */}
+                          {(pk.perDay ? pk.note : pk.days > 0 && `${pk.days} ${pk.days === 1 ? 'يوم' : 'أيام'}`) && (
                             <span className="block text-[11px] text-slate-400">
-                              {pk.days} {pk.days === 1 ? 'يوم' : 'أيام'}
+                              {pk.perDay ? pk.note : `${pk.days} ${pk.days === 1 ? 'يوم' : 'أيام'}`}
                             </span>
                           )}
                         </span>

@@ -156,14 +156,14 @@ test('بلا طالب ما فيه تسجيل', () => {
   const d = baseData();
   const v = publicView(d, d.programs[0]);
   assert.equal(validateSubmission(v, { ...goodBody, kids: [] }).errors.kids, 'أضف طالبًا واحدًا على الأقل');
-  assert.equal(validateSubmission(v, { ...goodBody, kids: [{ name: ' ', days: ['w1'] }] }).errors['kid0.name'], 'اسم الطالب مطلوب');
+  assert.equal(validateSubmission(v, { ...goodBody, kids: [{ name: ' ', days: ['w1'] }] }).errors['kid0.name'], 'مطلوب');
 });
 
 test('لازم يختار يومًا واحدًا على الأقل', () => {
   const d = baseData();
   const v = publicView(d, d.programs[0]);
   assert.equal(validateSubmission(v, { ...goodBody, kids: [{ name: 'سعد', age: '10', days: [] }] }).errors['kid0.days'],
-    'اختر يومًا واحدًا على الأقل');
+    'مطلوب');
 });
 
 test('ما ينفع يختار حسابًا ما عرضته له', () => {
@@ -247,7 +247,7 @@ test('لازم يختار طريقة تسجيل', () => {
   const d = withPackages();
   const v = publicView(d, d.programs[0]);
   const r = validateSubmission(v, { answers: goodBody.answers, accountId: 'rajhi', kids: [{ name: 'سعد', age: '10', days: ['w1'] }] });
-  assert.equal(r.errors['kid0.package'], 'اختر طريقة التسجيل');
+  assert.equal(r.errors['kid0.package'], 'مطلوب');
 });
 
 test('اليومي بلا سعر ما يُعرض', () => {

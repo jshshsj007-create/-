@@ -224,6 +224,8 @@ export const publicView = (data, program) => {
        * فالفاضي يرجع إلى «يومي» ولا يختفي كبقيّة النصوص.
        */
       id: '__perday', name: String(s.texts?.perDayName || '').trim() || TEXTS.perDayName,
+      // سطرٌ تحته بلونٍ أخفّ: تاريخُ اليوم غالبًا. والاسم فوقه هو ما يُقرأ أولًا
+      note: String(s.texts?.perDayNote || '').trim(),
       price: perDayPrice, perDay: true,
     }] : []),
     ...(packDays.length ? packs
@@ -333,6 +335,7 @@ export const TEXTS = {
   days: 'الأيام',
   packageLabel: 'طريقة التسجيل',
   perDayName: 'يومي',
+  perDayNote: '',
   addKid: 'أضف ابناً آخر',
   dueLabel: 'المبلغ المستحق',
   payLabel: 'طريقة الدفع',
@@ -490,7 +493,7 @@ export const validateSubmission = (view, body) => {
 
   if (!kids.length) errors.kids = 'أضف طالبًا واحدًا على الأقل';
   kids.forEach((kid, i) => {
-    if (!String(kid?.name || '').trim()) errors[`kid${i}.name`] = 'اسم الطالب مطلوب';
+    if (!String(kid?.name || '').trim()) errors[`kid${i}.name`] = 'مطلوب';
     for (const f of view.fields) {
       if (f.id === 'name' || isGuardianField(f)) continue;
       const v = String(kid?.[f.id] ?? '').trim();
@@ -499,10 +502,10 @@ export const validateSubmission = (view, body) => {
     }
     const pkg = view.usePackages ? packageOf(view, kid) : null;
     if (view.usePackages && !pkg) {
-      errors[`kid${i}.package`] = 'اختر طريقة التسجيل';
+      errors[`kid${i}.package`] = 'مطلوب';
     } else {
       const mine = daysOf(view, pkg);
-      if (mine.length && !(kid?.days || []).length) errors[`kid${i}.days`] = 'اختر يومًا واحدًا على الأقل';
+      if (mine.length && !(kid?.days || []).length) errors[`kid${i}.days`] = 'مطلوب';
       // أيامٌ ملفّقة ما هي ضمن ما يخصّ خياره
       for (const d of kid?.days || []) {
         if (!mine.some((x) => x.id === d)) errors[`kid${i}.days`] = 'فيه يوم غير متاح';
