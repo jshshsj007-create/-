@@ -41,17 +41,22 @@ const drawsRiyal = () => {
   }
 };
 
-/** يبدأ بـ«ر.س» ثم ينقلب للرمز إن رسمه الجهاز — فما يومض مربّعٌ لحظة. */
+/**
+ * هل يرسم جهازُ وليّ الأمر الرمز؟ يبدأ بـ«لا» فما يومض مربّعٌ لحظة.
+ *
+ * ولكلٍّ بديلُه: المبالغُ في السطور ترجع إلى «ر.س»، والشارةُ في الرأس ترجع
+ * إلى الرقم مجرّدًا — فهي ضيّقة، ولو حشرنا فيها «ر.س» ضاع الرقم.
+ */
 const useRiyal = () => {
-  const [sar, setSar] = useState('ر.س');
+  const [ok, setOk] = useState(false);
   useEffect(() => {
     let live = true;
-    const check = () => { if (live && drawsRiyal()) setSar(RIYAL); };
+    const check = () => { if (live && drawsRiyal()) setOk(true); };
     if (typeof document !== 'undefined' && document.fonts?.ready) document.fonts.ready.then(check).catch(check);
     else check();
     return () => { live = false; };
   }, []);
-  return sar;
+  return ok;
 };
 
 function Shell({ children }) {
@@ -85,10 +90,35 @@ function Shell({ children }) {
 function Gallery({ ids, alt }) {
   const [at, setAt] = useState(0);
   const [full, setFull] = useState(false);
+  // آخر لمسةٍ من ولي الأمر: بعدها نسكت قليلًا ثم نعود نتقلّب
+  const [touchedAt, setTouchedAt] = useState(0);
   const touch = React.useRef(null);
-  if (!ids.length) return null;
+  const n = ids.length;
 
-  const go = (d) => setAt((i) => Math.min(ids.length - 1, Math.max(0, i + d)));
+  /**
+   * الصور تتقلّب من نفسها.
+   *
+   * البوستر أول ما تراه العين، ولو وقف على صورةٍ واحدة ما عرف وليّ الأمر أن
+   * خلفها غيرها — والنقاط الصغيرة لا تُرى. فتمشي وحدها، ويبقى السحب والضغط
+   * على النقاط يعملان.
+   *
+   * وتسكت في ثلاث: وهي مفتوحةٌ بملء الشاشة (يقرأ التفاصيل، فلا تُسحب من
+   * تحته)، وعشر ثوانٍ بعد كل لمسةٍ منه (اختار صورةً فلا نزيحها عنه)، ولمن
+   * أطفأ الحركة في جهازه.
+   */
+  useEffect(() => {
+    if (n < 2 || full) return undefined;
+    const still = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (still) return undefined;
+    const wait = Date.now() - touchedAt < 10000 ? 10000 : 4000;
+    const t = setTimeout(() => setAt((i) => (i + 1) % n), wait);
+    return () => clearTimeout(t);
+  }, [at, n, full, touchedAt]);
+
+  if (!n) return null;
+
+  const go = (d) => { setTouchedAt(Date.now()); setAt((i) => (i + d + n) % n); };
+  const pick = (i) => { setTouchedAt(Date.now()); setAt(i); };
   const swipe = {
     onTouchStart: (e) => { touch.current = e.changedTouches[0].clientX; },
     // في صفحة عربية الصورة التالية على اليسار، فالسحب لليسار يقدّم
@@ -112,12 +142,23 @@ function Gallery({ ids, alt }) {
         ولا يُقصّ من الملصق شيء.
       */}
       <div className="relative rounded-2xl overflow-hidden h-[38vh] min-h-[190px] max-h-[330px] mb-2">
-        <div aria-hidden className="absolute inset-0 bg-center bg-cover scale-125 blur-2xl brightness-[.68]"
-          style={{ backgroundImage: `url(${src(ids[at])})` }} />
-        <button type="button" onClick={() => setFull(true)} {...swipe}
-          className="relative w-full h-full flex items-center justify-center">
-          <img src={src(ids[at])} alt={alt || ''} className="max-w-full max-h-full object-contain block" />
-        </button>
+        {/*
+          الصور كلها موضوعةٌ فوق بعض وتُذاب واحدةً في الأخرى، لا تُقطع قطعًا:
+          الذوبان يُقرأ حركةً، والقطع يُقرأ خللًا. وهي محمّلةٌ سلفًا فما
+          تُنتظر عند التقلّب.
+        */}
+        {ids.map((id, i) => (
+          <div key={id} aria-hidden={i !== at}
+            className={`absolute inset-0 transition-opacity duration-700 ${i === at ? 'opacity-100' : 'opacity-0'}`}>
+            <div aria-hidden className="absolute inset-0 bg-center bg-cover scale-125 blur-2xl brightness-[.68]"
+              style={{ backgroundImage: `url(${src(id)})` }} />
+            <div className="relative w-full h-full flex items-center justify-center">
+              <img src={src(id)} alt={i === at ? (alt || '') : ''} className="max-w-full max-h-full object-contain block" />
+            </div>
+          </div>
+        ))}
+        <button type="button" onClick={() => setFull(true)} {...swipe} aria-label="تكبير الصورة"
+          className="absolute inset-0 w-full h-full" />
       </div>
 
       {/*
@@ -129,7 +170,7 @@ function Gallery({ ids, alt }) {
       {ids.length > 1 && (
         <div className="flex items-center justify-center gap-2 pb-1 mb-2">
           {ids.map((id, i) => (
-            <button key={id} type="button" onClick={() => setAt(i)} aria-label={`صورة ${i + 1}`}
+            <button key={id} type="button" onClick={() => pick(i)} aria-label={`صورة ${i + 1}`}
               className={`h-1.5 rounded-full transition-all ${i === at ? 'w-5 bg-brand-700' : 'w-1.5 bg-slate-300'}`} />
           ))}
           <span className="text-[11px] text-slate-400 mr-1.5">{at + 1} من {ids.length}</span>
@@ -397,7 +438,8 @@ export default function SignupPage({ token }) {
   const [atForm, setAtForm] = useState(false);    // وصل النموذج، فالزر الثابت ما عاد له معنى
   const formTop = React.useRef(null);
   // الرمز أو «ر.س» — حسب ما يرسمه جهاز وليّ الأمر
-  const SAR = useRiyal();
+  const hasRiyal = useRiyal();
+  const SAR = hasRiyal ? RIYAL : 'ر.س';
 
   /**
    * الزر الثابت يختفي عند النموذج: ما فيه معنى لزرٍّ يوعد بنقلك إلى مكانٍ
@@ -651,7 +693,7 @@ export default function SignupPage({ token }) {
           {/* السعر يُعرف قبل ما يعبّي، فما يقف في نص النموذج */}
           {headline > 0 && (
             <span className="shrink-0 bg-green-50 border border-green-200 text-green-900 rounded-lg px-2.5 py-1 text-[14px] font-extrabold" dir="ltr">
-              {fmt(headline)}
+              {fmt(headline)}{hasRiyal ? ` ${RIYAL}` : ''}
             </span>
           )}
         </div>
