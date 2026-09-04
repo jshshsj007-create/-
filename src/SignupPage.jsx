@@ -904,7 +904,6 @@ export default function SignupPage({ token }) {
         className="w-full bg-brand-600 text-white font-bold rounded-2xl py-4 text-[15px] disabled:opacity-50">
         {state === 'sending' ? 'جاري الإرسال...' : txt(view, 'submit')}
       </button>
-      <div className="text-center text-[11px] text-slate-400 mt-3">بياناتك تُستخدم لتنظيم البرنامج فقط.</div>
 
       {/*
         من اقتنع من أول شاشة يسجّل من موضعه، فما ينزل الصفحة كلها يدوّر أين
