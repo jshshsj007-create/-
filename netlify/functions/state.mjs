@@ -9,6 +9,7 @@
  */
 import { getStore } from '@netlify/blobs';
 import crypto from 'node:crypto';
+import { isAdmin, allowed, canWrite } from '../../src/perms.js';
 import { programFor, publicView, validateSubmission, applySubmission, normalizeSubmission, rateLimited, waIntl } from '../../src/signup.js';
 import { questionView, validateAnswer, applyAnswer, answersRateLimited, makeDraw, applyDraw } from '../../src/club.js';
 import { dedupeByPhone, remapParticipants } from '../../src/people.js';
@@ -91,8 +92,7 @@ const userFromToken = (doc, token) => {
 
 /* ------------------------- كلمات المرور تبقى في الخادم ------------------------- */
 
-const isAdmin = (u) => u?.role === 'مدير';
-const allowed = (u, perm) => isAdmin(u) || (u?.permissions || []).includes(perm);
+
 
 /**
  * خيركم للطالب المربوط: سجلّه هو وحده. تسميع بقية الطلاب وملاحظات الشيخ فيهم
@@ -156,8 +156,8 @@ const guard = (incoming, current, me) => {
     out.students = current?.students || [];
   }
 
-  // الطالب يقرأ سجلّه ولا يكتبه — ولا يكتب فيه غير أهل الصلاحية
-  if (!allowed(me, 'خيركم')) out.khayr = current?.khayr || { students: [], sessions: [] };
+  // الطالب يقرأ سجلّه ولا يكتبه، ومثله من أُعطي «خيركم» للقراءة فقط
+  if (!canWrite(me, 'خيركم')) out.khayr = current?.khayr || { students: [], sessions: [] };
 
   // وما حُجب في `strip` يُردّ هنا، وإلا محته حفظةٌ عادية من جهازٍ ما شافه
   if (!allowed(me, 'النادي')) out.questions = current?.questions || [];

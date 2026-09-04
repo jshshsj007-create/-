@@ -14,6 +14,7 @@ import {
 import { STATES, TONES, studentState, stateCounts, stateOpts, NEAR, FAR } from './status.js';
 import { stamped, traceText, agoText } from './trace.js';
 import { trashed, pruned, sortedTrash, leftText, kindLabel, TRASH_DAYS } from './trash.js';
+import { canWrite as canWritePerm } from './perms.js';
 import { makeToken as makeSignupToken, packTotal, packSpan, splitLump, subsFor, TEXTS, CLOSED, waIntl, waLink, varNames, fieldsFor, dayLabel, mapHref, waGroupLink, placeOf, DEFAULT_WA_TEMPLATE } from './signup.js';
 import { readImage, POSTER, GALLERY } from './img.js';
 import { qrDataUrl, qrPngBlob } from './qr.js';
@@ -41,7 +42,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v7.3';
+const APP_VERSION = 'v7.4';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -2319,6 +2320,8 @@ export default function App() {
     const fields = {
       name: form.name.trim(), username, role: forceAdmin ? 'مدير' : (form.role || ROLES[0]),
       permissions: form.permissions || [], accessScope: form.accessScope || 'all', allowedWeeks: form.allowedWeeks || [],
+      // «يشوف فقط» ما تُحفظ إلا لصلاحيةٍ يملكها، وإلا بقيت أثرًا لصلاحيةٍ نُزعت
+      readOnly: (form.readOnly || []).filter((x) => (form.permissions || []).includes(x)),
     };
     if (form.id) {
       // كلمة المرور تتغيّر فقط لو كتب وحدة جديدة
@@ -3502,6 +3505,13 @@ export default function App() {
    * بحساب يقرأ سجلّه هو وحده — الشيخ يكتب، والطالب يشوف.
    */
   const canKhayr = can('خيركم');
+  /**
+   * يقرأ ولا يكتب — نفس قاعدة الخادم حرفًا، من `perms.js`.
+   *
+   * وهذا إخفاءٌ لا حراسة: الحراسة هناك، يردّ الحفظ كما كان. فمن فتح جهازه
+   * وأعاد الزر ما وصل تعديله.
+   */
+  const editKhayr = canKhayr && canWritePerm(effectiveUser, 'خيركم');
   const khayr = data.khayr || { students: [], sessions: [] };
   const myKhayrStudent = canKhayr ? null : studentOfUser(khayr.students, currentUser?.id);
   const termKhayrSessions = khayr.sessions.filter((s) => s.termKey === termKey);
@@ -6116,10 +6126,12 @@ export default function App() {
 
             {khayrTab === 'sessions' && (
               <div>
-                <button className={btnPrimary + ' w-full mb-4'}
-                  onClick={() => { setForm({ date: '' }); setModal('khayrSessionNew'); }}>
-                  <Plus size={16} /> جلسة جديدة
-                </button>
+                {editKhayr && (
+                  <button className={btnPrimary + ' w-full mb-4'}
+                    onClick={() => { setForm({ date: '' }); setModal('khayrSessionNew'); }}>
+                    <Plus size={16} /> جلسة جديدة
+                  </button>
+                )}
                 {!termKhayrSessions.length ? (
                   <div className={emptyCls}>ما فيه جلسات في هذا الموسم بعد.</div>
                 ) : (
@@ -6145,10 +6157,12 @@ export default function App() {
 
             {khayrTab === 'students' && (
               <div>
-                <button className={btnPrimary + ' w-full mb-4'}
-                  onClick={() => { setForm({ review: '', tathbit: '', hifz: '', reviewUnit: 'parts', memUnit: 'parts', memTarget: 3 }); setModal('khayrStudent'); }}>
-                  <Plus size={16} /> طالب جديد
-                </button>
+                {editKhayr && (
+                  <button className={btnPrimary + ' w-full mb-4'}
+                    onClick={() => { setForm({ review: '', tathbit: '', hifz: '', reviewUnit: 'parts', memUnit: 'parts', memTarget: 3 }); setModal('khayrStudent'); }}>
+                    <Plus size={16} /> طالب جديد
+                  </button>
+                )}
                 {!khayr.students.length ? (
                   <div className={emptyCls}>ما فيه طلاب بعد. أضف أول طالب.</div>
                 ) : (
@@ -6182,10 +6196,14 @@ export default function App() {
                               )}
                               <Trace item={st} className="mt-1.5" />
                             </div>
-                            <button onClick={() => { setForm(khayrStudentForm(st)); setModal('khayrStudent'); }}
-                              className="text-slate-400 hover:text-brand-700 shrink-0"><Pencil size={16} /></button>
-                            <button onClick={() => askConfirm(`حذف «${st.name}» وكل تسميعه؟`, () => removeKhayrStudent(st.id))}
-                              className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 size={16} /></button>
+                            {editKhayr && (
+                              <>
+                                <button onClick={() => { setForm(khayrStudentForm(st)); setModal('khayrStudent'); }}
+                                  className="text-slate-400 hover:text-brand-700 shrink-0"><Pencil size={16} /></button>
+                                <button onClick={() => askConfirm(`حذف «${st.name}» وكل تسميعه؟`, () => removeKhayrStudent(st.id))}
+                                  className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 size={16} /></button>
+                              </>
+                            )}
                           </div>
 
                           {/* الدورة تتجمّع من نفسها: ما نطلب من الشيخ يعلّم بدايتها ولا نهايتها */}
@@ -6260,10 +6278,14 @@ export default function App() {
             <Breadcrumb items={[{ label: 'خيركم', onClick: () => { setKhayrTab('sessions'); goto('khayr'); } }, { label: khayrSession.date }]} />
             <div className="flex items-center gap-2 mb-1 mt-2">
               <h2 className="text-lg font-bold text-slate-800">جلسة {khayrSession.date}</h2>
-              <button onClick={() => askConfirm(`حذف جلسة ${khayrSession.date} وكل تسميعها؟`, () => removeKhayrSession(khayrSession.id))}
-                className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>
+              {editKhayr && (
+                <button onClick={() => askConfirm(`حذف جلسة ${khayrSession.date} وكل تسميعها؟`, () => removeKhayrSession(khayrSession.id))}
+                  className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>
+              )}
             </div>
-            <div className="text-sm text-slate-400 mb-5">اضغط اسم الطالب وسجّل تسميعه.</div>
+            <div className="text-sm text-slate-400 mb-5">
+              {editKhayr ? 'اضغط اسم الطالب وسجّل تسميعه.' : 'للقراءة فقط.'}
+            </div>
             {!khayr.students.length ? (
               <div className={emptyCls}>ما فيه طلاب بعد. أضفهم من تبويب «الطلاب».</div>
             ) : (
@@ -6274,7 +6296,7 @@ export default function App() {
                   const after = carryAfter(before, entry, st.wird?.hifz);
                   return (
                     <div key={st.id} className="bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3">
-                      <button className="flex-1 min-w-0 text-right"
+                      <button className="flex-1 min-w-0 text-right" disabled={!editKhayr}
                         onClick={() => { setForm(khayrEntryForm(st, khayrSession)); setModal('khayrEntry'); }}>
                         <span className="block font-bold text-slate-800">{st.name}</span>
                         {/* موضعه يمشي معه: الشيخ ما يرجع للجلسة الماضية ليتذكّر وين وقف */}
@@ -7653,6 +7675,34 @@ export default function App() {
                   className={`text-xs px-3 py-2 rounded-lg border text-right ${(form.permissions || []).includes(p) ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`}>{p}</button>
               ))}
             </div>
+            {/*
+              «يشوف فقط» ما تُعرض إلا لخيركم: الوعد بها في قسمٍ لم تُحرَس فيه
+              الأزرارُ كذبٌ على صاحب التطبيق. تُضاف لغيرها متى حُرست فيه.
+            */}
+            {(form.permissions || []).includes('خيركم') && (() => {
+              const ro = (form.readOnly || []).includes('خيركم');
+              const set = (v) => setForm({ ...form, readOnly: v ? ['خيركم'] : [] });
+              return (
+                <div className="bg-slate-50 rounded-xl p-3 mt-3">
+                  <div className="text-xs text-slate-500 mb-2.5">خيركم:</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button type="button" onClick={() => set(false)}
+                      className={`rounded-lg py-2.5 text-sm font-semibold border ${ro ? 'bg-white border-slate-200 text-slate-600' : 'bg-brand-600 border-brand-600 text-white'}`}>
+                      يعدّل
+                    </button>
+                    <button type="button" onClick={() => set(true)}
+                      className={`rounded-lg py-2.5 text-sm font-semibold border ${ro ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-slate-200 text-slate-600'}`}>
+                      يشوف فقط
+                    </button>
+                  </div>
+                  {ro && (
+                    <div className="text-xs text-slate-400 mt-2 leading-6">
+                      يقرأ الطلاب والجلسات والتقرير، وما أمامه إضافةٌ ولا قلمٌ ولا سلة.
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </Field>
           <Field label="نطاق الوصول للأيام">
             <div className="flex gap-2 mb-2">
