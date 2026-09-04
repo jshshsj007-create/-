@@ -41,7 +41,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v7.0';
+const APP_VERSION = 'v7.1';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -6688,10 +6688,17 @@ export default function App() {
                       return (
                         <div key={f.id} className="flex items-center justify-between gap-2 bg-slate-50 rounded-xl px-3 py-2.5">
                           <div className="min-w-0">
-                            <div className="text-sm text-slate-800 truncate">
-                              {f.label}
-                              {locked && <span className="text-[11px] text-slate-400 mr-1.5">🔒</span>}
-                            </div>
+                            {/*
+                              التسمية تُكتب بلغتك: «جوال ولي الأمر» أو «رقم الأب»
+                              أو ما تشاء. والمقفولتان مقفولتان في موضعهما ونوعهما
+                              وإلزامهما لا في اسمهما — الاسم كلامٌ يُقال للناس.
+                            */}
+                            <button className="text-sm text-slate-800 truncate flex items-center gap-1.5 text-right"
+                              onClick={() => { setForm({ id: f.id, label: f.label }); setModal('renameField'); }}>
+                              <span className="truncate">{f.label}</span>
+                              <Pencil size={12} className="text-slate-300 shrink-0" />
+                              {locked && <span className="text-[11px] text-slate-400">🔒</span>}
+                            </button>
                             <div className="text-[11px] text-slate-400">
                               {f.type === 'choice' ? (f.options || []).join(' / ') : f.type === 'number' ? 'رقم' : f.type === 'phone' ? 'جوال' : 'نص'}
                             </div>
@@ -7226,6 +7233,25 @@ export default function App() {
           <Field label="التاريخ (هـ)"><input className={inputCls} value={form.date || ''} onChange={(e) => setForm({ ...form, date: e.target.value })} placeholder="1447/02/01" /></Field>
           {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
           <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={addWeek}>إضافة</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
+        </Modal>
+      )}
+
+      {modal === 'renameField' && (
+        <Modal title="تسمية الخانة" onClose={closeModal}>
+          <Field label="اللي يقرأه ولي الأمر" hint="تنطبق على كل روابط التسجيل.">
+            <input className={inputCls} value={form.label ?? ''} autoFocus
+              onChange={(e) => setForm({ ...form, label: e.target.value, error: '' })} />
+          </Field>
+          {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+          <div className="flex gap-2 mt-5">
+            <button className={btnPrimary + ' flex-1'} onClick={() => {
+              const label = (form.label || '').trim();
+              if (!label) { setForm({ ...form, error: 'اكتب التسمية' }); return; }
+              save({ ...data, signupFields: data.signupFields.map((x) => (x.id === form.id ? { ...x, label } : x)) });
+              closeModal();
+            }}>حفظ</button>
+            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+          </div>
         </Modal>
       )}
 

@@ -12,6 +12,47 @@ import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, cover
 const input = 'w-full border border-slate-200 rounded-xl px-3.5 py-3 text-[15px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent';
 const inputBad = input.replace('border-slate-200', 'border-red-300');
 const fmt = (n) => Number(n || 0).toLocaleString('en-US');
+/**
+ * رمز الريال السعودي (U+20C1) — يحلّ محلّ «ر.س» في كل ما يراه وليّ الأمر.
+ *
+ * ورمزٌ حديثٌ ما تحمله كل الخطوط: جرّبتُ خطوط جوجل فما فيها واحدٌ يرسمه، فمن
+ * فتح الصفحة بجهازٍ خطُّه أقدم يرى مربّعًا فارغًا مكان المبلغ. فنسأل المتصفّح:
+ * هل ترسمه؟ — نقيس عرضه ونقارنه بحرفٍ لا رسم له في خط. فإن رسمه فهو، وإلا
+ * رجعنا إلى «ر.س». ولا يرى أحدٌ مربّعًا.
+ */
+const RIYAL = '\u20C1';
+/**
+ * حرفان غير مُسنَدين في يونيكود: لا خطَّ يرسمهما، فالمتصفّح يرسم لهما «المربّع
+ * الفارغ» — وعرضه ثابت. فمن ساوى عرضُه عرضَهما فهو مربّعٌ مثلهما لا رمز.
+ */
+const NO_GLYPH = ['\u0378', '\u05FF'];
+const drawsRiyal = () => {
+  try {
+    const c = document.createElement('canvas').getContext('2d');
+    if (!c) return false;
+    c.font = '64px Tajawal, system-ui, sans-serif';
+    const w = (ch) => c.measureText(ch).width;
+    const [a, b] = NO_GLYPH.map(w);
+    // ما اتفق الشاهدان؟ إذًا القياس ما يُعتمد عليه — فنبقى على «ر.س»
+    if (!a || Math.abs(a - b) > 0.5) return false;
+    return w(RIYAL) > 0 && Math.abs(w(RIYAL) - a) > 0.5;
+  } catch {
+    return false;
+  }
+};
+
+/** يبدأ بـ«ر.س» ثم ينقلب للرمز إن رسمه الجهاز — فما يومض مربّعٌ لحظة. */
+const useRiyal = () => {
+  const [sar, setSar] = useState('ر.س');
+  useEffect(() => {
+    let live = true;
+    const check = () => { if (live && drawsRiyal()) setSar(RIYAL); };
+    if (typeof document !== 'undefined' && document.fonts?.ready) document.fonts.ready.then(check).catch(check);
+    else check();
+    return () => { live = false; };
+  }, []);
+  return sar;
+};
 
 function Shell({ children }) {
   return (
@@ -355,6 +396,8 @@ export default function SignupPage({ token }) {
   const [openMore, setOpenMore] = useState([]);   // أبناءٌ فُتحت تفاصيلهم الاختيارية
   const [atForm, setAtForm] = useState(false);    // وصل النموذج، فالزر الثابت ما عاد له معنى
   const formTop = React.useRef(null);
+  // الرمز أو «ر.س» — حسب ما يرسمه جهاز وليّ الأمر
+  const SAR = useRiyal();
 
   /**
    * الزر الثابت يختفي عند النموذج: ما فيه معنى لزرٍّ يوعد بنقلك إلى مكانٍ
@@ -720,7 +763,7 @@ export default function SignupPage({ token }) {
                           )}
                         </span>
                         <span className="shrink-0 font-bold text-brand-700 text-left">
-                          {fmt(pk.price)} ر.س
+                          {fmt(pk.price)} {SAR}
                         </span>
                       </button>
                     );
@@ -736,7 +779,7 @@ export default function SignupPage({ token }) {
             const span = Number(pkg.days || 0);
             return (
               <div className="mb-4 bg-brand-50 rounded-xl px-3.5 py-3 text-sm text-brand-900">
-                <div className="font-semibold mb-1">{pkg.name} · {fmt(dueFor(view, kid))} ر.س</div>
+                <div className="font-semibold mb-1">{pkg.name} · {fmt(dueFor(view, kid))} {SAR}</div>
                 {span > 0 && (
                   <div className="text-xs text-brand-700">
                     يشمل {span} {span === 1 ? 'يومًا' : 'أيام'}
@@ -799,7 +842,7 @@ export default function SignupPage({ token }) {
                   )}
                   {dueFor(view, kid) > 0 && (
                     <div className="text-sm text-brand-800 bg-brand-50 rounded-xl px-3 py-2 mt-3 font-semibold">
-                      {view.usePackages && !pkg?.perDay ? pkg.name : `${picked} يوم`} · {fmt(dueFor(view, kid))} ر.س
+                      {view.usePackages && !pkg?.perDay ? pkg.name : `${picked} يوم`} · {fmt(dueFor(view, kid))} {SAR}
                     </div>
                   )}
                 </Row>
@@ -817,7 +860,7 @@ export default function SignupPage({ token }) {
       {view.accounts.length > 0 && (
         <div className="bg-white rounded-2xl p-5 mb-4" data-bad={errors.accountId ? '1' : undefined}>
           <div className="font-bold text-slate-800 mb-1">{txt(view, 'payLabel')}</div>
-          {total > 0 && <div className="text-sm text-slate-500 mb-4">{txt(view, 'dueLabel')}: <b className="text-brand-700">{fmt(total)} ر.س</b></div>}
+          {total > 0 && <div className="text-sm text-slate-500 mb-4">{txt(view, 'dueLabel')}: <b className="text-brand-700">{fmt(total)} {SAR}</b></div>}
           <div className="space-y-2">
             {view.accounts.map((a) => {
               const on = accountId === a.id;
