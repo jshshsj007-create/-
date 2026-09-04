@@ -300,6 +300,15 @@ export const publicView = (data, program) => {
       // وجهة زر «تواصل معنا»: رقم الفريق أو مجموعة هذا البرنامج
       contactUrl: contactUrl(data, program),
       redirect: s.waRedirect !== false,
+      /**
+       * وجهة التحويل بعد التسجيل: رقم الفريق أو مجموعة البرنامج.
+       *
+       * الرقم يجعل وليّ الأمر يرسل لك رسالةً فيها مرجعه — وهذي طريقتك في
+       * معرفة أنه سجّل. والمجموعة تُدخله على الأهالي مباشرة، ورابطُها ما يحمل
+       * رسالة، فما يُكتب معه شيء. والرابط الساقط يرجع للرقم فلا يبقى بلا وجهة.
+       */
+      redirectGroup: Boolean(s.redirect?.mode === 'group' && waGroupLink(s.redirect?.link)),
+      redirectUrl: (s.redirect?.mode === 'group' && waGroupLink(s.redirect?.link)) || '',
       // نص هذا البرنامج، وإلا النص العام، وإلا المقترح
       template: String(s.waTemplate || data.waTemplate || DEFAULT_WA_TEMPLATE),
     },

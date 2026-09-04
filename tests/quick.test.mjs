@@ -41,9 +41,25 @@ test('التسجيل بالأسماء يتجاهل حقول التسجيل ال�
 test('حالة اليوم تُحسب: لم يبدأ ← جاري ← مكتمل', () => {
   const empty = { mode: 'quick', quickCount: 0, quickRevenue: 0, status: 'مفتوح' };
   assert.equal(weekState(empty), 'لم يبدأ');
-  assert.equal(weekState(quickWeek), 'جاري');
-  assert.equal(weekState({ ...quickWeek, status: 'مغلق' }), 'مكتمل');
-  assert.equal(weekState({ ...empty, status: 'مغلق' }), 'مكتمل'); // الإغلاق يغلب
+  // بدأ ووُزّع صافيه كله على المدارس وفيض
+  assert.equal(weekState(quickWeek), 'مكتمل');
+  // وما دام في صافيه ما لم يُوزَّع فهو جارٍ
+  assert.equal(weekState({ ...quickWeek, faidPayouts: [{ id: 'f', amount: 100 }] }), 'جاري');
+  assert.equal(weekState({ ...quickWeek, schoolPayouts: [], faidPayouts: [] }), 'جاري');
+});
+
+test('و«مقفل» غير «مكتمل»: هذا وُزّع إيراده، وذاك أقفلتَه بيدك', () => {
+  const empty = { mode: 'quick', quickCount: 0, quickRevenue: 0, status: 'مفتوح' };
+  assert.equal(weekState({ ...quickWeek, status: 'مغلق' }), 'مقفل');
+  assert.equal(weekState({ ...empty, status: 'مغلق' }), 'مقفل', 'القفل يغلب على كل شيء');
+});
+
+test('واليوم الفارغ ما يصير مكتملًا لأن باقيه صفر', () => {
+  // صافيه صفر وما وُزّع فيه ريال — فهو جارٍ لا مكتمل
+  const w = { mode: 'quick', quickCount: 3, quickRevenue: 0, status: 'مفتوح',
+    schoolPayouts: [], faidPayouts: [] };
+  assert.equal(L.remaining(w), 0);
+  assert.equal(weekState(w), 'جاري');
 });
 
 test('يوم فيه مصروف بس يُعتبر بدأ', () => {

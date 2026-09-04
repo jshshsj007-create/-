@@ -41,7 +41,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v6.9';
+const APP_VERSION = 'v7.0';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -112,11 +112,33 @@ const emptyLedger = (mode = 'named') => ({
   participants: [], collections: [], expenseItems: [], schoolPayouts: [], faidPayouts: [], faidTransfer: null,
 });
 
-/** حالة اليوم المعروضة: تُحسب من البيانات، ما هي حقل يدوي. */
+/**
+ * حالة اليوم: تُحسب من البيانات، ما هي حقل يدوي — إلا القفل، فهو بيدك.
+ *
+ * **لم يبدأ** — جمعةٌ أنشأتَها ولمّا تجئ.
+ * **جاري** — بدأت وما وُزّع إيرادها بعد. وهذي وحدها التي تعنيك اليوم، فهي
+ *   وحدها في الشاشة الرئيسة وفي النادي.
+ * **مكتمل** — وُزّع إيرادها على المدارس وفيض، فما بقي فيها عمل.
+ * **مقفل** — أقفلتَها بيدك: دفترها ما يُعدَّل، وتختفي من الشاشتين.
+ *
+ * وكانت «مكتمل» اسمًا للمقفل، فيقفل صاحبُ التطبيق الجمعة ويظنّها انتهت لا
+ * أُخفيت — ثم يعجب كيف نقصت باقتُه وغابت أيامه.
+ */
+/** ألوان الحالات — في مكانٍ واحد، فلا تفترق شارةٌ عن أخرى. */
+export const STATE_TONE = { جاري: 'amber', مكتمل: 'green', مقفل: 'slate' };
+const STATE_ICON = {
+  جاري: 'bg-amber-50 text-amber-700',
+  مكتمل: 'bg-green-50 text-green-700',
+  مقفل: 'bg-slate-100 text-slate-400',
+};
+
 export const weekState = (l) => {
-  if (l?.status === 'مغلق') return 'مكتمل';
+  if (l?.status === 'مغلق') return 'مقفل';
   const started = headcount(l) > 0 || L.revenue(l) > 0 || L.expenses(l) > 0;
-  return started ? 'جاري' : 'لم يبدأ';
+  if (!started) return 'لم يبدأ';
+  // «وُزّع» لا «ما بقي شيء»: الجمعة الفارغة باقيها صفرٌ وما وُزّع فيها ريال
+  const out = L.school(l) + L.faid(l);
+  return out > 0 && L.remaining(l) === 0 ? 'مكتمل' : 'جاري';
 };
 
 /* ---------------------------- مقارنة المواسم ---------------------------- */
@@ -618,6 +640,8 @@ export const emptySignup = () => ({
   place: { name: '', map: '' },
   // وجهة زر «تواصل معنا»: رقم الفريق، أو مجموعة هذا البرنامج
   contact: { mode: 'number', link: '' },
+  // ووجهة التحويل بعد التسجيل: الرقم برسالته، أو المجموعة بلا رسالة
+  redirect: { mode: 'number', link: '' },
 });
 
 /* ------------------------------ عناصر واجهة عامة ------------------------------ */
@@ -648,7 +672,14 @@ function WeekPicker({ programs, form, setForm, optional }) {
    */
   const shown = (list, chosen) => list.filter((x) => x.status !== 'مغلق' || x.id === chosen);
   const progs = shown(programs, form.programId).slice().reverse();
-  const weeks = shown(p?.weeks || [], form.weekId);
+  /**
+   * والأسابيع: الجاري وحده.
+   *
+   * المسابقة تُسجَّل في يومها، لا في يومٍ ما جاء ولا في يومٍ انتهى وُوزّع.
+   * وكانت القائمة تعرض كلَّ ما لم يُقفل، فيقف صاحب التطبيق أمام عشر جمعٍ
+   * متشابهة يدوّر أيّها اليوم.
+   */
+  const weeks = (p?.weeks || []).filter((w) => weekState(w) === 'جاري' || w.id === form.weekId);
   return (
     <>
       <Field label={optional ? 'البرنامج — اختياري' : 'البرنامج'}>
@@ -3429,8 +3460,15 @@ export default function App() {
    * ما نسأل «وش تاريخ اليوم؟» — تاريخ اليوم يُكتب يدويًا وأغلبه فاضٍ، والأصدق
    * أن نعرض اللي فتحه هو بنفسه.
    */
+  /**
+   * الجاري وحده.
+   *
+   * كان المعروض كلَّ ما لم يُقفل، فمن أنشأ موسمًا عشرَ جمعٍ سلفًا طلعت له
+   * العشر — وأقدمُها فوق، والتي هو فيها مدفونةٌ تحتها. والشاشة الأولى تقول
+   * «وش تشتغل عليه الآن»، فما يقوم فيها إلا ما بدأ ولم يُوزَّع إيراده.
+   */
   const myOpenDays = !canAttend ? [] : termPrograms.flatMap((p) =>
-    p.weeks.filter((w) => w.status === 'مفتوح' && canSeeWeek(p.id, w.id))
+    p.weeks.filter((w) => weekState(w) === 'جاري' && canSeeWeek(p.id, w.id))
       .map((w) => ({ program: p, week: w })));
   const canTransfer = can('فيض - الإيرادات والمصروفات') && canMoney;
   /**
@@ -3836,7 +3874,9 @@ export default function App() {
             */}
             {canAttend && myOpenDays.length > 0 && (
               <div className="mb-5">
-                <div className="text-sm font-bold text-slate-700 mb-2">أيام مفتوحة ({myOpenDays.length})</div>
+                <div className="text-sm font-bold text-slate-700 mb-2">
+                  {myOpenDays.length === 1 ? 'اليوم الجاري' : `أيام جارية (${myOpenDays.length})`}
+                </div>
                 <div className="space-y-2.5">
                   {myOpenDays.slice(0, 4).map(({ program: pr, week: w }) => (
                     <button key={w.id}
@@ -4125,14 +4165,13 @@ export default function App() {
                       return (
                         <button key={w.id} onClick={() => { setSelectedWeekId(w.id); setWeekTab(isGrouped ? 'attendance' : 'overview'); goto('weekDetail'); }}
                           className="w-full bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3 text-right hover:shadow-md transition-shadow">
-                          <span className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${st === 'مكتمل' ? 'bg-green-50 text-green-700' : st === 'جاري' ? 'bg-amber-50 text-amber-700' : 'bg-brand-50 text-brand-700'}`}>
+                          <span className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${STATE_ICON[st] || 'bg-brand-50 text-brand-700'}`}>
                             <Calendar size={20} />
                           </span>
                           <span className="flex-1 min-w-0">
                             <span className="flex items-center gap-2">
                               <span className="font-bold text-slate-800">{w.name}</span>
-                              {st === 'مكتمل' && <Badge tone="green">مكتمل</Badge>}
-                              {st === 'جاري' && <Badge tone="amber">جاري</Badge>}
+                              {STATE_TONE[st] && <Badge tone={STATE_TONE[st]}>{st}</Badge>}
                             </span>
                             <span className="block text-xs text-slate-400 mt-0.5">{w.date ? `${w.date} · ` : ''}{note}</span>
                           </span>
@@ -4818,10 +4857,57 @@ export default function App() {
                         })()}
 
                         <Toggle label="التحويل لواتساب بعد التسجيل"
-                          hint="يشوف صفحة النجاح ورقمه المرجعي، ثم ينتقل للمحادثة."
+                          hint="يشوف صفحة النجاح ورقمه المرجعي، ثم ينتقل."
                           on={s.waRedirect !== false} onChange={(v) => patchSignup({ waRedirect: v })} />
 
-                        {s.waRedirect !== false && (
+                        {/*
+                          الرقم يجعله يرسل لك رسالةً فيها مرجعه، فتعرف أنه سجّل.
+                          والمجموعة تُدخله على الأهالي، ورابطُها ما يحمل رسالة —
+                          فما يُكتب معه شيء، ويسقط معه محرّر النص.
+                        */}
+                        {s.waRedirect !== false && (() => {
+                          const r = s.redirect || { mode: 'number', link: '' };
+                          const grp = r.mode === 'group';
+                          const c = s.contact || {};
+                          return (
+                            <div className="bg-slate-50 rounded-xl p-3 mb-4 mt-3">
+                              <div className="text-xs text-slate-500 mb-2.5">يوديه إلى:</div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <button onClick={() => patchSignup({ redirect: { ...r, mode: 'number' } })}
+                                  className={`rounded-lg py-2.5 text-sm font-semibold border ${grp ? 'bg-white border-slate-200 text-slate-600' : 'bg-brand-600 border-brand-600 text-white'}`}>
+                                  رقم الفريق
+                                </button>
+                                <button onClick={() => patchSignup({ redirect: { ...r, mode: 'group' } })}
+                                  className={`rounded-lg py-2.5 text-sm font-semibold border ${grp ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-slate-200 text-slate-600'}`}>
+                                  مجموعة البرنامج
+                                </button>
+                              </div>
+                              {grp ? (
+                                <div className="mt-3">
+                                  <input className={inputCls} dir="ltr" value={r.link || ''}
+                                    onChange={(e) => typeSignup({ redirect: { ...r, link: e.target.value } })}
+                                    placeholder="https://chat.whatsapp.com/…" />
+                                  <div className={`text-xs mt-1.5 ${r.link && !waGroupLink(r.link) ? 'text-red-500' : 'text-slate-400'}`}>
+                                    {r.link && !waGroupLink(r.link)
+                                      ? 'هذا مو رابط واتساب. التحويل يرجع لرقم الفريق حتى تصلحه.'
+                                      : 'يدخل المجموعة مباشرة، وما تنكتب له رسالة — فما يوصلك خبرُ تسجيله في واتساب.'}
+                                  </div>
+                                  {/* مجموعةٌ واحدة للبرنامج غالبًا، فلا تُلصق مرتين */}
+                                  {waGroupLink(c.link) && c.link !== r.link && (
+                                    <button className="text-xs text-brand-600 font-semibold mt-2"
+                                      onClick={() => patchSignup({ redirect: { ...r, link: c.link } })}>
+                                      نفس مجموعة زر «تواصل معنا»
+                                    </button>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="text-xs text-slate-400 mt-2.5" dir="ltr">{data.waNumber || '—'}</div>
+                              )}
+                            </div>
+                          );
+                        })()}
+
+                        {s.waRedirect !== false && (s.redirect?.mode !== 'group' || !waGroupLink(s.redirect?.link)) && (
                           <div className="mt-4">
                             <Field label="نص الرسالة الجاهزة" hint="اضغط المتغيّر ينضاف للنص. وتقدر تمسحه وتكتب اللي تبي.">
                               <textarea className={inputCls + ' h-24 leading-7'}
@@ -4974,9 +5060,13 @@ export default function App() {
                   </>
                 )}
               </div>
+              {/*
+                الزر يقول ما يفعله لا ما هو فيه: كان مكتوبًا عليه «مكتمل» وهو
+                مقفل، فيُقرأ خبرًا لا أمرًا — ويُظنّ اليومُ منتهيًا لا مخفيًّا.
+              */}
               <button onClick={() => patchWeek({ status: week.status === 'مفتوح' ? 'مغلق' : 'مفتوح' })}
-                className={`flex items-center gap-1.5 text-sm font-semibold px-3 py-2 rounded-lg ${week.status === 'مفتوح' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>
-                {week.status === 'مفتوح' ? <Unlock size={15} /> : <Lock size={15} />} {week.status === 'مفتوح' ? 'قيد العمل' : 'مكتمل'}
+                className={`flex items-center gap-1.5 text-sm font-semibold px-3 py-2 rounded-lg ${week.status === 'مفتوح' ? 'bg-slate-100 text-slate-600' : 'bg-brand-600 text-white'}`}>
+                {week.status === 'مفتوح' ? <><Lock size={15} /> اقفلها</> : <><Unlock size={15} /> افتحها</>}
               </button>
             </div>
 
@@ -5057,7 +5147,7 @@ export default function App() {
                   <div className="space-y-3">
                     <div className={cardCls + ' flex items-center justify-between'}>
                       <span className="text-sm text-slate-500">حالة اليوم</span>
-                      <Badge tone={weekState(week) === 'مكتمل' ? 'green' : weekState(week) === 'جاري' ? 'amber' : 'slate'}>{weekState(week)}</Badge>
+                      <Badge tone={STATE_TONE[weekState(week)] || 'slate'}>{weekState(week)}</Badge>
                     </div>
                     <InfoRow icon={UsersIcon} label={isQuick(week) ? 'الطلاب المسجلين' : 'الطلاب'} value={`${headcount(week)} طالب`} />
                     {canMoney && <InfoRow icon={TrendingUp} label="إجمالي الإيراد" value={`${fmt(L.revenue(week))} ر.س`} />}
@@ -5131,7 +5221,7 @@ export default function App() {
                     {roster.length > 0 && canMoney && (
                       <div className="mb-3"><FilterChips options={payOptions(roster)} value={payFilter} onChange={setPayFilter} /></div>
                     )}
-                    {ledgerLocked && <div className="text-xs text-amber-600 mb-3">اليوم مغلق — افتحه من الأعلى عشان تعدّل.</div>}
+                    {ledgerLocked && <div className="text-xs text-amber-600 mb-3">اليوم مقفل — افتحه من الأعلى عشان تعدّل.</div>}
                     {isQuick(week) && canMoney && (
                       <div className="bg-brand-50 border border-brand-100 rounded-xl px-4 py-3 text-sm text-brand-900 mb-3">
                         هذا اليوم مسجّل بالعدد والمبلغ ({week.quickCount} طالب · {fmt(week.quickRevenue)} ر.س).

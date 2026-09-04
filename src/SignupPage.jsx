@@ -16,13 +16,19 @@ const fmt = (n) => Number(n || 0).toLocaleString('en-US');
 function Shell({ children }) {
   return (
     <div dir="rtl" className="min-h-screen bg-slate-50" style={{ fontFamily: "'Tajawal', sans-serif" }}>
-      <div className="bg-brand-900 px-5 pt-6 pb-14">
+      {/*
+        الرأس ينتهي والبطاقة تبدأ — بلا تداخل.
+
+        كان الرأس يمدّ ذيلًا والمحتوى يُسحب فيه، فتحسن بطاقةٌ صغيرة. أما بطاقة
+        الصور الطويلة فيقطعها حدُّ الكحلي في ثلثها الأعلى، فتُقرأ مائلة.
+      */}
+      <div className="bg-brand-900 px-5 py-6">
         <div className="max-w-lg mx-auto flex items-center gap-3">
           <FaydhLogo size={44} variant="mark" />
           <div className="text-white font-extrabold text-xl">{TEAM_NAME}</div>
         </div>
       </div>
-      <div className="px-4 -mt-8 pb-16 max-w-lg mx-auto">{children}</div>
+      <div className="px-4 pt-4 pb-16 max-w-lg mx-auto">{children}</div>
     </div>
   );
 }
@@ -57,26 +63,37 @@ function Gallery({ ids, alt }) {
 
   return (
     <>
-      <div className="bg-white rounded-2xl p-2.5 mb-3">
+      {/*
+        إطارٌ واحد لا ثلاثة.
+
+        كانت بطاقةٌ بيضاء، وفيها صندوقٌ رمادي، وفيه الصورة — فتُقرأ صورةً داخل
+        صورة. وخلفها الآن هي نفسها مموّهةً معتمة، فما بقي حدٌّ ثانٍ تراه العين،
+        ولا يُقصّ من الملصق شيء.
+      */}
+      <div className="relative rounded-2xl overflow-hidden h-[38vh] min-h-[190px] max-h-[330px] mb-2">
+        <div aria-hidden className="absolute inset-0 bg-center bg-cover scale-125 blur-2xl brightness-[.68]"
+          style={{ backgroundImage: `url(${src(ids[at])})` }} />
         <button type="button" onClick={() => setFull(true)} {...swipe}
-          className="w-full h-[38vh] min-h-[190px] max-h-[330px] rounded-xl bg-slate-100 flex items-center justify-center overflow-hidden">
+          className="relative w-full h-full flex items-center justify-center">
           <img src={src(ids[at])} alt={alt || ''} className="max-w-full max-h-full object-contain block" />
         </button>
-
-        {/*
-          كان تحتها شريط مصغّرات يأكل ستين بكسل من الشاشة الأولى. والنقاط
-          والعدّاد يقولان نفس الشيء — «فيه غيرها، اسحب» — في عُشر المساحة.
-        */}
-        {ids.length > 1 && (
-          <div className="flex items-center justify-center gap-2 pt-2 pb-0.5">
-            {ids.map((id, i) => (
-              <button key={id} type="button" onClick={() => setAt(i)} aria-label={`صورة ${i + 1}`}
-                className={`h-1.5 rounded-full transition-all ${i === at ? 'w-5 bg-brand-700' : 'w-1.5 bg-slate-300'}`} />
-            ))}
-            <span className="text-[11px] text-slate-400 mr-1.5">{at + 1} من {ids.length}</span>
-          </div>
-        )}
       </div>
+
+      {/*
+        كان تحتها شريط مصغّرات يأكل ستين بكسل من الشاشة الأولى. والنقاط
+        والعدّاد يقولان نفس الشيء — «فيه غيرها، اسحب» — في عُشر المساحة.
+        وموضعها خارج الإطار: لونها ثابتٌ يُقرأ، ولو نزلت على الصورة تبدّلت
+        أرضيتها بتبدّل الصور فغابت في الفاتحة منها.
+      */}
+      {ids.length > 1 && (
+        <div className="flex items-center justify-center gap-2 pb-1 mb-2">
+          {ids.map((id, i) => (
+            <button key={id} type="button" onClick={() => setAt(i)} aria-label={`صورة ${i + 1}`}
+              className={`h-1.5 rounded-full transition-all ${i === at ? 'w-5 bg-brand-700' : 'w-1.5 bg-slate-300'}`} />
+          ))}
+          <span className="text-[11px] text-slate-400 mr-1.5">{at + 1} من {ids.length}</span>
+        </div>
+      )}
 
       {full && (
         <div className="fixed inset-0 z-50 bg-slate-900/95 flex flex-col items-center justify-center gap-4 p-4"
@@ -441,9 +458,9 @@ export default function SignupPage({ token }) {
 
   if (state === 'done') {
     const vars = signupVars(view, { answers, kids, accountId }, { ref: result?.ref });
-    const href = view.wa.redirect
-      ? waLink(view.wa.number, fillTemplate(view.wa.template, vars))
-      : '';
+    // المجموعة تُدخله فيها بلا رسالة — رابطُها ما يحمل نصًّا. والرقم برسالته
+    const href = !view.wa.redirect ? ''
+      : (view.wa.redirectUrl || waLink(view.wa.number, fillTemplate(view.wa.template, vars)));
     const note = txt(view, 'redirectNote', vars);
     return (
       <Shell>
@@ -519,7 +536,7 @@ export default function SignupPage({ token }) {
       setResult(r.body);
       if (view.wa.redirect) {
         const vars = signupVars(view, body, { ref: r.body?.ref });
-        setGoWa(waLink(view.wa.number, fillTemplate(view.wa.template, vars)));
+        setGoWa(view.wa.redirectUrl || waLink(view.wa.number, fillTemplate(view.wa.template, vars)));
       }
       setState('done');
       return;
