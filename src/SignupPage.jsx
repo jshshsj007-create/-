@@ -267,13 +267,6 @@ function Facts({ facts }) {
   );
 }
 
-/** «و٥ فعاليات ثانية» — والعدد يغيّر صيغة الكلمة، فما نكتب «و1 فعاليات». */
-const restText = (n) => {
-  if (n === 1) return 'وفعالية ثانية';
-  if (n === 2) return 'وفعاليتان ثانيتان';
-  return n <= 10 ? `و${n} فعاليات ثانية` : `و${n} فعالية ثانية`;
-};
-
 /**
  * الأنشطة: سطرٌ واحد يتبدّل.
  *
@@ -296,8 +289,8 @@ function Chips({ chips }) {
       <div className="bg-white border border-slate-100 rounded-2xl px-3.5 py-4 flex items-center gap-3">
         {c.icon && <span className="text-[34px] leading-none shrink-0">{c.icon}</span>}
         <span className="min-w-0">
+          {/* النقاط تحته تقول إن خلفه غيره، فعدّه بالكلام تكرارٌ لما تراه العين */}
           <b className="block text-[15.5px] font-extrabold text-slate-800 truncate">{c.text}</b>
-          {n > 1 && <span className="block text-[11px] text-slate-400 mt-0.5">{restText(n - 1)}</span>}
         </span>
       </div>
       {n > 1 && (
