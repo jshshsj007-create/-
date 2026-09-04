@@ -35,7 +35,7 @@ function Shell({ children }) {
  * ثابت الارتفاع والصورة تُحتوى داخله كاملة: ما تُقصّ منها زاوية، وما تبلع الصفحة.
  * والتفاصيل الدقيقة تُقرأ بالضغط — تنفتح بملء الشاشة.
  */
-function Gallery({ ids, alt, share }) {
+function Gallery({ ids, alt }) {
   const [at, setAt] = useState(0);
   const [full, setFull] = useState(false);
   const touch = React.useRef(null);
@@ -66,22 +66,16 @@ function Gallery({ ids, alt, share }) {
         {/*
           كان تحتها شريط مصغّرات يأكل ستين بكسل من الشاشة الأولى. والنقاط
           والعدّاد يقولان نفس الشيء — «فيه غيرها، اسحب» — في عُشر المساحة.
-
-          والمشاركة هنا لا في ذيل الصفحة: من أعجبه البرنامج أعجبه من صورته،
-          فيرسله ساعتَها لا بعد ما ينزل النموذج كله.
         */}
-        <div className="relative flex items-center justify-center gap-2 pt-2 pb-0.5 min-h-[26px]">
-          {ids.length > 1 && (
-            <>
-              {ids.map((id, i) => (
-                <button key={id} type="button" onClick={() => setAt(i)} aria-label={`صورة ${i + 1}`}
-                  className={`h-1.5 rounded-full transition-all ${i === at ? 'w-5 bg-brand-700' : 'w-1.5 bg-slate-300'}`} />
-              ))}
-              <span className="text-[11px] text-slate-400 mr-1.5">{at + 1} من {ids.length}</span>
-            </>
-          )}
-          {share && <span className="absolute left-0 top-1/2 -translate-y-1/2">{share}</span>}
-        </div>
+        {ids.length > 1 && (
+          <div className="flex items-center justify-center gap-2 pt-2 pb-0.5">
+            {ids.map((id, i) => (
+              <button key={id} type="button" onClick={() => setAt(i)} aria-label={`صورة ${i + 1}`}
+                className={`h-1.5 rounded-full transition-all ${i === at ? 'w-5 bg-brand-700' : 'w-1.5 bg-slate-300'}`} />
+            ))}
+            <span className="text-[11px] text-slate-400 mr-1.5">{at + 1} من {ids.length}</span>
+          </div>
+        )}
       </div>
 
       {full && (
@@ -210,9 +204,10 @@ function Chips({ chips }) {
 /**
  * مشاركة الرابط: ولي الأمر يرسله لأي أحد بضغطة. قائمة المشاركة في الجوال
  * أسرع طريق لواتساب، وعلى ما ينقصه ذلك ننسخ الرابط وننبّهه إنه اننسخ.
- * `wide` للزر العريض في صفحة النجاح، وبدونه دائرة صغيرة في ذيل بطاقة النص.
+ * وموضعه صفحة النجاح وحدها: أقوى لحظةٍ يوصّي فيها غيرَه أن يفرغ من تسجيله،
+ * لا وهو يقرأ الصور بعدُ.
  */
-function ShareButton({ title, label, wide = false }) {
+function ShareButton({ title, label }) {
   const [said, setSaid] = useState('');
   const go = async () => {
     const url = typeof location === 'undefined' ? '' : location.href;
@@ -227,24 +222,13 @@ function ShareButton({ title, label, wide = false }) {
     setTimeout(() => setSaid(''), 3000);
   };
   if (!label) return null;
-  if (wide) {
-    return (
-      <>
-        <button type="button" onClick={go}
-          className="w-full bg-white border border-slate-200 text-slate-700 font-bold rounded-xl py-3.5 flex items-center justify-center gap-2 text-[15px]">
-          <Share2 size={18} /> {label}
-        </button>
-        {said && <div className="text-xs text-center text-slate-500 mt-2">{said}</div>}
-      </>
-    );
-  }
   return (
     <>
-      <button type="button" onClick={go} title={label} aria-label={label}
-        className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center shrink-0">
-        <Share2 size={15} />
+      <button type="button" onClick={go}
+        className="w-full bg-white border border-slate-200 text-slate-700 font-bold rounded-xl py-3.5 flex items-center justify-center gap-2 text-[15px]">
+        <Share2 size={18} /> {label}
       </button>
-      {said && <span className="absolute left-0 top-9 whitespace-nowrap text-[10px] text-slate-500">{said}</span>}
+      {said && <div className="text-xs text-center text-slate-500 mt-2">{said}</div>}
     </>
   );
 }
@@ -485,7 +469,7 @@ export default function SignupPage({ token }) {
             </>
           )}
           {/* أقوى لحظة يوصّي فيها غيره: خلّص وارتاح */}
-          <div className="mt-3"><ShareButton title={shareTitle} label={txt(view, 'share')} wide /></div>
+          <div className="mt-3"><ShareButton title={shareTitle} label={txt(view, 'share')} /></div>
         </div>
       </Shell>
     );
@@ -597,15 +581,8 @@ export default function SignupPage({ token }) {
 
   return (
     <Shell>
-      {/* الصور أولًا: يشوف قبل ما يقرأ. وعلامة المشاركة في ذيلها */}
-      {(() => {
-        const ids = [view.poster, ...(view.gallery || [])].filter(Boolean);
-        const share = <ShareButton title={shareTitle} label={txt(view, 'share')} />;
-        // وبرنامجٌ بلا صور ما له ذيلٌ تُعلَّق فيه، فتنزل وحدها في سطرٍ نحيف
-        return ids.length
-          ? <Gallery ids={ids} alt={view.programName} share={share} />
-          : <div className="relative flex justify-end mb-2">{share}</div>;
-      })()}
+      {/* الصور أولًا: يشوف قبل ما يقرأ */}
+      <Gallery ids={[view.poster, ...(view.gallery || [])].filter(Boolean)} alt={view.programName} />
 
       <div className="bg-white rounded-2xl p-4 mb-3">
         {txt(view, 'intro') && <div className="text-[11.5px] text-slate-400 mb-0.5">{txt(view, 'intro')}</div>}
