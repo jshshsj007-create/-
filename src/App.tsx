@@ -15,6 +15,7 @@ import { STATES, TONES, studentState, stateCounts, stateOpts, NEAR, FAR } from '
 import { stamped, traceText, agoText } from './trace.js';
 import { trashed, pruned, sortedTrash, leftText, kindLabel, TRASH_DAYS } from './trash.js';
 import { canWrite as canWritePerm } from './perms.js';
+import { conversion, people } from './visits.js';
 import { makeToken as makeSignupToken, packTotal, packSpan, splitLump, subsFor, TEXTS, CLOSED, waIntl, waLink, varNames, fieldsFor, dayLabel, mapHref, waGroupLink, placeOf, DEFAULT_WA_TEMPLATE } from './signup.js';
 import { readImage, POSTER, GALLERY } from './img.js';
 import { qrDataUrl, qrPngBlob } from './qr.js';
@@ -42,7 +43,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v7.7';
+const APP_VERSION = 'v7.8';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -1335,6 +1336,12 @@ export default function App() {
   const [clubTab, setClubTab] = useState('comps');
   const [selectedTourId, setSelectedTourId] = useState(null);
   const [selectedQId, setSelectedQId] = useState(null);
+  /**
+   * عدّاد فتحات الروابط: يجي من الخادم مع كل مزامنة، وما يُحفظ في البيانات.
+   * فهو خبرٌ عن الرابط لا جزءٌ منه — ولو دخل البيانات لصار يُدفع ويُدمَج
+   * ويتعارض بلا سبب.
+   */
+  const [visits, setVisits] = useState({});
   const [selectedGuardianId, setSelectedGuardianId] = useState(null);
   /** الطالب الذي ذهب وليُّ أمره — يُفتح وحده، فما يبقى محبوسًا في القائمة. */
   const [selectedStudentId, setSelectedStudentId] = useState(null);
@@ -1454,6 +1461,7 @@ export default function App() {
       const saved = readSession();
       if (st.body?.initialized && saved?.token) {
         const r = await api('pull', { token: saved.token, sinceRev: -1 });
+        if (r.body?.visits) setVisits(r.body.visits);
         if (r.status === 200 && r.body?.data) {
           sess.current = { token: saved.token, username: saved.username };
           adopt(r.body.data, r.body.rev);
@@ -1483,6 +1491,7 @@ export default function App() {
       for (let attempt = 0; attempt < 4; attempt++) {
         const r = await api('push', { token: sess.current.token, baseRev: revRef.current, data: payload });
         if (r.status === 200) {
+          if (r.body?.visits) setVisits(r.body.visits);
           revRef.current = r.body.rev;
           baseRef.current = clone(payload);
           clearPending();
@@ -1535,6 +1544,7 @@ export default function App() {
       if (busyRef.current) return;
       const r = await api('pull', { token: sess.current.token, sinceRev: revRef.current });
       if (!alive) return;
+      if (r.body?.visits) setVisits(r.body.visits);
       if (r.status === 200 && r.body?.data) { adopt(r.body.data, r.body.rev); setSyncState('idle'); }
       else if (r.status === 200) setSyncState('idle');
       else if (r.status === 0) setSyncState('offline');
@@ -2922,6 +2932,23 @@ export default function App() {
   };
 
   /** التسجيلات اللي تنتظر تأكيد وصول مبلغها، عبر البرنامج وأسابيعه. */
+  /**
+   * كم واحدًا سجّل من الرابط.
+   *
+   * ونعدّ الأرقام المرجعية لا الصفوف: المشترك في المنفصل ينزل صفًّا في كل
+   * جمعةٍ يشملها اشتراكه، فلو عددنا الصفوف صار الواحدُ عشرة — ونسبةُ من فتح
+   * إلى من سجّل تنقلب كذبًا في صالحنا.
+   */
+  const signupCount = (p) => {
+    const refs = new Set();
+    const scan = (list) => {
+      for (const x of list || []) if (x?.source === 'link') refs.add(x.ref || x.id);
+    };
+    scan(p.participants);
+    for (const w of p.weeks || []) scan(w.participants);
+    return refs.size;
+  };
+
   const signupPending = (p) => {
     const out = [];
     for (const part of p.participants || []) {
@@ -3575,6 +3602,7 @@ export default function App() {
     }
     if (r.status !== 200 || !r.body?.data) { setLoginError('ما قدرت أوصل للخادم. تأكد من الإنترنت وجرّب مرة ثانية.'); return; }
     sess.current = { token: r.body.token, username: entered };
+    if (r.body?.visits) setVisits(r.body.visits);
     writeSession(sess.current);
     adopt(r.body.data, r.body.rev);
     const pending = resumePending(r.body.data, entered);
@@ -4323,6 +4351,25 @@ export default function App() {
                         <span className={`absolute top-1 w-6 h-6 rounded-full bg-white transition-all ${s.enabled ? 'right-1' : 'right-7'}`} />
                       </button>
                     </div>
+                    {/*
+                      من فتح ومن سجّل. والفرق بينهما هو الخبر: إن قلّ الفاتحون
+                      فالخلل في التوزيع، وإن كثروا وقلّ المسجّلون فالخلل في
+                      الصفحة نفسها — السعر أو الصورة أو الشرح.
+                    */}
+                    {(() => {
+                      const v = visits[program.id];
+                      if (!v?.total) return null;
+                      const joined = signupCount(program);
+                      const rate = conversion(v.total, joined);
+                      return (
+                        <div className="mt-3 pt-3 border-t border-slate-100 text-[12.5px] text-slate-500 leading-6">
+                          فتحه <b className="text-slate-800">{fmt(v.total)}</b> {people(v.total)}
+                          {v.today > 0 && <span className="text-slate-400"> ({fmt(v.today)} اليوم)</span>}
+                          {joined > 0 && <> · سجّل <b className="text-slate-800">{fmt(joined)}</b></>}
+                          {rate && <span className="text-brand-700 font-semibold"> ← {rate}</span>}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* بياناتٌ سبقت الإصلاح: وجهةٌ على برنامجٍ مقفول، والباركود يقول «مقفل» */}

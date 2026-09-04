@@ -16,6 +16,7 @@ import { dedupeByPhone, remapParticipants } from '../../src/people.js';
 import { runBackup, backupStatus, readSnapshot } from '../lib/backup.mjs';
 import { hash, verify, isHashed } from '../lib/password.mjs';
 import { loginBlocked, noteFail, clearFails } from '../../src/login.js';
+import { countVisit, dayKey } from '../../src/visits.js';
 
 /**
  * القاعدة تُفرض هنا، لا في المتصفح: ولي أمر واحد لكل جوال، وابن واحد لكل اسم
@@ -26,6 +27,39 @@ const enforceOnePerPhone = (data) => {
   const r = dedupeByPhone(data);
   if (!r.mergedGuardians && !r.mergedStudents) return data;
   return { ...data, guardians: r.guardians, students: r.students, programs: remapParticipants(data.programs, r.remap) };
+};
+
+/**
+ * بصمة الزائر.
+ *
+ * لا نحفظ عنوانه ولا شيئًا يعرّفه: نخلطه بسرّ المخزن وباليوم ثم نأخذ منه
+ * اثني عشر حرفًا. فما يُرجع منها إليه، وتتبدّل مع كل يومٍ من نفسها،
+ * ووظيفتها الوحيدة ألّا يُعدّ الواحد مرتين في يومه.
+ *
+ * وبلا عنوانٍ ترجع فاضية، فتُعدّ الفتحة ولا يُميَّز صاحبها — عدٌّ أخشن، وهو
+ * خيرٌ من لا شيء.
+ */
+const visitorPrint = (req, secret, day) => {
+  const ip = req?.headers?.get?.('x-nf-client-connection-ip') || req?.headers?.get?.('x-forwarded-for') || '';
+  if (!ip) return '';
+  return crypto.createHmac('sha256', String(secret || ''))
+    .update(String(ip).split(',')[0].trim() + '|' + day)
+    .digest('base64url').slice(0, 12);
+};
+
+/**
+ * ما يُرسل من العدّاد: رقمان لكل برنامج لا غير.
+ *
+ * والبصمات ما تخرج من الخادم أبدًا — لا حاجة للجوال بها، وإخراجها توسيعٌ
+ * لدائرة ما يُعرف عن الناس بلا فائدة.
+ */
+const visitsFor = (doc, at = Date.now()) => {
+  const day = dayKey(at);
+  const out = {};
+  for (const [pid, v] of Object.entries(doc?.visits || {})) {
+    out[pid] = { total: Number(v?.total || 0), today: Number(v?.days?.[day] || 0) };
+  }
+  return out;
 };
 
 const KEY = 'state';
@@ -232,6 +266,15 @@ export default async (req) => {
         closedText: doc?.data?.closedText || '',
       }, 404);
     }
+    /**
+     * نعدّه هنا: هذي أول لحظةٍ يطلب فيها الفاتحُ شيئًا، وقبل أن يرى حرفًا.
+     *
+     * ولا يرتفع رقم النسخة: العدّاد ليس من بيانات الفريق، فلو رفعناه لأيقظ
+     * أجهزتهم كلها كلما فتح وليُّ أمرٍ الرابط، وزاحم حفظًا جاريًا.
+     */
+    const at = Date.now();
+    const seen = countVisit(doc.visits, program.id, visitorPrint(req, doc.secret, dayKey(at)), at);
+    if (seen.changed) await writeDoc({ ...doc, visits: seen.stats });
     return json({ ok: true, view: publicView(doc.data, program) });
   }
 
@@ -340,7 +383,7 @@ export default async (req) => {
     if (pass.upgraded || cleared.length !== (doc.loginLog || []).length) {
       await writeDoc({ ...doc, data, loginLog: cleared });
     }
-    return json({ ok: true, rev: doc.rev, token: makeToken(doc.secret, u.username), data: strip(data, u) });
+    return json({ ok: true, rev: doc.rev, token: makeToken(doc.secret, u.username), data: strip(data, u), visits: visitsFor(doc) });
   }
 
   // ما بعدها يحتاج توكن سليم.
@@ -409,8 +452,9 @@ export default async (req) => {
 
   // سحب التحديثات: لو ما تغيّر شي نرجّع ردًّا خفيفًا بدل البيانات كاملة.
   if (op === 'pull') {
-    if (Number(body.sinceRev) === doc.rev) return json({ ok: true, rev: doc.rev, unchanged: true });
-    return json({ ok: true, rev: doc.rev, data: strip(doc.data, me) });
+    // العدّاد يمشي بلا رفع رقم النسخة، فيُرسل حتى مع «ما تغيّر شيء»
+    if (Number(body.sinceRev) === doc.rev) return json({ ok: true, rev: doc.rev, unchanged: true, visits: visitsFor(doc) });
+    return json({ ok: true, rev: doc.rev, data: strip(doc.data, me), visits: visitsFor(doc) });
   }
 
   // حفظ: لازم يكون البانٍ على آخر نسخة، وإلا نرجّع 409 ومعه الحالي عشان الدمج.
@@ -422,7 +466,7 @@ export default async (req) => {
     // ننشر الوثيقة كما هي ثم نستبدل ما تغيّر: أي سجلٍّ نضيفه لاحقًا يبقى
     const next = { ...doc, rev: doc.rev + 1, updatedAt: new Date().toISOString(), data };
     await writeDoc(next);
-    return json({ ok: true, rev: next.rev });
+    return json({ ok: true, rev: next.rev, visits: visitsFor(next) });
   }
 
   return json({ error: 'unknown_op' }, 400);
