@@ -42,7 +42,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v7.4';
+const APP_VERSION = 'v7.5';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -6296,7 +6296,8 @@ export default function App() {
                   const after = carryAfter(before, entry, st.wird?.hifz);
                   return (
                     <div key={st.id} className="bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3">
-                      <button className="flex-1 min-w-0 text-right" disabled={!editKhayr}
+                      {/* يُفتح للمشاهد أيضًا: التفاصيل داخله، والمنع في النافذة لا في بابها */}
+                      <button className="flex-1 min-w-0 text-right"
                         onClick={() => { setForm(khayrEntryForm(st, khayrSession)); setModal('khayrEntry'); }}>
                         <span className="block font-bold text-slate-800">{st.name}</span>
                         {/* موضعه يمشي معه: الشيخ ما يرجع للجلسة الماضية ليتذكّر وين وقف */}
@@ -6317,8 +6318,10 @@ export default function App() {
                           <Badge tone={entry.present === false ? 'red' : after > before ? 'amber' : 'green'}>
                             متراكم {after}
                           </Badge>
-                          <button onClick={() => askConfirm(`مسح تسميع «${st.name}» في هذي الجلسة؟`, () => clearKhayrEntry(khayrSession.id, st.id))}
-                            className="text-slate-300 hover:text-red-500"><X size={16} /></button>
+                          {editKhayr && (
+                            <button onClick={() => askConfirm(`مسح تسميع «${st.name}» في هذي الجلسة؟`, () => clearKhayrEntry(khayrSession.id, st.id))}
+                              className="text-slate-300 hover:text-red-500"><X size={16} /></button>
+                          )}
                         </>
                       )}
                       {!entry && <ChevronLeft size={18} className="text-slate-300 shrink-0" />}
@@ -8222,6 +8225,12 @@ export default function App() {
         const need = Number(st.wird?.hifz || 0);
         return (
           <Modal title={`تسميع ${st.name}`} onClose={closeModal} wide>
+            {/*
+              المشاهد يفتحها ليقرأ ما سُمّع، ولا يكتب.
+              و`fieldset` المعطّل يقفل ما بداخله كله دفعةً واحدة — أزرارَ
+              الحضور والقوائم والأرقام — فما ننسى خانةً تُركت مفتوحة.
+            */}
+            <fieldset disabled={!editKhayr} className="min-w-0 border-0 p-0 m-0">
             <div className="flex gap-2 mb-5">
               {[['حاضر', true], ['غائب', false]].map(([label, val]) => (
                 <button key={label} type="button" onClick={() => setForm({ ...form, present: val })}
@@ -8397,7 +8406,15 @@ export default function App() {
                 : `سمّع ${said} من ${need} — المتراكم عليه بعد هذي الجلسة: ${after} ${after === 1 ? 'وجه' : 'أوجه'}`}
             </div>
 
-            <div className="flex gap-2"><button className={btnPrimary + ' flex-1'} onClick={saveKhayrEntry}>حفظ التسميع</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
+            </fieldset>
+            {editKhayr
+              ? <div className="flex gap-2"><button className={btnPrimary + ' flex-1'} onClick={saveKhayrEntry}>حفظ التسميع</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
+              : (
+                <>
+                  <div className="text-[11px] text-slate-400 text-center mb-3">للقراءة فقط.</div>
+                  <button className={btnGhostBox + ' w-full'} onClick={closeModal}>إغلاق</button>
+                </>
+              )}
           </Modal>
         );
       })()}
