@@ -926,10 +926,8 @@ export default function SignupPage({ token }) {
             if (!acc?.needsReceipt) return null;
             return (
               <div className="mt-4 pt-4 border-t border-slate-100" data-bad={errors.receipt ? '1' : undefined}>
-                <div className="font-semibold text-slate-700 text-sm mb-1">صورة الإيصال <span className="text-red-500">*</span></div>
-                <div className="text-xs text-slate-500 mb-3">
-                  بعد ما تحوّل، أرفق صورة الإيصال أو لقطة من التحويل. بدونها ما يكتمل التسجيل.
-                </div>
+                {/* العنوان ونجمتُه يقولان المطلوب، والصندوق تحته يقول كيف */}
+                <div className="font-semibold text-slate-700 text-sm mb-3">صورة الإيصال <span className="text-red-500">*</span></div>
                 {receipt ? (
                   <div className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-xl p-3">
                     {receipt.type === 'application/pdf'
