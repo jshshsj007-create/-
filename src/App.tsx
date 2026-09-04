@@ -42,7 +42,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v7.5';
+const APP_VERSION = 'v7.6';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -3562,6 +3562,15 @@ export default function App() {
     const r = await api('login', { username: entered, password: loginForm.password });
     if (r.status === 401) { setLoginError('اسم المستخدم أو كلمة المرور غير صحيحة'); return; }
     if (r.status === 403) { setLoginError('هذا الحساب غير مفعّل. راجع المدير.'); return; }
+    /**
+     * صُدّ بعد محاولاتٍ كثيرة. ونقول له متى يعود: بابٌ مغلقٌ لا يُدرى متى
+     * يُفتح يُقرأ عطلًا، فيعيد المحاولة عشرًا ويطيل قفله على نفسه.
+     */
+    if (r.status === 429) {
+      const m = Math.max(1, Math.ceil(Number(r.body?.retryIn || 900) / 60));
+      setLoginError(`محاولات كثيرة. جرّب بعد ${m} دقيقة.`);
+      return;
+    }
     if (r.status !== 200 || !r.body?.data) { setLoginError('ما قدرت أوصل للخادم. تأكد من الإنترنت وجرّب مرة ثانية.'); return; }
     sess.current = { token: r.body.token, username: entered };
     writeSession(sess.current);

@@ -14,6 +14,8 @@ import { programFor, publicView, validateSubmission, applySubmission, normalizeS
 import { questionView, validateAnswer, applyAnswer, answersRateLimited, makeDraw, applyDraw } from '../../src/club.js';
 import { dedupeByPhone, remapParticipants } from '../../src/people.js';
 import { runBackup, backupStatus, readSnapshot } from '../lib/backup.mjs';
+import { hash, verify, isHashed } from '../lib/password.mjs';
+import { loginBlocked, noteFail, clearFails } from '../../src/login.js';
 
 /**
  * القاعدة تُفرض هنا، لا في المتصفح: ولي أمر واحد لكل جوال، وابن واحد لكل اسم
@@ -143,7 +145,9 @@ const guard = (incoming, current, me) => {
   if (allowed(me, 'المستخدمون والصلاحيات')) {
     // المتصفح ما عنده كلمات المرور، فأي مستخدم رجع بدونها يحتفظ بالقديمة
     out.users = (incoming?.users || []).map((u) => {
-      if (u.password) return u;
+      // كلمةٌ جديدة كتبها المدير: تُعمّى هنا، فما تُكتب صريحةً في المخزن أبدًا
+      if (u.password) return isHashed(u.password) ? u : { ...u, password: hash(u.password) };
+      // والمتصفح ما عنده الكلمات، فمن رجع بلا كلمةٍ يحتفظ بالقديمة
       const old = (current?.users || []).find((x) => x.id === u.id);
       return old?.password ? { ...u, password: old.password } : u;
     });
@@ -301,7 +305,7 @@ export default async (req) => {
     const u = body.user || {};
     if (!u.username || !u.password) return json({ error: 'missing_credentials' }, 400);
     const secret = crypto.randomBytes(32).toString('base64');
-    const data = { ...(body.data || {}), users: [u] };
+    const data = { ...(body.data || {}), users: [{ ...u, password: hash(u.password) }] };
     const next = { rev: 1, updatedAt: new Date().toISOString(), secret, data };
     await writeDoc(next);
     return json({ ok: true, rev: 1, token: makeToken(secret, u.username), data: strip(data, u) });
@@ -310,10 +314,33 @@ export default async (req) => {
   if (op === 'login') {
     if (!initialized) return json({ error: 'not_initialized' }, 409);
     const entered = String(body.username || '').trim().toLowerCase();
+    const now = Date.now();
+
+    /**
+     * العدّ قبل الفحص: من صُدّ ما نقول له «الاسم غلط» أو «الكلمة غلط» — كلاهما
+     * خبرٌ يفيد المخمِّن. ونعدّ الفاشلة وحدها، والناجحة تمحو أثر صاحبها.
+     */
+    const gate = loginBlocked(doc.loginLog, entered, now);
+    if (gate.blocked) return json({ error: 'too_many', retryIn: gate.retryIn }, 429);
+
     const u = (doc.data.users || []).find((x) => (x.username || '').toLowerCase() === entered);
-    if (!u || u.password !== body.password) return json({ error: 'bad_credentials' }, 401);
+    const pass = u ? verify(u.password, String(body.password ?? '')) : { ok: false, upgraded: null };
+    if (!u || !pass.ok) {
+      // سجلُّ المحاولات ما هو من البيانات، فما يرفع رقم النسخة ولا يزاحم حفظًا
+      await writeDoc({ ...doc, loginLog: noteFail(gate.recent, entered, now) });
+      return json({ error: 'bad_credentials' }, 401);
+    }
     if (u.status === 'غير نشط') return json({ error: 'inactive' }, 403);
-    return json({ ok: true, rev: doc.rev, token: makeToken(doc.secret, u.username), data: strip(doc.data, u) });
+
+    // كلمةٌ قديمة صريحة: تُعمّى في أول دخولٍ بها، بلا أن يشعر صاحبها
+    const cleared = clearFails(gate.recent, entered);
+    const data = pass.upgraded
+      ? { ...doc.data, users: doc.data.users.map((x) => (x.id === u.id ? { ...x, password: pass.upgraded } : x)) }
+      : doc.data;
+    if (pass.upgraded || cleared.length !== (doc.loginLog || []).length) {
+      await writeDoc({ ...doc, data, loginLog: cleared });
+    }
+    return json({ ok: true, rev: doc.rev, token: makeToken(doc.secret, u.username), data: strip(data, u) });
   }
 
   // ما بعدها يحتاج توكن سليم.
