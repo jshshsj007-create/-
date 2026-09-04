@@ -231,7 +231,7 @@ function Place({ place }) {
       <span className="font-semibold text-[12.5px] text-slate-700 leading-5 min-w-0">{place.name}</span>
       {place.map && (
         <span className="text-[11.5px] text-brand-600 font-bold mr-auto shrink-0 flex items-center">
-          الخريطة <ChevronLeft size={13} />
+          حنا هنا <ChevronLeft size={13} />
         </span>
       )}
     </>
@@ -814,22 +814,6 @@ export default function SignupPage({ token }) {
               </Row>
             </div>
           )}
-
-          {/* الباقة أيامها ما بقي من الموسم، فما نسأله عنها — نعرضها عليه */}
-          {view.usePackages && coversAll(view, packageOf(view, kid)) && (() => {
-            const pkg = packageOf(view, kid);
-            const span = Number(pkg.days || 0);
-            return (
-              <div className="mb-4 bg-brand-50 rounded-xl px-3.5 py-3 text-sm text-brand-900">
-                <div className="font-semibold mb-1">{pkg.name} · {fmt(dueFor(view, kid))} {SAR}</div>
-                {span > 0 && (
-                  <div className="text-xs text-brand-700">
-                    يشمل {span} {span === 1 ? 'يومًا' : 'أيام'}
-                  </div>
-                )}
-              </div>
-            );
-          })()}
 
           {view.pickDays && view.days.length > 0 && (!view.usePackages || kid.packageId)
             && !(view.usePackages && coversAll(view, packageOf(view, kid))) && (() => {
