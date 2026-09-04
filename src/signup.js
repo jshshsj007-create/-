@@ -515,7 +515,7 @@ export const validateSubmission = (view, body) => {
 
   const acc = view.accounts.find((a) => a.id === body?.accountId);
   if (view.accounts.length && !acc) {
-    errors.accountId = 'اختر طريقة الدفع';
+    errors.accountId = 'مطلوب';
   } else if (acc?.needsReceipt && !isReceipt(body?.receipt)) {
     errors.receipt = 'أرفق صورة الإيصال أو المستند';
   }

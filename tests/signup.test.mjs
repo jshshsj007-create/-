@@ -169,8 +169,8 @@ test('لازم يختار يومًا واحدًا على الأقل', () => {
 test('ما ينفع يختار حسابًا ما عرضته له', () => {
   const d = baseData();
   const v = publicView(d, d.programs[0]);
-  assert.equal(validateSubmission(v, { ...goodBody, accountId: 'qasim' }).errors.accountId, 'اختر طريقة الدفع');
-  assert.equal(validateSubmission(v, { ...goodBody, accountId: 'ملفّق' }).errors.accountId, 'اختر طريقة الدفع');
+  assert.equal(validateSubmission(v, { ...goodBody, accountId: 'qasim' }).errors.accountId, 'مطلوب');
+  assert.equal(validateSubmission(v, { ...goodBody, accountId: 'ملفّق' }).errors.accountId, 'مطلوب');
 });
 
 /* ------------------------------- الباقات ------------------------------- */
