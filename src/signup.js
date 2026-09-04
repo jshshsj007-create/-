@@ -333,6 +333,7 @@ export const TEXTS = {
   days: 'الأيام',
   packageLabel: 'طريقة التسجيل',
   perDayName: 'يومي',
+  addKid: 'أضف ابناً آخر',
   dueLabel: 'المبلغ المستحق',
   payLabel: 'طريقة الدفع',
   submit: 'إرسال التسجيل',

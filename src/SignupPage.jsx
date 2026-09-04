@@ -889,10 +889,13 @@ export default function SignupPage({ token }) {
         </div>
       ))}
 
-      <button type="button" className="w-full bg-white border border-dashed border-slate-300 text-brand-700 font-semibold rounded-2xl py-3.5 mb-4 flex items-center justify-center gap-2"
-        onClick={() => setKids([...kids, { name: '', days: [] }])}>
-        <Plus size={18} /> أضف ابناً آخر
-      </button>
+      {/* ومن مسح تسميته أخفى الزر — فبرنامجٌ لابنٍ واحدٍ ما يُعرض فيه */}
+      {txt(view, 'addKid') && (
+        <button type="button" className="w-full bg-white border border-dashed border-slate-300 text-brand-700 font-semibold rounded-2xl py-3.5 mb-4 flex items-center justify-center gap-2"
+          onClick={() => setKids([...kids, { name: '', days: [] }])}>
+          <Plus size={18} /> {txt(view, 'addKid')}
+        </button>
+      )}
 
       {view.accounts.length > 0 && (
         <div className="bg-white rounded-2xl p-5 mb-4" data-bad={errors.accountId ? '1' : undefined}>
