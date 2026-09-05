@@ -1,6 +1,6 @@
 /** اختبارات التسجيل السريع (عدد ومبلغ) وحالة اليوم. */
 import assert from 'node:assert/strict';
-import { L, isQuick, headcount, weekState, migrate, sumAmt } from './build/app.mjs';
+import { L, isQuick, headcount, weekState, started, booked, migrate, sumAmt } from './build/app.mjs';
 
 let passed = 0;
 const test = (name, fn) => { fn(); passed++; console.log('  ✓ ' + name); };
@@ -115,6 +115,53 @@ test('يوم سريع فاضي يتحوّل بلا بند تحصيل زائد', 
   const rev = Number(day.quickRevenue || 0);
   const patch = { mode: 'named', quickCount: 0, quickRevenue: 0, ...(rev > 0 ? { collections: [{ id: 'c', amount: rev }] } : {}) };
   assert.equal(patch.collections, undefined);
+});
+
+/* --------------------- المحجوز بالموسم لا يبدأ يومه --------------------- */
+
+/** مشترك بالموسم: صفٌّ في كل يوم من يوم تسجيله، بلا أن يصير اليوم. */
+const seat = (i, extra) => ({ id: 'x' + i, name: 'فهد', amount: 50, accountId: 'rajhi',
+  attendance: 'معلق', pending: true, prepaid: true,
+  sub: { id: 's1', packId: 'pk', total: 150, span: 3, i }, ...extra });
+const day = (parts) => ({ mode: 'named', status: 'مفتوح', participants: parts,
+  collections: [], expenseItems: [], schoolPayouts: [], faidPayouts: [] });
+
+test('اليوم الذي فيه محجوزٌ بالموسم وحده ما بدأ', () => {
+  assert.equal(booked(seat(1)), true);
+  assert.equal(started(day([seat(1)])), false);
+  assert.equal(weekState(day([seat(1)])), 'لم يبدأ');
+});
+
+test('فإذا سُجّل حضوره صار اليوم جاريًا', () => {
+  const came = { attendance: 'حاضر', pending: false, prepaid: false };
+  assert.equal(booked(seat(1, came)), false);
+  assert.equal(weekState(day([seat(1, came)])), 'جاري');
+  // والغياب تسجيلٌ كذلك: اليوم صار، وقد نُودي عليه فلم يحضر
+  assert.equal(weekState(day([seat(1, { ...came, attendance: 'غائب' })])), 'جاري');
+});
+
+test('واليوم الذي أكّدتَ فيه وصولَ مبلغه بدأ ولو ما نُودي', () => {
+  // التأكيد أثرٌ منك على هذا اليوم بعينه
+  assert.equal(booked(seat(0, { pending: false, prepaid: false, confirmedAt: 1 })), false);
+  assert.equal(weekState(day([seat(0, { pending: false, prepaid: false, confirmedAt: 1 })])), 'جاري');
+});
+
+test('ومن سجّلته بيدك يبدأ يومَه كما كان', () => {
+  // بلا ختم اشتراك: ليس محجوزًا، فوجودُه بداية
+  const byHand = { id: 'h1', name: 'سعد', amount: 50, accountId: 'rajhi', attendance: 'معلق' };
+  assert.equal(booked(byHand), false);
+  assert.equal(weekState(day([byHand])), 'جاري');
+});
+
+test('ومصروفٌ أو تحصيلٌ في يومٍ محجوزٍ يبدؤه', () => {
+  const d = { ...day([seat(1)]), expenseItems: [{ id: 'e', amount: 40 }] };
+  assert.equal(weekState(d), 'جاري');
+  const c = { ...day([seat(1)]), collections: [{ id: 'c', amount: 20 }] };
+  assert.equal(weekState(c), 'جاري');
+});
+
+test('والقفل يغلب على الحجز', () => {
+  assert.equal(weekState({ ...day([seat(1)]), status: 'مغلق' }), 'مقفل');
 });
 
 console.log(`\n${passed} اختبار نجح.`);

@@ -43,7 +43,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v7.9';
+const APP_VERSION = 'v8.0';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -134,10 +134,41 @@ const STATE_ICON = {
   مقفل: 'bg-slate-100 text-slate-400',
 };
 
+/**
+ * الصفُّ المحجوز: نزل في يومه لأن صاحبه اشترك بالموسم، لا لأن أحدًا اشتغل
+ * في اليوم بعد.
+ *
+ * ولو عددناه بدايةً، صارت أيام الموسم كلها «جارية» من أول مشتركٍ يسجّل،
+ * وامتلأت بها الشاشة الرئيسة وتبويب النادي — وهي لم تجئ بعد. وهذي هي عينها
+ * التي أُصلحت يوم فُصل «مقفل» عن «مكتمل»، يعيدها اشتراكٌ واحد.
+ *
+ * والحجز ينفكّ بأول أثرٍ عليه: تأكيدُك وصولَ مبلغه، أو تسجيلُ حضوره — حاضرًا
+ * كان أو غائبًا. فاليومُ الذي أكّدتَ فيه أو ناديتَ فيه الأسماء يومٌ قد صار.
+ */
+export const booked = (x) => Boolean(x?.sub) && x.pending === true
+  && (!x.attendance || x.attendance === 'معلق');
+
+/**
+ * من ينتظر تأكيدك أنت.
+ *
+ * والمدفوع مقدّمًا ليس منه: مالُه في يدك من يوم حوّل، وأنت أكّدتَه مرة. فهو
+ * في قائمة الحضور مع الناس، ينتظر يومَه لا ينتظرك — ويوم تنادي الأسماء يدخل
+ * نصيبُه إيرادَ يومه من نفسه.
+ */
+export const waits = (x) => Boolean(x?.pending) && !x.prepaid;
+
+/**
+ * هل بدأ هذا اليوم؟ العملُ فيه بدايةٌ، والحجزُ ليس عملًا.
+ */
+export const started = (l) => {
+  // هي هي التي كانت، إلا أن المحجوزين طُرحوا منها
+  const real = { ...l, participants: (l?.participants || []).filter((x) => !booked(x)) };
+  return headcount(real) > 0 || L.revenue(real) > 0 || L.expenses(real) > 0;
+};
+
 export const weekState = (l) => {
   if (l?.status === 'مغلق') return 'مقفل';
-  const started = headcount(l) > 0 || L.revenue(l) > 0 || L.expenses(l) > 0;
-  if (!started) return 'لم يبدأ';
+  if (!started(l)) return 'لم يبدأ';
   // «وُزّع» لا «ما بقي شيء»: الجمعة الفارغة باقيها صفرٌ وما وُزّع فيها ريال
   const out = L.school(l) + L.faid(l);
   return out > 0 && L.remaining(l) === 0 ? 'مكتمل' : 'جاري';
@@ -158,7 +189,7 @@ export const ledgersOf = (p) => (p?.type === 'مجمع' ? [p] : (p?.weeks || [])
 export const attendanceStats = (p) => {
   let slots = 0, present = 0;
   if (p?.type === 'مجمع') {
-    const roster = (p.participants || []).filter((x) => !x.pending);
+    const roster = (p.participants || []).filter((x) => !waits(x));
     for (const w of p.weeks || []) {
       const day = roster.filter((x) => isEnrolled(x, w.id));
       slots += day.length;
@@ -1977,7 +2008,9 @@ export default function App() {
                 accountId, attendance: 'معلق',
                 sub: { id: subId, packId: pack.id, total: pack.total, span: pack.span, i: ids.indexOf(w.id) },
                 ...(studentId ? { studentId } : {}),
-                ...(w.id === here ? {} : { pending: true, prepaid: accountId !== 'unpaid' }),
+                // أيامه الباقية مدفوعةٌ مقدّمًا تنتظر يومها، لا تنتظر تأكيدك.
+                // ومن لم يدفع ما عنده مبلغٌ يُنتظر وصوله — وسمُه «ما دفع» وحده
+                ...(w.id === here || accountId === 'unpaid' ? {} : { pending: true, prepaid: true }),
               }, true)],
             };
           }),
@@ -2068,14 +2101,24 @@ export default function App() {
   const attendanceOf = (p, weekId) =>
     (isGrouped ? program?.attendance?.[weekId]?.[p.id] : p.attendance) || 'معلق';
 
+  /**
+   * تسجيل الحضور يُنزل نصيب المدفوع مقدّمًا في إيراد يومه.
+   *
+   * ماله في يدك من يوم حوّل، لكنه محفوظٌ لأيامه: ما يصير إيراد يومٍ حتى
+   * يصير اليوم. وأنت لا تسجّل حضورًا في يومٍ لم يجئ — فهذي هي اللحظة، بلا
+   * أن تؤكّد شيئًا من جديد.
+   */
+  const arrive = (x) => (x.pending && x.prepaid ? { ...x, pending: false, prepaid: false, confirmedAt: Date.now() } : x);
+
   const setAttendance = (pid, status, weekId = selectedWeekId) => {
     if (isGrouped) {
       patchLedger({ kind: 'program', programId: program.id }, (p) => ({
         attendance: { ...(p.attendance || {}), [weekId]: { ...((p.attendance || {})[weekId] || {}), [pid]: status } },
+        participants: (p.participants || []).map((x) => (x.id !== pid ? x : arrive(x))),
       }));
     } else {
       patchLedger(activeRef, (l) => ({
-        participants: (l.participants || []).map((x) => (x.id !== pid ? x : { ...x, attendance: status })),
+        participants: (l.participants || []).map((x) => (x.id !== pid ? x : arrive({ ...x, attendance: status }))),
       }));
     }
   };
@@ -2084,12 +2127,16 @@ export default function App() {
       patchLedger({ kind: 'program', programId: program.id }, (p) => {
         const dayMap = { ...((p.attendance || {})[weekId] || {}) };
         list.forEach((x) => { dayMap[x.id] = status; });
-        return { attendance: { ...(p.attendance || {}), [weekId]: dayMap } };
+        const ids = new Set(list.map((x) => x.id));
+        return {
+          attendance: { ...(p.attendance || {}), [weekId]: dayMap },
+          participants: (p.participants || []).map((x) => (ids.has(x.id) ? arrive(x) : x)),
+        };
       });
     } else {
       const ids = new Set(list.map((x) => x.id));
       patchLedger(activeRef, (l) => ({
-        participants: (l.participants || []).map((x) => (ids.has(x.id) ? { ...x, attendance: status } : x)),
+        participants: (l.participants || []).map((x) => (ids.has(x.id) ? arrive({ ...x, attendance: status }) : x)),
       }));
     }
   };
@@ -2949,17 +2996,42 @@ export default function App() {
     return refs.size;
   };
 
+  /**
+   * ما ينتظر تأكيدك أنت.
+   *
+   * والمدفوع مقدّمًا ليس منه: صاحبه دفع المدة كلها بتحويلٍ واحد ورقمٍ واحد،
+   * وأنت أكّدتَ وصوله مرة. فكان يبقى صفُّه في كل يومٍ يسألك من جديد — عشرةُ
+   * أيامٍ عشرةُ تأكيدات لدفعةٍ واحدة. وهو لا ينتظرك، ينتظر يومَه: فإذا سجّلتَ
+   * حضوره فيه دخل نصيبُه إيرادَ ذلك اليوم من نفسه.
+   */
   const signupPending = (p) => {
-    const out = [];
+    const rows = [];
     for (const part of p.participants || []) {
-      if (part.pending) out.push({ part, where: 'البرنامج', weekId: null });
+      if (waits(part)) rows.push({ part, where: 'البرنامج', weekId: null });
     }
     for (const w of p.weeks || []) {
       for (const part of w.participants || []) {
-        if (part.pending) out.push({ part, where: w.name, weekId: w.id });
+        if (waits(part)) rows.push({ part, where: w.name, weekId: w.id });
       }
     }
-    return out;
+    /**
+     * وصفوف التسجيل الواحد تُجمع في بطاقة.
+     *
+     * فمن اشترك موسمًا نزل صفًّا في كل يوم، وكانت تطلع لك عشرُ بطاقاتٍ باسمٍ
+     * واحد لدفعةٍ واحدة — فتؤكّد عشرًا وقد حوّل مرة. والبطاقة تحمل مجموعَ ما
+     * حوّله، فهو الذي في الإيصال الذي قدامك، ويكفي فيها «وصل» واحدة.
+     */
+    const by = new Map();
+    for (const r of rows) {
+      const key = r.part.ref || r.part.id;
+      const g = by.get(key);
+      if (!g) by.set(key, { ...r, parts: [r.part], amount: Number(r.part.amount || 0), days: [r.where] });
+      else { g.parts.push(r.part); g.amount += Number(r.part.amount || 0); g.days.push(r.where); }
+    }
+    return [...by.values()].map((g) => ({
+      ...g,
+      where: g.days.length > 1 ? `${g.parts[0].packageName || 'اشتراك'} · ${g.days.length} ${g.days.length > 2 ? 'أيام' : 'يومين'}` : g.days[0],
+    }));
   };
 
   /** التأكيد يعني: الفلوس وصلت الحساب فعلًا. عندها فقط يدخل الإيراد. */
@@ -3112,22 +3184,29 @@ export default function App() {
    * «ما وصل» = يحذف التسجيل. اللي يسجّل ويحط «كاش» ثم ما يجي، أو يكتب إنه
    * حوّل بلا إيصال — يمشي من القائمة، ويبقى شهرًا في الصندوق لو غلطت.
    */
-  const dropPending = (part, weekId) => save({
-    ...withLedger(data, { kind: weekId ? 'week' : 'program', programId: program.id, weekId }, (l) => ({
-      participants: (l.participants || []).filter((x) => x.id !== part.id),
-    })),
-    trash: intoTrash('participant', part, { where: { programId: program.id, weekId: weekId || '' } }),
-  });
+/**
+   * الحذف يمشي على التسجيل كله لا على صفٍّ منه: «ما وصل» تعني أن الدفعة ما
+   * وصلت، فلا يبقى منها صفٌّ في يومٍ آخر يتيمًا.
+   */
+  const dropPending = (parts, weekId) => {
+    const ids = new Set((parts || []).map((x) => x.id));
+    const rid = (l) => ({ participants: (l.participants || []).filter((x) => !ids.has(x.id)) });
+    let next = data;
+    next = { ...next, programs: next.programs.map((p) => (p.id !== program.id ? p : {
+      ...p, ...rid(p), weeks: (p.weeks || []).map((w) => ({ ...w, ...rid(w) })),
+    })) };
+    save({ ...next, trash: intoTrash('participant', parts[0], { where: { programId: program.id, weekId: weekId || '' } }) });
+  };
 
-  const askDropPending = (part, where, weekId) => {
+  const askDropPending = ({ part, parts, where, weekId, amount }) => {
     const acc = (data.faidAccounts.find((a) => a.id === part.accountId) || {}).name || 'بلا حساب';
     askConfirm(
       `حذف تسجيل ${part.name}؟`,
-      () => dropPending(part, weekId),
+      () => dropPending(parts, weekId),
       'نعم، احذف',
       {
         lines: [
-          `المبلغ: ${fmt(part.amount)} ر.س · ${acc}`,
+          `المبلغ: ${fmt(amount)} ر.س · ${acc}`,
           `${where}`,
           `سجّل ${agoText(part.submittedAt) || 'بتاريخ غير مسجّل'}${part.receipt ? '' : ' · ما أرفق إيصالًا'}`,
         ],
@@ -3140,7 +3219,12 @@ export default function App() {
   };
 
   const confirmPending = (partId) => clearPendingFlag((part) => part.id === partId);
-  const confirmAllPending = () => { clearPendingFlag((part) => !!part.pending); closeModal(); };
+  /** والكل مثل الواحد: صفٌّ من كل تسجيل، وإخوته تتبعه بالرقم نفسه. */
+  const confirmAllPending = () => {
+    const reps = new Set(signupPending(program).map((g) => g.part.id));
+    clearPendingFlag((part) => reps.has(part.id));
+    closeModal();
+  };
   /** تأكيد قائمة انتظار يوم أو أسبوع دفعة وحدة، بلا ما تمس بقية البرنامج. */
   const confirmMany = (list) => {
     const ids = new Set(list.map((p) => p.id));
@@ -3826,9 +3910,10 @@ export default function App() {
   /**
    * اللي سجّل من الرابط يقف في «الانتظار» — ما يدخل قائمة الحضور ولا عدّادها
    * إلا بعد ما تأكّد وصول مبلغه. كذا شاشة التحضير تبقى للحاضرين فعلًا.
+   * والمشترك بالموسم مبلغه وصل، فمكانه بينهم لا في الانتظار.
    */
-  const roster = allParticipants.filter((p) => !p.pending);
-  const waiting = allParticipants.filter((p) => p.pending);
+  const roster = allParticipants.filter((p) => !waits(p));
+  const waiting = allParticipants.filter(waits);
   /**
    * البحث يشمل الانتظار كذلك: عشرون منتظرًا وأنت تدوّر واحدًا فيهم لفّةٌ طويلة.
    * ونقصره على الاسم — فلترة طريقة الدفع تخص الحاضرين، ولو طبّقناها هنا
@@ -3840,8 +3925,8 @@ export default function App() {
 
   /** حضور يوم معيّن في المجمّع يخص المسجّلين في ذاك اليوم فقط. */
   const dayEnrolled = isGrouped && week ? enrolledIn(program.participants, week.id) : [];
-  const dayRoster = dayEnrolled.filter((p) => !p.pending);
-  const dayWaiting = dayEnrolled.filter((p) => p.pending);
+  const dayRoster = dayEnrolled.filter((p) => !waits(p));
+  const dayWaiting = dayEnrolled.filter(waits);
   const visibleDayRoster = dayRoster.filter(matches);
   const visibleDayWaiting = dayWaiting.filter(waitingHit);
 
@@ -4216,10 +4301,10 @@ export default function App() {
                     {program.weeks.filter((w) => canSeeWeek(program.id, w.id)).map((w) => {
                       const st = weekState(w);
                       const inDay = isGrouped ? enrolledIn(program.participants, w.id) : (w.participants || []);
-                      const roster = isGrouped ? inDay.filter((p) => !p.pending) : null;
+                      const roster = isGrouped ? inDay.filter((p) => !waits(p)) : null;
                       const present = isGrouped ? roster.filter((p) => program.attendance?.[w.id]?.[p.id] === 'حاضر').length : 0;
                       // تشوف من برّا أي يوم فيه ناس بانتظار تأكيدك، قبل ما تفتحه
-                      const waitingHere = inDay.filter((p) => p.pending).length;
+                      const waitingHere = inDay.filter(waits).length;
                       const note = (isGrouped
                         ? (roster.length ? `${present} حاضر من ${roster.length} مسجّل` : 'ما فيه مسجّلين في هذا اليوم')
                         // الجدول اللي فوق محروس بـ`canMoney`، وهذا السطر كان منسيًّا
@@ -5063,7 +5148,8 @@ export default function App() {
                         و«ما وصل» يحذف التسجيل — ويقعد شهرًا في صندوق المحذوفات لو غلطت.
                       </div>
                       <div className="space-y-2.5">
-                        {pending.map(({ part, where, weekId }) => {
+                        {pending.map((row) => {
+                          const { part, where, weekId, amount } = row;
                           const acc = (data.faidAccounts.find((a) => a.id === part.accountId) || {}).name || 'بلا حساب';
                           const late = arrearsOf(part.studentId, part.name, program.id);
                           const old = part.submittedAt && Date.now() - part.submittedAt > 14 * 24 * 3600 * 1000;
@@ -5089,7 +5175,7 @@ export default function App() {
                                       ⚠️ عليه {arrearsText(late)} من {late.map((r) => r.label).join(' · ')}
                                     </div>
                                   )}
-                                  <div className="text-[11px] text-slate-500 mt-0.5">{where} · {fmt(part.amount)} ر.س · {acc}</div>
+                                  <div className="text-[11px] text-slate-500 mt-0.5">{where} · {fmt(amount)} ر.س · {acc}</div>
                                   <div className={`text-[11px] mt-0.5 ${old ? 'text-orange-600 font-bold' : 'text-slate-400'}`}>
                                     سجّل {agoText(part.submittedAt) || '— بلا تاريخ'}
                                   </div>
@@ -5099,7 +5185,7 @@ export default function App() {
                                       <Check size={14} /> وصل
                                     </button>
                                     <button className="flex-1 bg-white border border-red-200 text-red-600 text-xs font-bold px-3 py-2 rounded-lg flex items-center justify-center gap-1"
-                                      onClick={() => askDropPending(part, where, weekId)}>
+                                      onClick={() => askDropPending(row)}>
                                       <X size={14} /> ما وصل
                                     </button>
                                   </div>
