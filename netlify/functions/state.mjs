@@ -47,22 +47,8 @@ const visitorPrint = (req, secret, day) => {
     .digest('base64url').slice(0, 12);
 };
 
-/**
- * ما يُرسل من العدّاد: رقمان لكل برنامج لا غير.
- *
- * والبصمات ما تخرج من الخادم أبدًا — لا حاجة للجوال بها، وإخراجها توسيعٌ
- * لدائرة ما يُعرف عن الناس بلا فائدة.
- */
-const visitsFor = (doc, at = Date.now()) => {
-  const day = dayKey(at);
-  const out = {};
-  for (const [pid, v] of Object.entries(doc?.visits || {})) {
-    out[pid] = { total: Number(v?.total || 0), today: Number(v?.days?.[day] || 0) };
-  }
-  return out;
-};
-
 const KEY = 'state';
+const VKEY = 'visits';
 const store = () => getStore({ name: 'faid-team', consistency: 'strong' });
 
 /* --------------------------------- الصور --------------------------------- */
@@ -99,6 +85,100 @@ const readDoc = async () => {
 };
 
 const writeDoc = (doc) => store().setJSON(KEY, doc);
+
+/* ------------------------------ الكتابة الآمنة ------------------------------ */
+/**
+ * المخزن ما فيه قفل.
+ *
+ * فمن قرأ الملف ثم كتبه، قد يكون غيرُه قرأ وكتب بينهما — فيمحو ما كتبه، ويخرج
+ * الاثنان وكلٌّ يظن أنه حُفظ. ويومَ يُنشر رابط التسجيل في مجموعة، يرسل اثنان
+ * في الثانية نفسها، فيضيع تسجيلُ أحدهما وبيده إيصالُه.
+ *
+ * فنختم كل كتابة بمعرّف، ونحفظ آخر المعرّفات في الملف نفسه، ثم نقرأ بعدها:
+ * إن وجدنا ختمنا فقد ثبت — سواء بقينا آخر من كتب، أو قرأ غيرُنا كتابتنا وبنى
+ * فوقها. وإن ضاع، أعدنا الحساب على الملف الجديد وكتبنا ثانية.
+ *
+ * والحساب يُعاد كاملًا في كل محاولة — التحقق والحدود معه — لأن الملف الذي
+ * بنينا عليه لم يعد هو.
+ *
+ * ولا نعيد الحساب إلا على ملفٍ خالٍ من كل ختمٍ لنا — لا آخرِها وحده. فمن
+ * أعاد وقد ثبتت كتابته الأولى، سجّل ولي الأمر مرتين، وضياعُ التسجيل وتكرارُه
+ * سِيّان في السوء. والختم والتسجيل يُكتبان معًا، فوجود الختم وجودُ التسجيل.
+ *
+ * تُرجِع `mutate` واحدًا من ثلاثة: `{ reject }` ردٌّ للمرسِل بلا كتابة،
+ * أو لا شيء إذا ما فيه ما يُكتب، أو `{ doc, out }`.
+ */
+const WLOG = 200;
+const TRIES = 8;
+
+/**
+ * وبين المحاولتين وقفةٌ عشوائية: لو عاد المتزاحمون في اللحظة نفسها، تصادموا
+ * ثانيةً وثالثة. فتفريقهم بالقرعة يفضّ الزحام أسرع من إعادةٍ منتظمة.
+ */
+const pause = (n) => new Promise((r) => setTimeout(r, Math.round((n + 1) * (20 + Math.random() * 60))));
+
+const commit = async (mutate, seed) => {
+  let doc = seed === undefined ? await readDoc() : seed;
+  const mine = new Set();
+  const landed = (d) => (d?.wlog || []).some((w) => mine.has(w));
+  let step = null;
+  for (let n = 0; n < TRIES; n++) {
+    step = mutate(doc, n);
+    if (!step || step.reject || !step.doc) return step || {};
+    const wid = crypto.randomUUID();
+    mine.add(wid);
+    await writeDoc({ ...step.doc, wlog: [...(step.doc.wlog || []), wid].slice(-WLOG) });
+    doc = await readDoc();
+    if (landed(doc)) return { ...step, doc };
+    await pause(n);
+    // نقرأ بعد الوقفة ونفحص قبل أن نعيد: قد يكون غيرُنا بنى فوق كتابتنا فيها
+    doc = await readDoc();
+    if (landed(doc)) return { ...step, doc };
+  }
+  return { busy: true };
+};
+
+/* ------------------------------ عدّاد الفتحات ------------------------------ */
+/**
+ * العدّاد يعيش في ملفٍ وحده، لا في ملف البيانات.
+ *
+ * فتحُ الرابط أكثرُ ما يقع يوم النشر بأضعاف، ولو كتبناه في الملف المشترك لصار
+ * كل فاتحٍ يعيد كتابة بيانات الفريق كلها — يزاحم التسجيلات ويثقل الحفظ. وهو
+ * رقمٌ لا يُبنى عليه شيء: ضياعُ واحدةٍ منه لا يضرّ، وضياعُ تسجيلٍ يضرّ.
+ */
+const readVisits = async (doc) => {
+  let v = null;
+  try { v = await store().get(VKEY, { type: 'json' }); } catch { v = null; }
+  // ما قبل الملف المستقل كان العدّ داخل البيانات، فنكمل من حيث وقف
+  return v?.stats ? v : { w: '', stats: doc?.visits || {} };
+};
+
+const bumpVisit = async (doc, pid, print, at) => {
+  for (let n = 0; n < 3; n++) {
+    const cur = await readVisits(doc);
+    const seen = countVisit(cur.stats, pid, print, at);
+    if (!seen.changed) return;
+    const w = crypto.randomUUID();
+    await store().setJSON(VKEY, { w, stats: seen.stats });
+    if ((await readVisits(doc)).w === w) return;
+  }
+};
+
+/**
+ * ما يُرسل من العدّاد: رقمان لكل برنامج لا غير.
+ *
+ * والبصمات ما تخرج من الخادم أبدًا — لا حاجة للجوال بها، وإخراجها توسيعٌ
+ * لدائرة ما يُعرف عن الناس بلا فائدة.
+ */
+const visitsFor = async (doc, at = Date.now()) => {
+  const { stats } = await readVisits(doc);
+  const day = dayKey(at);
+  const out = {};
+  for (const [pid, v] of Object.entries(stats || {})) {
+    out[pid] = { total: Number(v?.total || 0), today: Number(v?.days?.[day] || 0) };
+  }
+  return out;
+};
 
 /* --------------------------- الجلسات (توكن موقّع) --------------------------- */
 
@@ -269,12 +349,11 @@ export default async (req) => {
     /**
      * نعدّه هنا: هذي أول لحظةٍ يطلب فيها الفاتحُ شيئًا، وقبل أن يرى حرفًا.
      *
-     * ولا يرتفع رقم النسخة: العدّاد ليس من بيانات الفريق، فلو رفعناه لأيقظ
-     * أجهزتهم كلها كلما فتح وليُّ أمرٍ الرابط، وزاحم حفظًا جاريًا.
+     * وفي ملفه وحده: لا يرفع رقم النسخة فيوقظ أجهزة الفريق كلما فُتح الرابط،
+     * ولا يمسّ البيانات فيزاحم تسجيلًا جاريًا.
      */
     const at = Date.now();
-    const seen = countVisit(doc.visits, program.id, visitorPrint(req, doc.secret, dayKey(at)), at);
-    if (seen.changed) await writeDoc({ ...doc, visits: seen.stats });
+    await bumpVisit(doc, program.id, visitorPrint(req, doc.secret, dayKey(at)), at);
     return json({ ok: true, view: publicView(doc.data, program) });
   }
 
@@ -289,57 +368,63 @@ export default async (req) => {
   }
 
   if (op === 'question_answer') {
-    const view = doc && questionView(doc.data, body.token);
-    if (!view) return json({ error: 'closed' }, 404);
-    if (!view.open) return json({ error: 'closed' }, 409);
-
-    // نفحص هنا من جديد: ما يجي من الشبكة لا يُوثق به مهما فحصه المتصفح
-    const { ok, errors } = validateAnswer(view, body);
-    if (!ok) return json({ error: 'invalid', errors }, 400);
-
     const now = Date.now();
-    const { blocked, recent } = answersRateLimited(doc.answerLog, now);
-    if (blocked) return json({ error: 'too_many' }, 429);
+    const r = await commit((d) => {
+      const view = d && questionView(d.data, body.token);
+      if (!view) return { reject: json({ error: 'closed' }, 404) };
+      if (!view.open) return { reject: json({ error: 'closed' }, 409) };
 
-    const q = doc.data.questions.find((x) => x.id === view.id);
-    const next = applyAnswer(doc.data, q, body, { id: crypto.randomUUID(), now });
-    await writeDoc({
-      ...doc,
-      rev: doc.rev + 1,
-      updatedAt: new Date(now).toISOString(),
-      data: next.data,
-      answerLog: [...recent, { at: now }],
-    });
-    return json({ ok: true, student: next.student });
+      // نفحص هنا من جديد: ما يجي من الشبكة لا يُوثق به مهما فحصه المتصفح
+      const { ok, errors } = validateAnswer(view, body);
+      if (!ok) return { reject: json({ error: 'invalid', errors }, 400) };
+
+      const { blocked, recent } = answersRateLimited(d.answerLog, now);
+      if (blocked) return { reject: json({ error: 'too_many' }, 429) };
+
+      const q = d.data.questions.find((x) => x.id === view.id);
+      const next = applyAnswer(d.data, q, body, { id: crypto.randomUUID(), now });
+      return {
+        doc: { ...d, rev: d.rev + 1, updatedAt: new Date(now).toISOString(), data: next.data,
+          answerLog: [...recent, { at: now }] },
+        out: { ok: true, student: next.student },
+      };
+    }, doc);
+    if (r.reject) return r.reject;
+    if (r.busy) return json({ error: 'busy' }, 503);
+    return json(r.out);
   }
 
   if (op === 'signup_submit') {
-    const program = doc && programFor(doc.data, body.token);
-    if (!program) return json({ error: 'closed' }, 404);
-
-    const view = publicView(doc.data, program);
-    if (view.blocked) return json({ error: 'blocked' }, 409);
-    // أيامٌ لم تُعرض على ولي الأمر لا تُؤخذ منه: نكتبها نحن ونطرح ما أُرسل
-    const sub = normalizeSubmission(view, body);
-    // نتحقق هنا من جديد: ما يجي من الشبكة لا يُوثق به مهما فحصه المتصفح
-    const { ok, errors } = validateSubmission(view, sub);
-    if (!ok) return json({ error: 'invalid', errors }, 400);
-
     const now = Date.now();
-    const { blocked, recent } = rateLimited(doc.signupLog, body.answers?.gPhone, now);
-    if (blocked) return json({ error: 'too_many' }, 429);
+    const r = await commit((d) => {
+      const program = d && programFor(d.data, body.token);
+      if (!program) return { reject: json({ error: 'closed' }, 404) };
 
-    const next = applySubmission(doc.data, program, view, sub, { newId: () => crypto.randomUUID(), now });
-    await writeDoc({
-      ...doc,
-      rev: doc.rev + 1,
-      updatedAt: new Date(now).toISOString(),
-      data: enforceOnePerPhone(next.data),
-      signupLog: [...recent, { at: now, phone: String(body.answers?.gPhone || '') }],
-    });
-    // الرقم صار مختومًا على التسجيل نفسه، فما يعود يُشتقّ من رقم النسخة:
-    // ذاك كان يقفز مع كل تعديل ولا يبقى عند أحد، فما ينفع مرجعًا لإيصال
-    return json({ ok: true, count: next.count, ref: next.refs.join(' · ') });
+      const view = publicView(d.data, program);
+      if (view.blocked) return { reject: json({ error: 'blocked' }, 409) };
+      // أيامٌ لم تُعرض على ولي الأمر لا تُؤخذ منه: نكتبها نحن ونطرح ما أُرسل
+      const sub = normalizeSubmission(view, body);
+      // نتحقق هنا من جديد: ما يجي من الشبكة لا يُوثق به مهما فحصه المتصفح
+      const { ok, errors } = validateSubmission(view, sub);
+      if (!ok) return { reject: json({ error: 'invalid', errors }, 400) };
+
+      const { blocked, recent } = rateLimited(d.signupLog, body.answers?.gPhone, now);
+      if (blocked) return { reject: json({ error: 'too_many' }, 429) };
+
+      const next = applySubmission(d.data, program, view, sub, { newId: () => crypto.randomUUID(), now });
+      return {
+        doc: { ...d, rev: d.rev + 1, updatedAt: new Date(now).toISOString(),
+          data: enforceOnePerPhone(next.data),
+          signupLog: [...recent, { at: now, phone: String(body.answers?.gPhone || '') }] },
+        // الرقم صار مختومًا على التسجيل نفسه، فما يعود يُشتقّ من رقم النسخة:
+        // ذاك كان يقفز مع كل تعديل ولا يبقى عند أحد، فما ينفع مرجعًا لإيصال
+        out: { ok: true, count: next.count, ref: next.refs.join(' · ') },
+      };
+    }, doc);
+    if (r.reject) return r.reject;
+    // ما نقول «تم» إلا وقد ثبت: الإيصال بيد ولي الأمر، فلا يخرج على فراغ
+    if (r.busy) return json({ error: 'busy' }, 503);
+    return json(r.out);
   }
 
   // أول مدير: يُسمح فيه مرة وحدة بس، وبعدها يُقفل الباب.
@@ -349,8 +434,12 @@ export default async (req) => {
     if (!u.username || !u.password) return json({ error: 'missing_credentials' }, 400);
     const secret = crypto.randomBytes(32).toString('base64');
     const data = { ...(body.data || {}), users: [{ ...u, password: hash(u.password) }] };
-    const next = { rev: 1, updatedAt: new Date().toISOString(), secret, data };
-    await writeDoc(next);
+    // حتى هنا نتحقق: مديران يُنشآن معًا، والثاني يمحو الأول ويأخذ المخزن
+    const r = await commit((d) => (d?.data?.users?.length
+      ? { reject: json({ error: 'already_initialized' }, 409) }
+      : { doc: { rev: 1, updatedAt: new Date().toISOString(), secret, data } }), doc);
+    if (r.reject) return r.reject;
+    if (r.busy) return json({ error: 'busy' }, 503);
     return json({ ok: true, rev: 1, token: makeToken(secret, u.username), data: strip(data, u) });
   }
 
@@ -370,20 +459,23 @@ export default async (req) => {
     const pass = u ? verify(u.password, String(body.password ?? '')) : { ok: false, upgraded: null };
     if (!u || !pass.ok) {
       // سجلُّ المحاولات ما هو من البيانات، فما يرفع رقم النسخة ولا يزاحم حفظًا
-      await writeDoc({ ...doc, loginLog: noteFail(gate.recent, entered, now) });
+      await commit((d) => ({ doc: { ...d, loginLog: noteFail(loginBlocked(d.loginLog, entered, now).recent, entered, now) } }), doc);
       return json({ error: 'bad_credentials' }, 401);
     }
     if (u.status === 'غير نشط') return json({ error: 'inactive' }, 403);
 
     // كلمةٌ قديمة صريحة: تُعمّى في أول دخولٍ بها، بلا أن يشعر صاحبها
-    const cleared = clearFails(gate.recent, entered);
-    const data = pass.upgraded
-      ? { ...doc.data, users: doc.data.users.map((x) => (x.id === u.id ? { ...x, password: pass.upgraded } : x)) }
-      : doc.data;
-    if (pass.upgraded || cleared.length !== (doc.loginLog || []).length) {
-      await writeDoc({ ...doc, data, loginLog: cleared });
-    }
-    return json({ ok: true, rev: doc.rev, token: makeToken(doc.secret, u.username), data: strip(data, u), visits: visitsFor(doc) });
+    const r = await commit((d) => {
+      const cleared = clearFails(loginBlocked(d.loginLog, entered, now).recent, entered);
+      if (!pass.upgraded && cleared.length === (d.loginLog || []).length) return null;
+      const data = pass.upgraded
+        ? { ...d.data, users: d.data.users.map((x) => (x.id === u.id ? { ...x, password: pass.upgraded } : x)) }
+        : d.data;
+      return { doc: { ...d, data, loginLog: cleared } };
+    }, doc);
+    const fresh = r.doc || doc;
+    return json({ ok: true, rev: fresh.rev, token: makeToken(fresh.secret, u.username),
+      data: strip(fresh.data, u), visits: await visitsFor(fresh) });
   }
 
   // ما بعدها يحتاج توكن سليم.
@@ -405,14 +497,11 @@ export default async (req) => {
     // الاسترجاع يكتب اللقطة كنسخة جديدة، فيبقى تاريخ المراجعات متصلًا
     const data = await readSnapshot(store(), body.stamp);
     if (!data) return json({ error: 'not_found' }, 404);
-    await writeDoc({
-      rev: doc.rev + 1,
-      updatedAt: new Date().toISOString(),
-      secret: doc.secret,
-      data,
-      signupLog: doc.signupLog || [],
-    });
-    return json({ ok: true, rev: doc.rev + 1, data: strip(data, me) });
+    const r = await commit((d) => ({
+      doc: { rev: d.rev + 1, updatedAt: new Date().toISOString(), secret: d.secret, data, signupLog: d.signupLog || [] },
+    }), doc);
+    if (r.busy) return json({ error: 'busy' }, 503);
+    return json({ ok: true, rev: r.doc.rev, data: strip(data, me) });
   }
 
   // رفع صورة برنامج: ترجع معرّفًا، وهو وحده اللي ينحفظ في البيانات
@@ -435,38 +524,47 @@ export default async (req) => {
    */
   if (op === 'question_draw') {
     if (!allowed(me, 'النادي')) return json({ error: 'forbidden' }, 403);
-    const q = (doc.data?.questions || []).find((x) => x.id === body.questionId);
-    if (!q) return json({ error: 'not_found' }, 404);
-    const draw = makeDraw(q, body.opts || {}, {
-      id: crypto.randomUUID(),
-      by: me.name || me.username || '',
-      // عشوائية الخادم لا `Math.random`: القرعة يُحتجّ بها على الناس
-      rand: () => crypto.randomInt(0, 2 ** 30) / 2 ** 30,
-    });
-    if (!draw) return json({ error: 'empty' }, 409);
-    const data = applyDraw(doc.data, q, draw);
-    const rev = doc.rev + 1;
-    await writeDoc({ ...doc, rev, updatedAt: new Date().toISOString(), data });
-    return json({ ok: true, draw, rev, data: strip(data, me) });
+    const r = await commit((d) => {
+      const q = (d.data?.questions || []).find((x) => x.id === body.questionId);
+      if (!q) return { reject: json({ error: 'not_found' }, 404) };
+      const draw = makeDraw(q, body.opts || {}, {
+        id: crypto.randomUUID(),
+        by: me.name || me.username || '',
+        // عشوائية الخادم لا `Math.random`: القرعة يُحتجّ بها على الناس
+        rand: () => crypto.randomInt(0, 2 ** 30) / 2 ** 30,
+      });
+      if (!draw) return { reject: json({ error: 'empty' }, 409) };
+      const data = applyDraw(d.data, q, draw);
+      return { doc: { ...d, rev: d.rev + 1, updatedAt: new Date().toISOString(), data }, out: { draw, data } };
+    }, doc);
+    if (r.reject) return r.reject;
+    if (r.busy) return json({ error: 'busy' }, 503);
+    return json({ ok: true, draw: r.out.draw, rev: r.doc.rev, data: strip(r.out.data, me) });
   }
 
   // سحب التحديثات: لو ما تغيّر شي نرجّع ردًّا خفيفًا بدل البيانات كاملة.
   if (op === 'pull') {
     // العدّاد يمشي بلا رفع رقم النسخة، فيُرسل حتى مع «ما تغيّر شيء»
-    if (Number(body.sinceRev) === doc.rev) return json({ ok: true, rev: doc.rev, unchanged: true, visits: visitsFor(doc) });
-    return json({ ok: true, rev: doc.rev, data: strip(doc.data, me), visits: visitsFor(doc) });
+    const visits = await visitsFor(doc);
+    if (Number(body.sinceRev) === doc.rev) return json({ ok: true, rev: doc.rev, unchanged: true, visits });
+    return json({ ok: true, rev: doc.rev, data: strip(doc.data, me), visits });
   }
 
   // حفظ: لازم يكون البانٍ على آخر نسخة، وإلا نرجّع 409 ومعه الحالي عشان الدمج.
   if (op === 'push') {
-    if (Number(body.baseRev) !== doc.rev) {
-      return json({ error: 'conflict', rev: doc.rev, data: strip(doc.data, me) }, 409);
-    }
-    const data = enforceOnePerPhone(guard(body.data, doc.data, me));
-    // ننشر الوثيقة كما هي ثم نستبدل ما تغيّر: أي سجلٍّ نضيفه لاحقًا يبقى
-    const next = { ...doc, rev: doc.rev + 1, updatedAt: new Date().toISOString(), data };
-    await writeDoc(next);
-    return json({ ok: true, rev: next.rev, visits: visitsFor(next) });
+    const r = await commit((d) => {
+      // يُعاد الفحص في كل محاولة: لو سبقنا غيرُنا صار البانٍ قديمًا، وردُّ
+      // ٤٠٩ أصدق من كتابةٍ تمحوه — الجهاز يدمج ثم يعيد
+      if (Number(body.baseRev) !== d.rev) {
+        return { reject: json({ error: 'conflict', rev: d.rev, data: strip(d.data, me) }, 409) };
+      }
+      const data = enforceOnePerPhone(guard(body.data, d.data, me));
+      // ننشر الوثيقة كما هي ثم نستبدل ما تغيّر: أي سجلٍّ نضيفه لاحقًا يبقى
+      return { doc: { ...d, rev: d.rev + 1, updatedAt: new Date().toISOString(), data } };
+    }, doc);
+    if (r.reject) return r.reject;
+    if (r.busy) return json({ error: 'busy' }, 503);
+    return json({ ok: true, rev: r.doc.rev, visits: await visitsFor(r.doc) });
   }
 
   return json({ error: 'unknown_op' }, 400);

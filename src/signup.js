@@ -753,12 +753,20 @@ export const subsFor = (weeks, newId, { attendance = 'معلق' } = {}) => {
 };
 
 /**
- * حماية الرابط العام: نفس الجوال ما يرسل أكثر من ٥ مرات في الساعة، والبرنامج
- * ما يستقبل أكثر من ٤٠ في الساعة. يمنع العبث بلا ما يزعج ولي أمر عادي.
+ * حماية الرابط العام.
+ *
+ * الحدُّ الذي يردع العابث هو حدُّ الجوال الواحد: خمسٌ في الساعة، وما بعدها
+ * تكرارٌ لا تسجيل. والحدُّ العام بعده شبكةُ أمانٍ للفيضان وحده، فلا يجوز أن
+ * يضيق حتى يقع على أولياء الأمور: يوم يُنشر الرابط في مجموعةٍ يجي منهم في
+ * الساعة أكثر مما يجي في أسبوع، وردُّ الصادق بـ«أرسلت محاولات كثيرة» أسوأ
+ * من قَبول عابثٍ واحد — فالعابث يُحذف تسجيله، وولي الأمر لا يعود.
  */
+export const PER_PHONE = 5;
+export const PER_HOUR = 300;
+
 export const rateLimited = (log, phone, now = Date.now()) => {
   const hour = 60 * 60 * 1000;
   const recent = (log || []).filter((e) => now - e.at < hour);
   const mine = recent.filter((e) => e.phone === normalizePhone(phone));
-  return { blocked: mine.length >= 5 || recent.length >= 40, recent };
+  return { blocked: mine.length >= PER_PHONE || recent.length >= PER_HOUR, recent };
 };

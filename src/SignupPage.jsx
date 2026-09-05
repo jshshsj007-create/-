@@ -665,6 +665,8 @@ export default function SignupPage({ token }) {
     }
     if (r.status === 400 && r.body?.errors) { setErrors(r.body.errors); setState('form'); return; }
     if (r.status === 429) { setErrors({ _: 'أرسلت محاولات كثيرة. انتظر شوي وجرّب مرة ثانية.' }); setState('form'); return; }
+    // زحامٌ على الحفظ: ما نقول «تم» إلا وقد ثبت، فنصدُقه ونطلب إعادة الإرسال
+    if (r.status === 503) { setErrors({ _: 'التسجيل مزحوم الحين. اضغط «سجّل» مرة ثانية بعد لحظة.' }); setState('form'); return; }
     if (r.status === 404) { setState('closed'); return; }
     setErrors({ _: 'ما وصل التسجيل. تأكد من الإنترنت وجرّب مرة ثانية.' });
     setState('form');

@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import {
   makeToken, programByToken, publicView, validateSubmission,
-  dueFor, totalDue, applySubmission, rateLimited, coversAll, isReceipt, RECEIPT_MAX, packTotal, splitLump, normalizeSubmission,
+  dueFor, totalDue, applySubmission, rateLimited, PER_HOUR, coversAll, isReceipt, RECEIPT_MAX, packTotal, splitLump, normalizeSubmission,
   waIntl, waLink, fillTemplate, signupVars, txt, TEXTS, varNames, DEFAULT_WA_TEMPLATE,
   orderedDays, weekShares, packSpan, shareAt, subsFor,
 } from '../src/signup.js';
@@ -540,8 +540,15 @@ test('المحاولات القديمة ما تُحسب ضده', () => {
 
 test('طوفان على البرنامج كله يتوقف', () => {
   const now = 100000000;
-  const log = Array.from({ length: 40 }, (_, i) => ({ at: now - i * 1000, phone: `55000${String(i).padStart(4, '0')}` }));
-  assert.equal(rateLimited(log, '0559999999', now).blocked, true);
+  const flood = (n) => Array.from({ length: n }, (_, i) => ({ at: now - i * 1000, phone: `55000${String(i).padStart(4, '0')}` }));
+  assert.equal(rateLimited(flood(PER_HOUR), '0559999999', now).blocked, true);
+});
+
+test('يوم يُنشر الرابط، ولي الأمر ما يُصدّ مع الزحام', () => {
+  const now = 100000000;
+  // ٦٠ أسرة سجّلت في الساعة الأولى — وهذا نجاحٌ لا عبث
+  const rush = Array.from({ length: 60 }, (_, i) => ({ at: now - i * 20000, phone: `55010${String(i).padStart(4, '0')}` }));
+  assert.equal(rateLimited(rush, '0559999999', now).blocked, false);
 });
 
 /* ------------------------ محتوى الصفحة وواتساب ------------------------ */
