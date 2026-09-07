@@ -43,7 +43,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v8.2';
+const APP_VERSION = 'v8.3';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -1995,6 +1995,45 @@ export default function App() {
       .map((x) => ({ id: x.id, name: x.name, total: packTotal(x, left.length), span: packSpan(x, left.length) }))
       .filter((x) => x.total > 0 && x.span > 0);
     return { left, packs: left.length ? packs : [] };
+  };
+
+  /**
+   * إرجاع المسجّلين إلى يومهم.
+   *
+   * حين تضيع صفوفُ يومٍ ولا تضيع الناس: قاعدةُ الطلاب والأهالي يحرسها الخادم،
+   * فيبقى الاسم والجوال والعمر وتاريخُ تسجيله، ولا يبقى إلا ربطُه باليوم.
+   * فبدل أن يُكتب عشرون بأيديهم واحدًا واحدًا، يُختارون ويرجعون دفعة.
+   *
+   * ويُرشَّح من سُجّل حديثًا وليس في هذا اليوم — فمن هو فيه لا يُكرَّر.
+   */
+  const recoverable = (days) => {
+    const since = Date.now() - days * 24 * 3600 * 1000;
+    const here = new Set((activeLedger?.participants || []).map((x) => x.studentId).filter(Boolean));
+    const names = new Set((activeLedger?.participants || []).map((x) => String(x.name || '').trim()));
+    return (data.students || [])
+      .filter((s) => Number(s.createdAt || 0) >= since && !here.has(s.id) && !names.has(String(s.name || '').trim()))
+      .map((s) => ({ ...s, guardian: (data.guardians || []).find((g) => g.id === s.guardianId) || null }))
+      .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+  };
+
+  const putBack = () => {
+    const picked = new Set(form.picked || []);
+    const rows = recoverable(Number(form.days) || 7).filter((s) => picked.has(s.id));
+    if (!rows.length) { closeModal(); return; }
+    const accountId = form.accountId || data.faidAccounts[0]?.id;
+    const amount = accountId === 'unpaid' ? 0 : Number(form.amount || 0);
+    let next = data;
+    for (const s of rows) {
+      const ref = nextRef(next, yearOf(program?.termKey));
+      next = withLedger(next, activeRef, (l) => ({
+        participants: [...(l.participants || []), mark({
+          id: uid(), ref, name: s.name, studentId: s.id, amount, accountId,
+          attendance: 'معلق', source: 'link',
+        }, true)],
+      }));
+    }
+    save(next);
+    closeModal();
   };
 
   const addParticipant = () => {
@@ -5505,6 +5544,20 @@ export default function App() {
                         </button>
                       )}
                     </div>
+                    {/* ناسٌ سُجّلوا حديثًا وليسوا في هذا اليوم — غالبُهم ضاع صفُّه */}
+                    {canEnroll && !ledgerLocked && recoverable(7).length > 0 && (
+                      <button className="w-full mb-3 text-xs font-bold text-brand-800 bg-brand-50 border border-brand-100 rounded-xl px-3 py-2.5 text-right"
+                        onClick={() => {
+                          setForm({
+                            days: 7, picked: recoverable(7).map((x) => x.id),
+                            accountId: data.faidAccounts[0]?.id,
+                            amount: Number(program.dayPrice || program.signup?.price || 0) || '',
+                          });
+                          setModal('putBack');
+                        }}>
+                        فيه {recoverable(7).length} طالبًا مسجّلين حديثًا وما هم في هذا اليوم — أرجعهم ←
+                      </button>
+                    )}
                     {roster.length > 0 && canMoney && (
                       <div className="mb-3"><FilterChips options={payOptions(roster)} value={payFilter} onChange={setPayFilter} /></div>
                     )}
@@ -7644,6 +7697,88 @@ export default function App() {
           </div>
         </Modal>
       )}
+
+      {/*
+        إرجاع المسجّلين إلى يومهم.
+        الناس باقون في قاعدة الطلاب، والمفقود ربطُهم باليوم — فيُختارون ويرجعون
+        دفعة. والمبلغ والحساب يُكتبان مرة واحدة للجميع، لأنهم دفعوا سواءً.
+      */}
+      {modal === 'putBack' && (() => {
+        const list = recoverable(Number(form.days) || 7);
+        const picked = new Set(form.picked || []);
+        const toggle = (id) => {
+          const n = new Set(picked);
+          if (n.has(id)) n.delete(id); else n.add(id);
+          setForm({ ...form, picked: [...n] });
+        };
+        return (
+          <Modal title="أرجع المسجّلين إلى هذا اليوم" onClose={closeModal}>
+            <div className="text-xs text-slate-500 leading-relaxed mb-4">
+              هؤلاء مسجّلون في قاعدة الطلاب وما هم في <b className="text-slate-700">{activeLedger?.name || 'هذا اليوم'}</b>.
+              اختر من تبيه ويرجع بمبلغه — ثم راجع من دفع فعلًا.
+            </div>
+            <Field label="سُجّلوا خلال">
+              <select className={inputCls} value={form.days || 7}
+                onChange={(e) => { const d = Number(e.target.value); setForm({ ...form, days: d, picked: recoverable(d).map((x) => x.id) }); }}>
+                <option value={1}>اليوم</option>
+                <option value={3}>٣ أيام</option>
+                <option value={7}>أسبوع</option>
+                <option value={30}>شهر</option>
+              </select>
+            </Field>
+            <div className="flex gap-2">
+              <Field label="المبلغ لكل واحد (ر.س)">
+                <input className={inputCls} type="number" inputMode="numeric" value={form.amount ?? ''}
+                  onChange={(e) => setForm({ ...form, amount: e.target.value })} />
+              </Field>
+              <Field label="طريقة الدفع">
+                <select className={inputCls} value={form.accountId || ''}
+                  onChange={(e) => setForm({ ...form, accountId: e.target.value })}>
+                  {data.faidAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  <option value="unpaid">ما دفع</option>
+                </select>
+              </Field>
+            </div>
+            {!list.length ? (
+              <div className="text-sm text-slate-400 py-6 text-center">ما فيه أحد في هذي المدة.</div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between mt-4 mb-2">
+                  <span className="text-xs font-bold text-slate-600">{list.length} طالبًا · المختار {picked.size}</span>
+                  <button className="text-xs text-brand-700 font-bold"
+                    onClick={() => setForm({ ...form, picked: picked.size === list.length ? [] : list.map((x) => x.id) })}>
+                    {picked.size === list.length ? 'إلغاء الكل' : 'اختر الكل'}
+                  </button>
+                </div>
+                <div className="max-h-72 overflow-y-auto -mx-1 px-1 space-y-1.5">
+                  {list.map((s) => (
+                    <button key={s.id} type="button" onClick={() => toggle(s.id)}
+                      className={`w-full text-right border rounded-xl px-3 py-2.5 flex items-center gap-2.5 ${picked.has(s.id) ? 'border-brand-300 bg-brand-50' : 'border-slate-200'}`}>
+                      <span className={`w-4 h-4 rounded border shrink-0 flex items-center justify-center ${picked.has(s.id) ? 'bg-brand-600 border-brand-600' : 'border-slate-300'}`}>
+                        {picked.has(s.id) && <Check size={11} className="text-white" />}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-semibold text-slate-800 truncate">{s.name}</span>
+                        <span className="block text-[11px] text-slate-400 truncate">
+                          {s.age ? `${s.age} سنة · ` : ''}{s.guardian?.name || 'بلا ولي أمر'}
+                          {s.guardian?.phone ? ` · ${s.guardian.phone}` : ''}
+                        </span>
+                      </span>
+                      <span className="text-[11px] text-slate-400 shrink-0">{agoText(s.createdAt) || ''}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+            <div className="flex gap-2 mt-5">
+              <button className={btnPrimary + ' flex-1'} disabled={!picked.size} onClick={putBack}>
+                أرجع {picked.size ? `${picked.size}` : ''}
+              </button>
+              <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {(modal === 'addParticipant' || modal === 'editParticipant') && (
         <Modal title={modal === 'addParticipant' ? (isGrouped ? 'إضافة مشترك' : 'إضافة مشارك') : 'تعديل المشارك'} onClose={closeModal}>
