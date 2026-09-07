@@ -6,8 +6,16 @@
  * التطبيق، والموعد ينحفظ مع بقية البيانات.
  */
 
-/** يوم الأسبوع (٠ الأحد … ٦ السبت) وساعة بتوقيت السعودية. */
-export const DEFAULT_SCHEDULE = { day: 5, hour: 4 };
+/**
+ * يوم الأسبوع (٠ الأحد … ٦ السبت) وساعة بتوقيت السعودية، و`day: -1` معناه
+ * **كل يوم**.
+ *
+ * وهو الأصل الآن: كانت أسبوعية، فما أُنشئ يوم الأحد وضاع يوم الأحد لا تجده
+ * في شيء — وهذا ما وقع بسؤالٍ نُشر على الأولاد فضاع في ساعتين. والنسخة
+ * تشتغل مرةً في اليوم، فما تكلّف شيئًا يُذكر.
+ */
+export const EVERY_DAY = -1;
+export const DEFAULT_SCHEDULE = { day: EVERY_DAY, hour: 4 };
 export const DAY_NAMES = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 export const KSA_OFFSET = 3 * 60 * 60 * 1000;
 
@@ -25,7 +33,7 @@ export const scheduleOf = (data) => {
   const day = num(s.day);
   const hour = num(s.hour);
   return {
-    day: Number.isInteger(day) && day >= 0 && day <= 6 ? day : DEFAULT_SCHEDULE.day,
+    day: Number.isInteger(day) && day >= EVERY_DAY && day <= 6 ? day : DEFAULT_SCHEDULE.day,
     hour: Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : DEFAULT_SCHEDULE.hour,
   };
 };
@@ -36,6 +44,7 @@ export const MIN_GAP = 6 * 60 * 60 * 1000;
 /** هل حان الموعد؟ الوقت يُقارن بتوقيت السعودية، لأن صاحبه يعيش فيه. */
 export const dueNow = (schedule, now, lastAt) => {
   const t = new Date(now + KSA_OFFSET);
-  if (t.getUTCDay() !== schedule.day || t.getUTCHours() !== schedule.hour) return false;
+  if (schedule.day !== EVERY_DAY && t.getUTCDay() !== schedule.day) return false;
+  if (t.getUTCHours() !== schedule.hour) return false;
   return !(lastAt && now - lastAt < MIN_GAP);
 };

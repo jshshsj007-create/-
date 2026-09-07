@@ -20,7 +20,7 @@ import { makeToken as makeSignupToken, packTotal, packSpan, splitLump, subsFor, 
 import { readImage, POSTER, GALLERY } from './img.js';
 import { qrDataUrl, qrPngBlob } from './qr.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
-import { DAY_NAMES, hourLabel, scheduleOf } from './schedule.js';
+import { DAY_NAMES, EVERY_DAY, hourLabel, scheduleOf } from './schedule.js';
 import { readTheme, writeTheme, applyTheme, readHideMoney, writeHideMoney } from './theme.js';
 import {
   nextRef, yearOf, defaultReceipt, REC_FIELDS, recOn, receiptPngBlob, receiptFileName, hijri, shareFile,
@@ -43,7 +43,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v8.0';
+const APP_VERSION = 'v8.1';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -55,6 +55,13 @@ export const ORDINALS = ['الأول', 'الثاني', 'الثالث', 'الرا
   'التاسع عشر', 'العشرون'];
 
 const uid = () => Math.random().toString(36).slice(2, 9);
+/** «سجل» · «سجلان» · «٣ سجلات» · «١١ سجلًا» — العدد يُصرَّف كما يُنطق. */
+export const records = (n) => {
+  const c = Math.max(0, Math.round(Number(n) || 0));
+  if (c === 1) return 'سجلًّا واحدًا';
+  if (c === 2) return 'سجلين';
+  return c <= 10 ? `${c} سجلات` : `${c} سجلًّا`;
+};
 const fmt = (n) => Number(n || 0).toLocaleString('en-US');
 export const sumAmt = (arr) => (arr || []).reduce((s, x) => s + Number(x.amount || 0), 0);
 /**
@@ -1511,43 +1518,64 @@ export default function App() {
     })();
   }, [adopt]);
 
-  /** يدفع آخر حالة للخادم، ويدمج لو أحد ثاني سبقنا. */
+  /**
+   * يدفع آخر حالة للخادم، ويدمج لو أحد ثاني سبقنا.
+   *
+   * **قاعدةٌ لا تُخرق: الحمولة ونسختُها ورقمُها ثلاثةٌ تتقدّم معًا.**
+   *
+   * كان الرقم يتقدّم وحده: يجي التعارض فنأخذ منه رقم الخادم الجديد، ثم تُرمى
+   * الحمولةُ المدموجة إن كان صاحب الجهاز عدّل شيئًا أثناء الإرسال — فيبقى
+   * عندنا رقمُ اليوم وبياناتُ أمس. فترسل الحفظةُ التالية رقمًا مطابقًا وحمولةً
+   * لا تعرف ما جدّ، فيقبلها الخادم ويمحو به ما لم نره: تسجيلَ وليّ أمرٍ بيده
+   * إيصاله، أو سؤالًا نُشر على الأولاد.
+   *
+   * فالآن: ما نفرّغ الطابور إلا بعد قبول الخادم، ونتيجةُ الدمج تعود إلى
+   * الطابور نفسه — فالحمولة التي تُرسل هي دائمًا المبنيّة على `baseRef` عند
+   * `revRef`، مهما تعثّرت الشبكة ومهما عدّل صاحب الجهاز في أثنائها.
+   */
   const flush = useCallback(async () => {
     if (busyRef.current || !queueRef.current || !sess.current.token) return;
     busyRef.current = true;
-    let payload = queueRef.current;
-    queueRef.current = null;
     setSyncState('saving');
     try {
       for (let attempt = 0; attempt < 4; attempt++) {
+        // نقرأه في كل محاولة: تعديلٌ صار أثناء الإرسال يلحق بها، ولا يُرمى
+        const payload = queueRef.current;
         const r = await api('push', { token: sess.current.token, baseRev: revRef.current, data: payload });
         if (r.status === 200) {
           if (r.body?.visits) setVisits(r.body.visits);
           revRef.current = r.body.rev;
           baseRef.current = clone(payload);
-          clearPending();
           /**
            * ما نرجّع النسخة المرسلة على الشاشة إلا إذا ما صار تعديل بعدها.
            * وإلا، اللي يكتب جملة يشوف حروفه تنمسح: كل حفظ يرجّعه للحظة انطلاقه.
            */
-          if (!queueRef.current) setData(payload);
+          if (queueRef.current === payload) {
+            queueRef.current = null;
+            clearPending();
+            setData(payload);
+          }
           setSavedAt(Date.now());
           setSyncState('idle');
           break;
         }
         if (r.status === 409 && r.body?.data) {
-          // أحد حفظ قبلي: أدمج شغلي فوق نسخته بدل ما أطمسها
-          payload = merge3(baseRef.current, payload, r.body.data);
-          revRef.current = r.body.rev;
+          // أحد حفظ قبلي: أدمج شغلي فوق نسخته بدل ما أطمسها — والنتيجة في
+          // الطابور، لا في متغيّرٍ عابر يضيع لو تعثّرت المحاولة الجاية
+          const merged = merge3(baseRef.current, queueRef.current, r.body.data);
+          queueRef.current = merged;
           baseRef.current = clone(r.body.data);
+          revRef.current = r.body.rev;
+          // والشاشة تتبع الطابور: وإلا بُنيت الحفظة الجاية على نسخةٍ ماتت
+          setData(migrate(clone(merged)));
           continue;
         }
         if (r.status === 401) { clearSession(); sess.current = { token: null, username: '' }; setCurrentUser(null); setSyncState('idle'); break; }
         throw new Error('push_failed');
       }
     } catch {
-      // ما وصل: نحتفظ بالتعديل في الجهاز ونعيد المحاولة — حتى لو أُقفلت الصفحة
-      queueRef.current = queueRef.current || payload;
+      // ما وصل: نحتفظ بالتعديل في الجهاز ونعيد المحاولة — حتى لو أُقفلت الصفحة.
+      // والطابور ما فُرّغ، فما نحتاج نستعيده — ومعه نسختُه التي بُني عليها
       writePending(sess.current.username, baseRef.current, queueRef.current);
       setSyncState('offline');
     } finally {
@@ -1843,6 +1871,7 @@ export default function App() {
           students: [...data.students, ...kids.filter((k) => !data.students.some((s) => s.id === k.id))],
         });
       }
+      case 'question': return put({ questions: [...data.questions, it] });
       case 'khayrStudent': return put({ khayr: { ...data.khayr, students: [...data.khayr.students, it] } });
       case 'khayrSession': return put({ khayr: { ...data.khayr, sessions: [...data.khayr.sessions, it] } });
       case 'week':
@@ -2556,7 +2585,15 @@ export default function App() {
     });
     closeModal();
   };
-  const removeQuestion = (qid) => save({ ...data, questions: data.questions.filter((q) => q.id !== qid) });
+  /** ومثل غيره يمرّ بالصندوق: سؤالٌ فيه أجوبة الأولاد لا يُمحى بلا رجعة. */
+  const removeQuestion = (qid) => {
+    const gone = data.questions.find((q) => q.id === qid);
+    save({
+      ...data,
+      questions: data.questions.filter((q) => q.id !== qid),
+      ...(gone ? { trash: intoTrash('question', gone, { label: gone.text || 'سؤال' }) } : {}),
+    });
+  };
   const toggleQuestion = (qid) => save({
     ...data,
     questions: data.questions.map((q) => (q.id !== qid ? q : { ...q, open: q.open === false })),
@@ -3467,6 +3504,49 @@ export default function App() {
     } else {
       setBackup((b) => ({ ...b, busy: false, msg: 'ما قدرنا نرجّع اللقطة.' }));
     }
+  };
+
+  /**
+   * استرجاع المفقودين وحدهم.
+   *
+   * الاسترجاع الكامل يمحو شغل اليوم ليُرجع سجلًّا ضاع، وهذا ثمنٌ لا يُدفع.
+   * فهذا يقارن اللقطة بالحاضر ويُرجع ما اختفى بلا سجلِّ حذف، ولا يمسّ سواه —
+   * فما حذفتَه قصدًا يبقى محذوفًا، وما ضاع يرجع.
+   */
+  const recoverMissing = async (stamp, check) => {
+    setBackup((b) => ({ ...b, busy: true, msg: '' }));
+    const r = await api('snapshot_restore', { token: sess.current.token, stamp, only: 'missing', check });
+    if (r.status !== 200) {
+      setBackup((b) => ({ ...b, busy: false, msg: 'ما قدرنا نقرأ اللقطة.' }));
+      return;
+    }
+    const back = r.body?.back || [];
+    if (!back.length) {
+      setBackup((b) => ({ ...b, busy: false, msg: `ما فيه شيءٌ مفقود من لقطة ${stamp}.` }));
+      return;
+    }
+    if (check) {
+      const by = back.reduce((m, x) => ({ ...m, [x.kind]: (m[x.kind] || 0) + 1 }), {});
+      const line = Object.entries(by).map(([k, n]) => `${n} ${k}`).join(' · ');
+      setBackup((b) => ({ ...b, busy: false, msg: '' }));
+      askConfirm(
+        `أرجع ${records(back.length)} مفقودة؟`,
+        () => recoverMissing(stamp, false),
+        'نعم، أرجعهم',
+        {
+          lines: [line, ...back.slice(0, 8).map((x) => `${x.kind}: ${x.name || '—'}`),
+            ...(back.length > 8 ? [`وغيرهم ${back.length - 8}`] : []),
+            'ما حذفتَه بيدك يبقى محذوفًا، وشغل اليوم ما يُمسّ.'],
+        },
+      );
+      return;
+    }
+    if (r.body?.data) {
+      revRef.current = r.body.rev;
+      baseRef.current = clone(r.body.data);
+      setData(migrate(clone(r.body.data)));
+    }
+    setBackup((b) => ({ ...b, busy: false, msg: `رجّعنا ${records(back.length)}.` }));
   };
 
   const backupText = () => JSON.stringify({ app: 'Faydh', version: 1, savedAt: new Date().toISOString(), data }, null, 2);
@@ -6993,8 +7073,8 @@ export default function App() {
                   <div className={cardCls}>
                     <div className="font-semibold text-slate-700 mb-1">النسخ التلقائي</div>
                     <div className="text-xs text-slate-400 mb-4">
-                      كل {DAY_NAMES[backupPlan.day]} {hourLabel(backupPlan.hour)}: لقطة تُحفظ في الخادم،
-                      ونسخة ترحل لمجلدك في درايف.
+                      {backupPlan.day === EVERY_DAY ? 'كل يوم' : `كل ${DAY_NAMES[backupPlan.day]}`} {hourLabel(backupPlan.hour)}:
+                      لقطة تُحفظ في الخادم، ونسخة ترحل لمجلدك في درايف.
                     </div>
 
                     {/* الموعد يعيش مع البيانات لا مع الكود، فيتغيّر من هنا بلا نشرة */}
@@ -7003,6 +7083,8 @@ export default function App() {
                         <span className="block text-[11px] text-slate-400 mb-1">اليوم</span>
                         <select className={inputCls} value={backupPlan.day}
                           onChange={(e) => save({ ...data, backupSchedule: { ...backupPlan, day: Number(e.target.value) } })}>
+                          {/* اليومية هي الأصل: الأسبوعية تترك ستة أيامٍ بلا شبكة تحتها */}
+                          <option value={EVERY_DAY}>كل يوم</option>
                           {DAY_NAMES.map((n, i) => <option key={n} value={i}>{n}</option>)}
                         </select>
                       </label>
@@ -7046,19 +7128,33 @@ export default function App() {
                     {(backup.status?.snapshots || []).length > 0 && (
                       <div className="mt-4">
                         <div className="text-xs text-slate-400 mb-2">
-                          استرجاع لقطة — يستبدل كل البيانات الحالية بحالتها في ذاك اليوم.
+                          اللقطات المحفوظة. من كلٍّ منها طريقان.
                         </div>
-                        <div className="flex flex-wrap gap-2">
+                        <div className="space-y-2">
                           {backup.status.snapshots.map((stamp) => (
-                            <button key={stamp} className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-600"
-                              onClick={() => askConfirm(
-                                `ترجيع البيانات لحالة ${stamp}؟ كل ما صار بعدها ينمسح.`,
-                                () => restoreSnapshot(stamp),
-                                'نعم، رجّعها',
-                              )}>
-                              {stamp}
-                            </button>
+                            <div key={stamp} className="flex items-center gap-2 border border-slate-200 rounded-xl px-3 py-2">
+                              <span className="text-xs text-slate-600 font-semibold shrink-0">{stamp}</span>
+                              {/* الأول والأسلم: ما ضاع يرجع، وشغل اليوم ما يُمسّ */}
+                              <button disabled={backup.busy}
+                                className="mr-auto text-xs font-bold bg-brand-600 text-white rounded-lg px-2.5 py-1.5 disabled:opacity-40"
+                                onClick={() => recoverMissing(stamp, true)}>
+                                أرجع المفقودين
+                              </button>
+                              <button disabled={backup.busy}
+                                className="text-xs text-red-600 border border-red-200 rounded-lg px-2.5 py-1.5 disabled:opacity-40"
+                                onClick={() => askConfirm(
+                                  `ترجيع البيانات لحالة ${stamp}؟ كل ما صار بعدها ينمسح.`,
+                                  () => restoreSnapshot(stamp),
+                                  'نعم، رجّعها',
+                                )}>
+                                استرجاع كامل
+                              </button>
+                            </div>
                           ))}
+                        </div>
+                        <div className="text-[11px] text-slate-400 mt-2 leading-relaxed">
+                          «أرجع المفقودين» يقارن اللقطة بالحاضر ويُرجع ما اختفى بلا سجلِّ حذف وحده.
+                          و«استرجاع كامل» يستبدل كل شيء بحالته في ذاك اليوم — وما بعده ينمسح.
                         </div>
                       </div>
                     )}

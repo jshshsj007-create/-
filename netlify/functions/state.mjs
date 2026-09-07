@@ -248,6 +248,77 @@ const strip = (data, me) => {
   return out;
 };
 
+/* ---------------------------- حارس المحو ---------------------------- */
+/**
+ * السجل الذي يختفي بلا سجلِّ حذف لم يحذفه أحد.
+ *
+ * كل حذفٍ في التطبيق يمرّ بصندوق المحذوفات ويترك أثرًا باسم صاحبه. فاختفاءٌ
+ * بلا أثر معناه حمولةٌ قديمة كُتبت فوق جديد — تسجيلُ وليّ أمرٍ بيده إيصاله،
+ * أو سؤالٌ نُشر على الأولاد.
+ *
+ * **ونردّه ولا نردّ الحفظة.** لأن الردّ يدفع الجهاز إلى دمجٍ لا يُرجع الغائب
+ * (فالدمج يقرأ غيابه عن حمولتي حذفًا مني)، فيعيد ويُردّ، ويدور. أما الإرجاع
+ * فيقبل شغله ويحفظ ما لم يره — ولا يضيع طرف.
+ *
+ * وثمنُه أن حذفًا لم يكتب أثره يُردّ، فيحذفه صاحبه ثانية. وهو أرخص من تسجيلٍ
+ * يضيع ومعه مالُه.
+ */
+const deepIds = (v, into = new Set()) => {
+  if (Array.isArray(v)) { for (const x of v) deepIds(x, into); return into; }
+  if (v && typeof v === 'object') {
+    if (typeof v.id === 'string') into.add(v.id);
+    for (const k of Object.keys(v)) deepIds(v[k], into);
+  }
+  return into;
+};
+
+/** الاسم في القائمة، أو الاسم داخل البرنامج واليوم — لنقول لصاحبه ما أُرجع. */
+const listBack = (mine, theirs, keep) => {
+  if (!Array.isArray(theirs) || !theirs.length) return { list: mine, back: [] };
+  const here = new Set((Array.isArray(mine) ? mine : []).map((x) => x?.id));
+  const back = theirs.filter((x) => x?.id && !here.has(x.id) && !keep.has(x.id));
+  return back.length ? { list: [...(mine || []), ...back], back } : { list: mine, back: [] };
+};
+
+const repair = (incoming, current) => {
+  if (!current?.programs && !current?.guardians) return { data: incoming, back: [] };
+  // ما كتب صاحبه أثر حذفه فقد ذهب بإذنه — ومعه ما تحته: اليومُ يذهب بمشاركيه
+  const keep = deepIds(incoming?.trash || []);
+  const out = { ...incoming };
+  const back = [];
+  const note = (kind, rows) => rows.forEach((r) => back.push({ kind, name: r.name || '' }));
+
+  for (const [key, kind] of [['guardians', 'ولي أمر'], ['students', 'طالب'], ['questions', 'سؤال'],
+    ['competitions', 'مسابقة'], ['trips', 'سفرة'], ['tournaments', 'دوري']]) {
+    const r = listBack(out[key], current[key], keep);
+    out[key] = r.list; note(kind, r.back);
+  }
+
+  const progs = listBack(out.programs, current.programs, keep);
+  const byId = new Map((current.programs || []).map((p) => [p.id, p]));
+  out.programs = (progs.list || []).map((p) => {
+    const was = byId.get(p.id);
+    if (!was) return p;
+    const parts = listBack(p.participants, was.participants, keep);
+    const weeks = listBack(p.weeks, was.weeks, keep);
+    const wasWeeks = new Map((was.weeks || []).map((w) => [w.id, w]));
+    note('مشترك', parts.back); note('يوم', weeks.back);
+    return {
+      ...p,
+      participants: parts.list,
+      weeks: (weeks.list || []).map((w) => {
+        const ww = wasWeeks.get(w.id);
+        if (!ww) return w;
+        const r = listBack(w.participants, ww.participants, keep);
+        note('مشترك', r.back);
+        return r.back.length ? { ...w, participants: r.list } : w;
+      }),
+    };
+  });
+  note('برنامج', progs.back);
+  return { data: out, back };
+};
+
 /**
  * الحفظ القادم من المتصفح ما يقدر يمس ما لا يملكه صاحبه:
  * كلمات المرور المخزّنة، وقاعدة الأهالي، وقائمة المستخدمين نفسها —
@@ -497,6 +568,24 @@ export default async (req) => {
     // الاسترجاع يكتب اللقطة كنسخة جديدة، فيبقى تاريخ المراجعات متصلًا
     const data = await readSnapshot(store(), body.stamp);
     if (!data) return json({ error: 'not_found' }, 404);
+    /**
+     * استرجاع المفقودين وحدهم.
+     *
+     * الاسترجاع الكامل يمحو شغل اليوم كلَّه ليُرجع سجلًّا ضاع — ثمنٌ لا يُدفع.
+     * فنقارن اللقطة بالحاضر ونُرجع ما اختفى بلا أثر حذف، ولا نمسّ سواه.
+     * `check` يُري صاحبه ما سيرجع قبل أن يقرّر.
+     */
+    if (body.only === 'missing') {
+      const found = repair(doc.data, data);
+      if (body.check) return json({ ok: true, back: found.back });
+      if (!found.back.length) return json({ ok: true, back: [], rev: doc.rev });
+      const rr = await commit((d) => ({
+        doc: { ...d, rev: d.rev + 1, updatedAt: new Date().toISOString(), data: repair(d.data, data).data },
+        out: { back: found.back },
+      }), doc);
+      if (rr.busy) return json({ error: 'busy' }, 503);
+      return json({ ok: true, back: found.back, rev: rr.doc.rev, data: strip(rr.doc.data, me) });
+    }
     const r = await commit((d) => ({
       doc: { rev: d.rev + 1, updatedAt: new Date().toISOString(), secret: d.secret, data, signupLog: d.signupLog || [] },
     }), doc);
@@ -558,13 +647,17 @@ export default async (req) => {
       if (Number(body.baseRev) !== d.rev) {
         return { reject: json({ error: 'conflict', rev: d.rev, data: strip(d.data, me) }, 409) };
       }
-      const data = enforceOnePerPhone(guard(body.data, d.data, me));
+      const safe = guard(body.data, d.data, me);
+      // استرجاعُ نسخةٍ كاملة يستبدل كل شيء بأمر صاحبه، فما يمرّ على الحارس
+      const fixed = body.replace === true && isAdmin(me) ? { data: safe, back: [] } : repair(safe, d.data);
+      const data = enforceOnePerPhone(fixed.data);
       // ننشر الوثيقة كما هي ثم نستبدل ما تغيّر: أي سجلٍّ نضيفه لاحقًا يبقى
-      return { doc: { ...d, rev: d.rev + 1, updatedAt: new Date().toISOString(), data } };
+      return { doc: { ...d, rev: d.rev + 1, updatedAt: new Date().toISOString(), data }, out: { back: fixed.back } };
     }, doc);
     if (r.reject) return r.reject;
     if (r.busy) return json({ error: 'busy' }, 503);
-    return json({ ok: true, rev: r.doc.rev, visits: await visitsFor(r.doc) });
+    // نخبر الجهاز بما أُرجع، فيسحبه ويعرضه لصاحبه — لا يُرجَع في صمت
+    return json({ ok: true, rev: r.doc.rev, visits: await visitsFor(r.doc), back: r.out?.back || [] });
   }
 
   return json({ error: 'unknown_op' }, 400);

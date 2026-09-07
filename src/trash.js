@@ -24,6 +24,7 @@ export const KINDS = {
   student: 'طالب',
   guardian: 'ولي أمر',
   participant: 'مشارك',
+  question: 'سؤال اليوم',
   week: 'يوم',
 };
 
