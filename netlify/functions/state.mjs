@@ -593,6 +593,24 @@ export default async (req) => {
     return json({ ok: true, rev: r.doc.rev, data: strip(data, me) });
   }
 
+  /**
+   * سجلّ من سجّل — للمدير وحده.
+   *
+   * وُضع لمنع الإغراق: جوالٌ وساعة، لا اسم ولا مبلغ. لكنه يعيش خارج البيانات
+   * المشتركة، فلا تطاله حفظةٌ عمياء تمحو ما في `data`. فهو آخر ما يبقى حين
+   * يضيع التسجيل نفسه — أرقامٌ تتصل بها فتعرف من سجّل.
+   *
+   * وهو ساعةٌ واحدة لا أكثر: يُقلَّم عند كل تسجيلٍ جديد إلى ما مضى في ساعة.
+   */
+  if (op === 'signup_log') {
+    if (!isAdmin(me)) return json({ error: 'forbidden' }, 403);
+    const rows = (doc.signupLog || [])
+      .filter((e) => e?.phone)
+      .map((e) => ({ at: e.at || 0, phone: String(e.phone) }))
+      .sort((a, b) => b.at - a.at);
+    return json({ ok: true, rows });
+  }
+
   // رفع صورة برنامج: ترجع معرّفًا، وهو وحده اللي ينحفظ في البيانات
   if (op === 'img_put') {
     if (!allowed(me, 'البرامج') && !allowed(me, 'الإعداد (المسابقات)')) return json({ error: 'forbidden' }, 403);

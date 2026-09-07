@@ -43,7 +43,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v8.1';
+const APP_VERSION = 'v8.2';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -1380,6 +1380,8 @@ export default function App() {
    * ويتعارض بلا سبب.
    */
   const [visits, setVisits] = useState({});
+  // أرقام آخر من سجّل — تُجلب بالضغط، فما تنزل مع كل مزامنة بلا حاجة
+  const [signupLog, setSignupLog] = useState(null);
   const [selectedGuardianId, setSelectedGuardianId] = useState(null);
   /** الطالب الذي ذهب وليُّ أمره — يُفتح وحده، فما يبقى محبوسًا في القائمة. */
   const [selectedStudentId, setSelectedStudentId] = useState(null);
@@ -4535,6 +4537,42 @@ export default function App() {
                         </div>
                       );
                     })()}
+
+                    {/*
+                      أرقام آخر من سجّل.
+                      سجلٌّ يعيش خارج البيانات المشتركة، فيبقى حين يضيع التسجيل
+                      نفسه — تتصل بأصحابه فتعرف من سجّل. وهو ساعةٌ واحدة لا أكثر.
+                    */}
+                    {isAdmin && (
+                      <div className="mt-3 pt-3 border-t border-slate-100">
+                        {!signupLog ? (
+                          <button className="text-xs text-brand-700 font-bold"
+                            onClick={async () => {
+                              const r = await api('signup_log', { token: sess.current.token });
+                              setSignupLog(r.status === 200 ? (r.body?.rows || []) : []);
+                            }}>
+                            أرقام آخر من سجّل ←
+                          </button>
+                        ) : !signupLog.length ? (
+                          <div className="text-xs text-slate-400">ما فيه أرقام محفوظة — السجل يحفظ آخر ساعة فقط.</div>
+                        ) : (
+                          <>
+                            <div className="text-xs text-slate-500 mb-2">
+                              <b className="text-slate-700">{signupLog.length}</b> رقمًا سجّل في آخر ساعة.
+                              اتصل بهم لو ضاع تسجيلهم.
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {signupLog.map((x, i) => (
+                                <a key={i} href={`https://wa.me/${waIntl(x.phone)}`} target="_blank" rel="noreferrer"
+                                  className="text-[12px] border border-slate-200 rounded-lg px-2 py-1 text-slate-600" dir="ltr">
+                                  {x.phone}
+                                </a>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* بياناتٌ سبقت الإصلاح: وجهةٌ على برنامجٍ مقفول، والباركود يقول «مقفل» */}
