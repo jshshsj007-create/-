@@ -288,10 +288,34 @@ const repair = (incoming, current) => {
   const back = [];
   const note = (kind, rows) => rows.forEach((r) => back.push({ kind, name: r.name || '' }));
 
-  for (const [key, kind] of [['guardians', 'ولي أمر'], ['students', 'طالب'], ['questions', 'سؤال'],
+  for (const [key, kind] of [['guardians', 'ولي أمر'], ['students', 'طالب'],
     ['competitions', 'مسابقة'], ['trips', 'سفرة'], ['tournaments', 'دوري']]) {
     const r = listBack(out[key], current[key], keep);
     out[key] = r.list; note(kind, r.back);
+  }
+
+  /**
+   * والسؤال يُحرس بأجوبته: الولد يجاوب فينزل جوابُه داخل السؤال، فلو نظرنا
+   * إلى السؤال وحده رأيناه قائمًا وقد ذهب من جاوبوا فيه.
+   */
+  const qs = listBack(out.questions, current.questions, keep);
+  const wasQ = new Map((current.questions || []).map((q) => [q.id, q]));
+  out.questions = (qs.list || []).map((q) => {
+    const was = wasQ.get(q.id);
+    if (!was) return q;
+    const a = listBack(q.answers, was.answers, keep);
+    const dr = listBack(q.draws, was.draws, keep);
+    note('جواب', a.back); note('قرعة', dr.back);
+    return a.back.length || dr.back.length ? { ...q, answers: a.list, draws: dr.list } : q;
+  });
+  note('سؤال', qs.back);
+
+  // وجلسات خيركم: تسميعُ شهرٍ يذهب بصمتٍ مثل غيره
+  const ses = listBack(out.khayr?.sessions, current.khayr?.sessions, keep);
+  const kst = listBack(out.khayr?.students, current.khayr?.students, keep);
+  if (ses.back.length || kst.back.length) {
+    out.khayr = { ...(out.khayr || {}), sessions: ses.list, students: kst.list };
+    note('جلسة تسميع', ses.back); note('طالب في خيركم', kst.back);
   }
 
   const progs = listBack(out.programs, current.programs, keep);

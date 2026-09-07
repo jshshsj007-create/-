@@ -25,6 +25,7 @@ export const KINDS = {
   guardian: 'ولي أمر',
   participant: 'مشارك',
   question: 'سؤال اليوم',
+  answer: 'جواب',
   week: 'يوم',
 };
 

@@ -43,7 +43,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v8.3';
+const APP_VERSION = 'v8.4';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -1874,6 +1874,10 @@ export default function App() {
         });
       }
       case 'question': return put({ questions: [...data.questions, it] });
+      case 'answer': return put({
+        questions: data.questions.map((q) => (q.id !== entry.where?.questionId ? q
+          : { ...q, answers: [...(q.answers || []), it] })),
+      });
       case 'khayrStudent': return put({ khayr: { ...data.khayr, students: [...data.khayr.students, it] } });
       case 'khayrSession': return put({ khayr: { ...data.khayr, sessions: [...data.khayr.sessions, it] } });
       case 'week':
@@ -2647,12 +2651,21 @@ export default function App() {
       answers: (q.answers || []).map((a) => (a.id !== aid ? a : { ...a, mark: a.mark === mark2 ? '' : mark2 })),
     })),
   });
-  const removeAnswer = (qid, aid) => save({
-    ...data,
-    questions: data.questions.map((q) => (q.id !== qid ? q : {
-      ...q, answers: (q.answers || []).filter((a) => a.id !== aid),
-    })),
-  });
+  /** ومثل كل حذف: يمرّ بالصندوق، فيُعرف أنه بإذنك — ويرجع لو غلطت. */
+  const removeAnswer = (qid, aid) => {
+    const q = data.questions.find((x) => x.id === qid);
+    const gone = (q?.answers || []).find((a) => a.id === aid);
+    save({
+      ...data,
+      questions: data.questions.map((x) => (x.id !== qid ? x : {
+        ...x, answers: (x.answers || []).filter((a) => a.id !== aid),
+      })),
+      ...(gone ? { trash: intoTrash('answer', gone, {
+        label: `${gone.student || 'جواب'} — ${gone.text || ''}`.trim(),
+        where: { questionId: qid },
+      }) } : {}),
+    });
+  };
 
   /**
    * القرعة: يسحبها الخادم ويكتبها في نداءٍ واحد، فأول ضغطةٍ هي القرعة ولا
