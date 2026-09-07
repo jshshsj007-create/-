@@ -282,8 +282,15 @@ const listBack = (mine, theirs, keep) => {
 
 const repair = (incoming, current) => {
   if (!current?.programs && !current?.guardians) return { data: incoming, back: [] };
-  // ما كتب صاحبه أثر حذفه فقد ذهب بإذنه — ومعه ما تحته: اليومُ يذهب بمشاركيه
-  const keep = deepIds(incoming?.trash || []);
+  /**
+   * ما كتب صاحبه أثر حذفه فقد ذهب بإذنه — ومعه ما تحته: اليومُ يذهب بمشاركيه.
+   *
+   * ونقرأ الصندوقين: الوارد **وما عند الخادم**. فالوارد وحده لا يكفي — من
+   * حفظ بنسخةٍ قديمة ما فيها حذفُ زميله، فلا هو ولا سجلُّه؛ فيقرأ الحارس
+   * الغياب حادثًا ويبعث من حذفه صاحبه قصدًا. وصندوق الخادم يعرف كل حذفٍ
+   * وقع، فبه يُميَّز الذاهب بإذنٍ من الذاهب بغلط.
+   */
+  const keep = deepIds([...(incoming?.trash || []), ...(current?.trash || [])]);
   const out = { ...incoming };
   const back = [];
   const note = (kind, rows) => rows.forEach((r) => back.push({ kind, name: r.name || '' }));
@@ -340,7 +347,41 @@ const repair = (incoming, current) => {
     };
   });
   note('برنامج', progs.back);
-  return { data: out, back };
+  return { data: out, back: [...back, ...bury(out, incoming, current)] };
+};
+
+/**
+ * والنصف الثاني: لا يُبعث من دُفن.
+ *
+ * الحارس فوق يمنع الضياع، وهذا يمنع ضدَّه. فمن حفظ بنسخةٍ قديمة، نسختُه ما
+ * زالت تحمل من حذفه زميلُه قبل قليل — فيعود من نفسه، ويظنّ صاحبه أن حذفه
+ * ما نفذ. والأول أضرّ، لكن الثاني يُربك: تحذف اسمًا فيرجع، فتحذفه فيرجع.
+ *
+ * والعلامة: سجلٌّ في صندوق الخادم **وفي الوارد كذلك** — فهو محذوفٌ عند
+ * الطرفين. أما من أخرجه صاحبُه من الصندوق فذاك استرجاعٌ بإذنه، فيُترك.
+ */
+const bury = (out, incoming, current) => {
+  const still = new Set((current?.trash || [])
+    .filter((t) => t?.id && (incoming?.trash || []).some((x) => x?.id === t.id))
+    .flatMap((t) => [...deepIds(t.item)]));
+  if (!still.size) return [];
+  const gone = [];
+  const sift = (list, kind) => {
+    if (!Array.isArray(list)) return list;
+    const keep = list.filter((x) => !still.has(x?.id));
+    if (keep.length !== list.length) {
+      list.filter((x) => still.has(x?.id)).forEach((x) => gone.push({ kind, name: x?.name || '', buried: true }));
+    }
+    return keep;
+  };
+  for (const [key, kind] of [['guardians', 'ولي أمر'], ['students', 'طالب'], ['questions', 'سؤال'],
+    ['competitions', 'مسابقة'], ['trips', 'سفرة'], ['tournaments', 'دوري']]) out[key] = sift(out[key], kind);
+  out.programs = sift(out.programs, 'برنامج').map((p) => ({
+    ...p,
+    participants: sift(p.participants, 'مشترك'),
+    weeks: sift(p.weeks, 'يوم').map((w) => ({ ...w, participants: sift(w.participants, 'مشترك') })),
+  }));
+  return gone;
 };
 
 /**
