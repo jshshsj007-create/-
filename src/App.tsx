@@ -21,7 +21,7 @@ import { makeToken as makeSignupToken, packTotal, packSpan, splitLump, subsFor, 
 import { readImage, POSTER, GALLERY } from './img.js';
 import { qrDataUrl, qrPngBlob } from './qr.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
-import { DAY_NAMES, EVERY_DAY, hourLabel, scheduleOf } from './schedule.js';
+import { DAY_NAMES, EVERY_DAY, hourLabel, scheduleOf, scheduleText } from './schedule.js';
 import { readTheme, writeTheme, applyTheme, readHideMoney, writeHideMoney } from './theme.js';
 import {
   nextRef, yearOf, defaultReceipt, REC_FIELDS, recOn, receiptPngBlob, receiptFileName, hijri, shareFile,
@@ -7683,11 +7683,33 @@ export default function App() {
                   <div className={cardCls}>
                     <div className="font-semibold text-slate-700 mb-1">النسخ التلقائي</div>
                     <div className="text-xs text-slate-400 mb-4">
-                      {backupPlan.day === EVERY_DAY ? 'كل يوم' : `كل ${DAY_NAMES[backupPlan.day]}`} {hourLabel(backupPlan.hour)}:
+                      {scheduleText(backupPlan)}:
                       لقطة تُحفظ في الخادم، ونسخة ترحل لمجلدك في درايف.
                     </div>
 
+                    {/*
+                      كل كم؟
+                      اليومية تترك بينك وبين نسختك يومًا كاملًا — لو مات
+                      الصندوق ليلًا ضاع شغل اليوم. ومن أراد أن يُضيّق الفجوة
+                      اختار ساعاتٍ بدل يوم، فتصير الخسارة القصوى تلك الساعات.
+                    */}
+                    <div className="mb-4">
+                      <span className="block text-[11px] text-slate-400 mb-1.5">كل كم؟</span>
+                      <div className="flex flex-wrap gap-2">
+                        {[[0, 'يوم'], [12, '١٢ ساعة'], [6, '٦ ساعات'], [4, '٤ ساعات']].map(([v, lb]) => (
+                          <button key={v} type="button"
+                            onClick={() => save({ ...data, backupSchedule: { ...backupPlan, every: v } })}
+                            className={`text-xs font-semibold rounded-lg px-3 py-2 border ${backupPlan.every === v
+                              ? 'bg-brand-700 text-white border-brand-700' : 'bg-white border-slate-200 text-slate-600'}`}>
+                            {lb}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
                     {/* الموعد يعيش مع البيانات لا مع الكود، فيتغيّر من هنا بلا نشرة */}
+                    {/* واليوم والساعة لا معنى لهما مع «كل أربع ساعات»، فما يُعرضان */}
+                    {backupPlan.every === 0 && (
                     <div className="flex gap-2 mb-4">
                       <label className="flex-1 min-w-0">
                         <span className="block text-[11px] text-slate-400 mb-1">اليوم</span>
@@ -7706,6 +7728,7 @@ export default function App() {
                         </select>
                       </label>
                     </div>
+                    )}
 
                     {backup.status ? (
                       <div className="bg-slate-50 rounded-xl px-4 py-3 mb-3 text-sm">
