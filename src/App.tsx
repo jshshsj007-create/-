@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Home, BookOpen, Wallet, Settings, Plus, X, Check, ChevronLeft, Trash2, Pencil,
   Users as UsersIcon, Calendar, TrendingUp, TrendingDown, Layers, ShieldCheck,
@@ -1957,13 +1957,14 @@ export default function App() {
   /**
    * فحصُ الحارس.
    *
-   * يُعاد حسابه مع كل تبدّلٍ في البيانات لا مع كل رسمة: يمرّ على البرامج
-   * والدفاتر كلها، وذاك عملٌ لا يُعاد ستّين مرة في الثانية بلا سبب.
+   * حسابٌ عاديٌّ لا `useMemo`، وهذا مقصود: فوق هذا السطر خروجٌ مبكّر
+   * (`if (loading || !data)`)، فأيُّ خطّافٍ يُكتب بعده يُستدعى في رسمةٍ ولا
+   * يُستدعى في أخرى — وذاك خطأُ React الذي أطفأ الشاشة كلها.
+   *
+   * وثمنُه إعادةُ حسابٍ مع كل رسمة، وهو مرورٌ على المشتركين لا غير — أرخصُ
+   * بكثيرٍ من تطبيقٍ لا يفتح.
    */
-  const watchRows = useMemo(
-    () => checkAll(data, { backupAt: backup.status?.at ? Date.parse(backup.status.at) || 0 : 0 }),
-    [data, backup.status],
-  );
+  const watchRows = checkAll(data, { backupAt: backup.status?.at ? Date.parse(backup.status.at) || 0 : 0 });
 
   /* --------------------------- تعديل الدفاتر --------------------------- */
 
@@ -3030,8 +3031,12 @@ export default function App() {
   /**
    * مفتاح الرابط ورمزُه ووجهتُه لا تتغيّر بحفظٍ أبدًا — حصّنها الخادم.
    * فتُغيَّر بفعلٍ مقصود، ويُكتب من فعله ومتى.
+   *
+   * ودالةٌ عادية لا `useCallback`: فوقها خروجٌ مبكّر، وكلُّ خطّافٍ يُكتب بعده
+   * يُستدعى في رسمةٍ ولا يُستدعى في أخرى. ولا تُمرَّر في قائمة اعتماد، فما
+   * ينفع فيها التذكير شيئًا أصلًا.
    */
-  const linkSet = useCallback(async (patch) => {
+  const linkSet = async (patch) => {
     if (!cloudOn) return false;
     const r = await api('link_set', { token: sess.current.token, ...patch });
     if (r.status !== 200 || !r.body?.data) return false;
@@ -3039,7 +3044,7 @@ export default function App() {
     baseRef.current = clone(r.body.data);
     setData(migrate(clone(r.body.data)));
     return true;
-  }, [cloudOn]);
+  };
 
   const patchSignup = (patch) => save(signupPatched(patch));
   /** للخانات اللي تُكتب حرفًا حرفًا: نفس الحفظ، بس بعد ما يخلص الكاتب. */
