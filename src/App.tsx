@@ -3777,6 +3777,52 @@ export default function App() {
   };
 
   /**
+   * دفتر التسجيلات: يقول من ضاع، ويُرجعه بمالِه.
+   *
+   * كان يُقرأ من الخادم ولا زرَّ له، فهو تأمينٌ لا يصل إليه صاحبُه — وذاك
+   * أسوأ من ألّا يكون: تظنّ أن لك رجعةً، ولا تقدر تفتحها ساعةَ تحتاجها.
+   *
+   * وهو غيرُ «أرجع المسجّلين»: ذاك يبني من قاعدة الطلاب فيرجع الاسمُ بلا
+   * مبلغه ولا باقته ولا إيصاله. وهذا يبني من الدفتر، فيرجع كما وصل أول مرة.
+   */
+  const matchSubs = async (check = true) => {
+    setBackup((b) => ({ ...b, busy: true, msg: '' }));
+    const r = await api('ledger', { token: sess.current.token, kind: 'sub', mode: 'match', ...(check ? { check: true } : {}) });
+    if (r.status !== 200) {
+      setBackup((b) => ({ ...b, busy: false, msg: 'ما قدرنا نقرأ دفتر التسجيلات.' }));
+      return;
+    }
+    const gone = r.body?.missing || [];
+    if (!gone.length) {
+      setBackup((b) => ({ ...b, busy: false, msg: `دفتر التسجيلات مطابق — ${fmt(r.body?.total || 0)} تسجيلًا، ما ينقص منها أحد.` }));
+      return;
+    }
+    if (check) {
+      const sum = gone.reduce((s, x) => s + Number(x.amount || 0), 0);
+      setBackup((b) => ({ ...b, busy: false, msg: '' }));
+      askConfirm(
+        `في الدفتر ${records(gone.length)} ما لها أثر عندك${sum > 0 ? ` — بمبلغ ${fmt(sum)} ر.س` : ''}. نرجّعهم؟`,
+        () => matchSubs(false),
+        'نعم، أرجعهم',
+        {
+          lines: [
+            ...gone.slice(0, 8).map((x) => `${x.name || '—'}${x.amount ? ` · ${fmt(x.amount)} ر.س` : ''}${x.packageName ? ` · ${x.packageName}` : ''}`),
+            ...(gone.length > 8 ? [`وغيرهم ${gone.length - 8}`] : []),
+            'يرجعون بمبالغهم وباقاتهم وإيصالاتهم كما وصلت. ومن رفضتَه بيدك ما يرجع.',
+          ],
+        },
+      );
+      return;
+    }
+    if (r.body?.data) {
+      revRef.current = r.body.rev;
+      baseRef.current = clone(r.body.data);
+      setData(migrate(clone(r.body.data)));
+    }
+    setBackup((b) => ({ ...b, busy: false, msg: `رجّعنا ${records(gone.length)}.` }));
+  };
+
+  /**
    * مطابقة دفتر المال.
    *
    * الدفتر يُكتب من نفسه مع كل حفظة، وهذا يقرؤه: حركةٌ مكتوبةٌ فيه ولا أثر لها
@@ -7700,6 +7746,28 @@ export default function App() {
                     )}
                   </div>
                 )}
+
+                {/*
+                  دفتر التسجيلات.
+                  كان بلا زر، فهو تأمينٌ لا يصل إليه صاحبُه — وذاك أسوأ من
+                  ألّا يكون. وهو غير «أرجع المسجّلين»: ذاك يبني من قاعدة
+                  الطلاب فيرجع الاسم بلا مالِه، وهذا يرجع كما وصل.
+                */}
+                <div className={cardCls}>
+                  <div className="font-semibold text-slate-700 mb-1">دفتر التسجيلات</div>
+                  <div className="text-xs text-slate-400 mb-4 leading-relaxed">
+                    كل تسجيلٍ يجي من رابط الأهالي يُكتب — ساعة وصوله — في دفترٍ خارج البيانات،
+                    ما ينمحي بحفظةٍ ولا باسترجاع ولا بمحوٍ كامل. وهذا يقابله بمشتركيك،
+                    ويُرجع من ضاع بمبلغه وباقته وإيصاله.
+                  </div>
+                  <button className={btnPrimary + ' w-full'} disabled={backup.busy} onClick={() => matchSubs()}>
+                    <Layers size={16} /> {backup.busy ? 'جاري...' : 'طابق دفتر التسجيلات'}
+                  </button>
+                  <div className="text-[11px] text-slate-400 mt-2 leading-relaxed">
+                    ومن ضغطتَ عليه «ما وصل» يبقى مرفوضًا — الدفتر يحفظ ما وصل، لا ما قبِلتَه.
+                  </div>
+                  {backup.msg && <div className="text-xs text-slate-500 mt-3 text-center">{backup.msg}</div>}
+                </div>
 
                 {/*
                   دفتر المال.
