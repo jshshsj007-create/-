@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Home, BookOpen, Wallet, Settings, Plus, X, Check, ChevronLeft, Trash2, Pencil,
   Users as UsersIcon, Calendar, TrendingUp, TrendingDown, Layers, ShieldCheck,
@@ -13,6 +13,7 @@ import {
 } from './people.js';
 import { STATES, TONES, studentState, stateCounts, stateOpts, NEAR, FAR } from './status.js';
 import { stamped, traceText, agoText } from './trace.js';
+import { checkAll, worst } from './watch.js';
 import { trashed, pruned, sortedTrash, leftText, kindLabel, TRASH_DAYS } from './trash.js';
 import { canWrite as canWritePerm } from './perms.js';
 import { conversion, people } from './visits.js';
@@ -1933,6 +1934,17 @@ export default function App() {
 
   /** حدّا «المستمر» و«المتقطع» — رقمان من الإعدادات لكل البرامج. */
   const stOpts = stateOpts(data.settings);
+
+  /**
+   * فحصُ الحارس.
+   *
+   * يُعاد حسابه مع كل تبدّلٍ في البيانات لا مع كل رسمة: يمرّ على البرامج
+   * والدفاتر كلها، وذاك عملٌ لا يُعاد ستّين مرة في الثانية بلا سبب.
+   */
+  const watchRows = useMemo(
+    () => checkAll(data, { backupAt: backup.status?.at ? Date.parse(backup.status.at) || 0 : 0 }),
+    [data, backup.status],
+  );
 
   /* --------------------------- تعديل الدفاتر --------------------------- */
 
@@ -4289,6 +4301,36 @@ export default function App() {
                 اختر القسم اللي تبي تشتغل عليه
               </div>
             </div>
+            {/*
+              حارس الساعة.
+
+              الخلل لا يصرخ كما يصرخ الضياع: إيصالٌ برقمٍ مكرّر، ومشتركٌ بلا
+              يومٍ فما يظهر في حضور، وتوزيعٌ زاد عن الصافي، وملفٌّ يقترب من
+              سقف الخادم. كلُّها تُرى قبل وقوعها لو نظر أحد — فهذا هو الناظر،
+              سطرٌ واحد على الرئيسية يفتح على التفصيل.
+
+              وهو للمدير: أكثرُه مالٌ وحساب، ولا يُقرأ إلا لمن يقرؤهما.
+            */}
+            {isAdmin && watchRows.length > 0 && (() => {
+              const top = worst(watchRows);
+              const bad = watchRows.filter((r) => r.tone === 'bad').length;
+              const tone = top.tone === 'bad'
+                ? 'bg-red-50 border-red-200 text-red-900'
+                : 'bg-amber-50 border-amber-200 text-amber-900';
+              return (
+                <button onClick={() => setModal('watch')}
+                  className={`w-full text-right rounded-2xl border px-4 py-3 mb-5 flex items-start gap-2.5 ${tone}`}>
+                  <AlertTriangle size={17} className="shrink-0 mt-0.5" />
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm font-bold">{top.title}</span>
+                    <span className="block text-[11.5px] opacity-70 mt-0.5">
+                      {watchRows.length > 1 ? `و${watchRows.length - 1} غيرها${bad > 1 ? ` · ${bad} منها تستاهل الآن` : ''} — اضغط للتفصيل` : 'اضغط للتفصيل'}
+                    </span>
+                  </span>
+                  <ChevronLeft size={16} className="shrink-0 mt-0.5 opacity-50" />
+                </button>
+              );
+            })()}
             {/*
               الرئيسية للشغل لا للأرقام: الرصيد رقم حسّاس يبين لكل من يطالع
               جوالك، ومكانه داخل فيض. وعدّاد البرامج انتقل لصفحة البرامج.
@@ -8925,6 +8967,45 @@ export default function App() {
           </Modal>
         );
       })()}
+
+      {/*
+        تفصيلُ ما وجده الحارس.
+        قراءةٌ لا تصليح: يريك ما وجد لتقرّر أنت — فالخللُ الذي يُصلَّح بلا
+        علمك خللٌ ثانٍ. ولكل سطرٍ مثالٌ أو مثالان، لأن «٣ إيصالات مكرّرة»
+        خبرٌ لا يُعمل به، و«R-14 عند سعد وخالد» خبرٌ يُصلَّح.
+      */}
+      {modal === 'watch' && (
+        <Modal title="فحص الحارس" onClose={closeModal} wide>
+          {!watchRows.length ? (
+            <div className="text-center py-8">
+              <div className="text-3xl mb-2">✓</div>
+              <div className="text-sm font-bold text-slate-700">ما وجد شيئًا.</div>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {watchRows.map((r) => (
+                <div key={r.id}
+                  className={`rounded-xl border px-3.5 py-3 ${r.tone === 'bad' ? 'bg-red-50 border-red-200' : r.tone === 'warn' ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
+                  <div className={`text-[13.5px] font-bold ${r.tone === 'bad' ? 'text-red-900' : r.tone === 'warn' ? 'text-amber-900' : 'text-slate-700'}`}>
+                    {r.title}
+                  </div>
+                  {r.hints.length > 0 && (
+                    <ul className="mt-1.5 space-y-0.5">
+                      {r.hints.map((h, i) => (
+                        <li key={i} className="text-[11.5px] text-slate-500 leading-5">— {h}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="text-[11px] text-slate-400 mt-4 leading-relaxed">
+            الحارس يقرأ ولا يصلّح. وهو يمرّ مع كل تبدّل، فما يحتاج زرًّا تضغطه.
+          </div>
+          <button className={btnPrimary + ' w-full mt-4'} onClick={closeModal}>تمام</button>
+        </Modal>
+      )}
 
       {/* نصوص صفحة السؤال: ما يكتبه صاحب الفريق يفوز */}
       {modal === 'questionTexts' && (
