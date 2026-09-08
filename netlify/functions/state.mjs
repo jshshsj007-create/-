@@ -192,6 +192,36 @@ const ledRead = async (kind, cap = 400) => {
   return { rows, total, more: total > take.length };
 };
 
+/**
+ * عمقُ الحمولة، محسوبًا على نصّها.
+ *
+ * لا نمشي على الكائن لنقيس عمقه: المشيُ هو نفسُه ما نحرس منه. وإنما نعدّ
+ * الأقواس في النصّ — عدٌّ مسطّح لا يستدعي نفسه، فيمرّ على أي عمقٍ بلا أن يقع.
+ *
+ * والسلاسل تُتخطّى بحروفها: قوسٌ داخل نصٍّ ليس عمقًا، ومن كتب `"{{{{"` في
+ * اسم ابنه ما كان يهاجم أحدًا.
+ */
+export const MAX_DEPTH = 40;
+const tooDeep = (v) => {
+  let s;
+  try { s = JSON.stringify(v); } catch { return true; }   // حلقةٌ في الكائن نفسه
+  if (!s) return false;
+  let depth = 0;
+  let inStr = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (c === '\\') i++;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === '{' || c === '[') { if (++depth > MAX_DEPTH) return true; }
+    else if (c === '}' || c === ']') depth--;
+  }
+  return false;
+};
+
 /* ------------------------------ دفتر المال ------------------------------ */
 /**
  * كل حركةٍ مالية تُكتب سطرًا لا يُمحى.
@@ -627,6 +657,20 @@ export default async (req) => {
     return json({ error: 'bad_json' }, 400);
   }
 
+  /**
+   * حمولةٌ عميقة تُردّ قبل أن تُمسّ.
+   *
+   * الرابط عامٌّ يفتحه من شاء، ولا يحتاج مرسِلُه أن يعرف كلمةً ولا أن يدخل.
+   * فمن أرسل كائنًا متداخلًا ألفَ مرة، انفجرت كلُّ دالةٍ تمشي عليه —
+   * `deepIds` والحارس والدمج — بلا خطأٍ يُفهم، وإنما بدالةٍ تقف. وهو أرخصُ
+   * هجومٍ يُتصوَّر: رسالةٌ واحدة صغيرة.
+   *
+   * والعمق يُقاس على النصّ لا على الكائن: القياسُ نفسه لو مشى على الكائن
+   * وقع فيما نحرس منه. وأربعون طبقةً أوسع بكثيرٍ من أعمق ما في بياناتنا
+   * (البرنامج ← أيامه ← مشاركوه ← إيصاله) — فما تضيق على أحد.
+   */
+  if (tooDeep(body)) return json({ error: 'too_deep' }, 400);
+
   const op = body?.op;
   const doc = await readDoc();
   const initialized = Boolean(doc?.data?.users?.length);
@@ -806,21 +850,29 @@ export default async (req) => {
      * العدّ قبل الفحص: من صُدّ ما نقول له «الاسم غلط» أو «الكلمة غلط» — كلاهما
      * خبرٌ يفيد المخمِّن. ونعدّ الفاشلة وحدها، والناجحة تمحو أثر صاحبها.
      */
-    const gate = loginBlocked(doc.loginLog, entered, now);
+    /**
+     * ومن أين جاء.
+     *
+     * بصمةٌ مخلوطةٌ بسرّ المخزن كبصمة الزائر — لا نحفظ عنوانًا ولا شيئًا
+     * يعرّف أحدًا. ووظيفتُها واحدة: أن يُقفل الرشُّ على راشِّه وحده، لا على
+     * الفريق كله.
+     */
+    const from = visitorPrint(req, doc.secret, dayKey(now));
+    const gate = loginBlocked(doc.loginLog, entered, now, from);
     if (gate.blocked) return json({ error: 'too_many', retryIn: gate.retryIn }, 429);
 
     const u = (doc.data.users || []).find((x) => (x.username || '').toLowerCase() === entered);
     const pass = u ? verify(u.password, String(body.password ?? '')) : { ok: false, upgraded: null };
     if (!u || !pass.ok) {
       // سجلُّ المحاولات ما هو من البيانات، فما يرفع رقم النسخة ولا يزاحم حفظًا
-      await commit((d) => ({ doc: { ...d, loginLog: noteFail(loginBlocked(d.loginLog, entered, now).recent, entered, now) } }), doc);
+      await commit((d) => ({ doc: { ...d, loginLog: noteFail(loginBlocked(d.loginLog, entered, now, from).recent, entered, now, from) } }), doc);
       return json({ error: 'bad_credentials' }, 401);
     }
     if (u.status === 'غير نشط') return json({ error: 'inactive' }, 403);
 
     // كلمةٌ قديمة صريحة: تُعمّى في أول دخولٍ بها، بلا أن يشعر صاحبها
     const r = await commit((d) => {
-      const cleared = clearFails(loginBlocked(d.loginLog, entered, now).recent, entered);
+      const cleared = clearFails(loginBlocked(d.loginLog, entered, now, from).recent, entered);
       if (!pass.upgraded && cleared.length === (d.loginLog || []).length) return null;
       const data = pass.upgraded
         ? { ...d.data, users: d.data.users.map((x) => (x.id === u.id ? { ...x, password: pass.upgraded } : x)) }

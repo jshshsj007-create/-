@@ -20,11 +20,24 @@ export const WINDOW = 10 * 60 * 1000;
 /** لحسابٍ واحد. من أخطأ ثمانيًا يستريح — ومن يطارده يستريح معه. */
 export const PER_USER = 8;
 /**
- * ولكل الحسابات: يوقف من يرشّ عشرات الأسماء بكلمةٍ واحدة شائعة.
- * وهو واسعٌ عمدًا — فريقٌ كامل يدخل صباح الجمعة، ولا يصحّ أن تُقفل غلطاتُ
- * بعضهم البابَ على الباقين.
+ * ولمن جاء من مصدرٍ واحد: يوقف من يرشّ عشرات الأسماء بكلمةٍ واحدة شائعة.
+ *
+ * وهذا هو موضع الخلل الذي كان: كان الحدُّ الثاني **على الجميع**، فمن أراد
+ * أن يقفل التطبيق على الفريق كلِّه ما احتاج أن يخمّن كلمةً واحدة — يرسل
+ * ستّين محاولةً فاشلة في دقيقة، فيقف الفريق عشر دقائق. حراسةٌ صارت سلاحًا
+ * بيد من تحرس منه.
+ *
+ * فصار العدُّ على المصدر: من رشّ أقفل على نفسه، ولا يمسّ أحدًا غيره.
  */
-export const PER_ALL = 60;
+export const PER_IP = 20;
+
+/**
+ * ويبقى حدٌّ على الجميع، سقفًا أخيرًا لهجومٍ موزَّع على مصادر كثيرة.
+ *
+ * وهو واسعٌ جدًّا: فريقٌ كامل يدخل صباح الجمعة ولا يقترب منه، ولا يُبلَغ إلا
+ * بهجومٍ حقيقي — وعندها الإقفالُ أهونُ من الفتح.
+ */
+export const PER_ALL = 200;
 
 const norm = (u) => String(u || '').trim().toLowerCase();
 
@@ -32,19 +45,25 @@ const norm = (u) => String(u || '').trim().toLowerCase();
  * هل يُصَدّ؟ ويرجّع السجلّ منظَّفًا مما قدُم، فما ينمو بلا حدّ.
  *
  * ويرجّع `retryIn` بالثواني: نقول للناسي متى يعود، فلا يقف أمام بابٍ مغلقٍ
- * لا يدري متى يُفتح.
+ * لا يدري متى يُفتح. و`why` يقول أيُّ حدٍّ صدّه — فالردّ على من نسي كلمته
+ * غيرُ الردّ على من رشّ الأسماء.
  */
-export const loginBlocked = (log, username, now = Date.now()) => {
+export const loginBlocked = (log, username, now = Date.now(), from = '') => {
   const recent = (log || []).filter((e) => now - e.at < WINDOW);
   const mine = recent.filter((e) => e.u === norm(username));
-  const blocked = mine.length >= PER_USER || recent.length >= PER_ALL;
-  const oldest = (mine.length >= PER_USER ? mine : recent)[0]?.at || now;
-  return { blocked, recent, retryIn: blocked ? Math.ceil((oldest + WINDOW - now) / 1000) : 0 };
+  // بلا مصدرٍ معروف ما نعدّ عليه: خيرٌ من أن نجمع الغرباء كلهم في دلوٍ واحد
+  const src = from ? recent.filter((e) => e.ip === from) : [];
+  const why = mine.length >= PER_USER ? 'user'
+    : src.length >= PER_IP ? 'ip'
+      : recent.length >= PER_ALL ? 'all' : '';
+  const bucket = why === 'user' ? mine : why === 'ip' ? src : recent;
+  const oldest = bucket[0]?.at || now;
+  return { blocked: Boolean(why), why, recent, retryIn: why ? Math.ceil((oldest + WINDOW - now) / 1000) : 0 };
 };
 
-/** محاولةٌ فاشلة تُضاف. */
-export const noteFail = (recent, username, now = Date.now()) =>
-  [...(recent || []), { at: now, u: norm(username) }];
+/** محاولةٌ فاشلة تُضاف، ومعها من أين جاءت. */
+export const noteFail = (recent, username, now = Date.now(), from = '') =>
+  [...(recent || []), { at: now, u: norm(username), ...(from ? { ip: from } : {}) }];
 
 /** ودخولٌ ناجح يمحو أثر صاحبه وحده. */
 export const clearFails = (recent, username) =>
