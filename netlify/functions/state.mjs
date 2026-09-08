@@ -1176,11 +1176,43 @@ export default async (req) => {
   if (op === 'ledger') {
     if (!isAdmin(me)) return json({ error: 'forbidden' }, 403);
     const kind = body.kind === 'ans' ? 'ans' : 'sub';
-    const match = body.mode === 'match' && kind === 'sub';
+    const match = body.mode === 'match';
     // المطابقة تبحث عن غائب فتحتاج مدًى أوسع؛ والعرض يكفيه آخرُ ما وصل
     const led = await ledRead(kind, match ? 3000 : 200);
     const rows = led.rows;
     if (!match) return json({ ok: true, rows, total: led.total, more: led.more });
+
+    /**
+     * وأجوبةُ الأولاد مثل التسجيلات: تُكتب في الدفتر ساعةَ وصولها، فتُطابَق
+     * وتُرجع. وكانت تُكتب ولا تُقرأ — دفترٌ نصفُه، والسؤالُ الذي ذهب يومًا
+     * كان أجوبتُه فيه ولا سبيل إليها.
+     *
+     * والجوابُ يرجع إلى سؤاله بمعرّفه، ولا يُرجَع إلى سؤالٍ ما عاد موجودًا:
+     * سطرٌ معلَّقٌ على عدمٍ لا يُقرأ ولا يُصلح شيئًا.
+     */
+    if (kind === 'ans') {
+      const live = new Set();
+      for (const q of doc.data?.questions || []) for (const a of q.answers || []) if (a?.id) live.add(a.id);
+      const qs = new Set((doc.data?.questions || []).map((q) => q.id));
+      const dropped2 = deepIds(doc.data?.trash || []);
+      const missing = rows.filter((r) => r?.id && !live.has(r.id) && !dropped2.has(r.id) && qs.has(r.questionId));
+      if (body.check || !missing.length) return json({ ok: true, missing, total: led.total });
+      const put = await commit((d) => {
+        const byQ = new Map();
+        for (const m of missing) byQ.set(m.questionId, [...(byQ.get(m.questionId) || []), m]);
+        return { doc: { ...d, rev: d.rev + 1, updatedAt: new Date().toISOString(),
+          data: { ...d.data, questions: (d.data.questions || []).map((q) => {
+            const mine = byQ.get(q.id) || [];
+            if (!mine.length) return q;
+            return { ...q, answers: [...(q.answers || []), ...mine.map((m) => ({
+              id: m.id, student: m.student, at: m.at,
+              ...(m.optionId ? { optionId: m.optionId } : { text: String(m.text || '') }),
+            }))] };
+          }) } } };
+      }, doc);
+      if (put.busy) return json({ error: 'busy' }, 503);
+      return json({ ok: true, missing, total: led.total, rev: put.doc.rev, data: strip(put.doc.data, me) });
+    }
 
     const here = new Set();
     for (const p of doc.data?.programs || []) {

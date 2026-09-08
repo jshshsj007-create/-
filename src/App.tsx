@@ -3822,6 +3822,43 @@ export default function App() {
     setBackup((b) => ({ ...b, busy: false, msg: `رجّعنا ${records(gone.length)}.` }));
   };
 
+  /** ومثلُه دفتر الأجوبة: جوابُ الولد ما يعيش في السؤال وحده. */
+  const matchAnswers = async (check = true) => {
+    setBackup((b) => ({ ...b, busy: true, msg: '' }));
+    const r = await api('ledger', { token: sess.current.token, kind: 'ans', mode: 'match', ...(check ? { check: true } : {}) });
+    if (r.status !== 200) {
+      setBackup((b) => ({ ...b, busy: false, msg: 'ما قدرنا نقرأ دفتر الأجوبة.' }));
+      return;
+    }
+    const gone = r.body?.missing || [];
+    if (!gone.length) {
+      setBackup((b) => ({ ...b, busy: false, msg: `دفتر الأجوبة مطابق — ${fmt(r.body?.total || 0)} جوابًا، ما ينقص منها شيء.` }));
+      return;
+    }
+    if (check) {
+      setBackup((b) => ({ ...b, busy: false, msg: '' }));
+      askConfirm(
+        `في الدفتر ${fmt(gone.length)} جوابًا ما لها أثر عندك. نرجّعها؟`,
+        () => matchAnswers(false),
+        'نعم، أرجعها',
+        {
+          lines: [
+            ...gone.slice(0, 8).map((x) => `${x.student || '—'}${x.question ? ` · ${String(x.question).slice(0, 30)}` : ''}`),
+            ...(gone.length > 8 ? [`وغيرها ${gone.length - 8}`] : []),
+            'وما كان لسؤالٍ ما عاد موجودًا لا يرجع — سطرٌ معلَّقٌ على عدم.',
+          ],
+        },
+      );
+      return;
+    }
+    if (r.body?.data) {
+      revRef.current = r.body.rev;
+      baseRef.current = clone(r.body.data);
+      setData(migrate(clone(r.body.data)));
+    }
+    setBackup((b) => ({ ...b, busy: false, msg: `رجّعنا ${fmt(gone.length)} جوابًا.` }));
+  };
+
   /**
    * مطابقة دفتر المال.
    *
@@ -7762,6 +7799,10 @@ export default function App() {
                   </div>
                   <button className={btnPrimary + ' w-full'} disabled={backup.busy} onClick={() => matchSubs()}>
                     <Layers size={16} /> {backup.busy ? 'جاري...' : 'طابق دفتر التسجيلات'}
+                  </button>
+                  {/* وأجوبةُ سؤال اليوم مثلها: تُكتب ساعةَ وصولها، فتُطابَق وتُرجع */}
+                  <button className={btnGhost + ' w-full mt-2'} disabled={backup.busy} onClick={() => matchAnswers()}>
+                    طابق دفتر أجوبة سؤال اليوم
                   </button>
                   <div className="text-[11px] text-slate-400 mt-2 leading-relaxed">
                     ومن ضغطتَ عليه «ما وصل» يبقى مرفوضًا — الدفتر يحفظ ما وصل، لا ما قبِلتَه.
