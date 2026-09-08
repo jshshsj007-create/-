@@ -41,7 +41,7 @@ function Shell({ brand, children }) {
  * به غيره، وإلا صار الرابط يسلّم الحلّ لمن يفتحه.
  */
 export default function QuestionPage({ token }) {
-  const [state, setState] = useState('loading');  // loading · ready · sending · done · closed
+  const [state, setState] = useState('loading');  // loading · ready · sending · done · closed · gone
   const [view, setView] = useState(null);
   const [student, setStudent] = useState('');
   const [text, setText] = useState('');
@@ -57,6 +57,9 @@ export default function QuestionPage({ token }) {
       if (r.status === 200 && r.body?.view) {
         setView(r.body.view);
         setState(r.body.view.open ? 'ready' : 'closed');
+      } else if (r.status === 404) {
+        // الرمز ما عاد يدلّ على سؤال: حُذف أو تجدّد. غير «انتهى وقت الجواب»
+        setState('gone');
       } else {
         setState('closed');
       }
@@ -81,7 +84,8 @@ export default function QuestionPage({ token }) {
     });
     if (r.status === 200) { setSaidName(r.body?.student || student.trim()); setState('done'); return; }
     if (r.status === 400 && r.body?.errors) { setErrors(r.body.errors); setState('ready'); return; }
-    if (r.status === 409 || r.status === 404) { setState('closed'); return; }
+    if (r.status === 404) { setState('gone'); return; }
+    if (r.status === 409) { setState('closed'); return; }
     setErrors({ answer: r.status === 429 ? 'وصلتنا أجوبة كثيرة الحين. جرّب بعد شوي.' : 'ما وصل الجواب. جرّب مرة ثانية.' });
     setState('ready');
   };
@@ -99,6 +103,27 @@ export default function QuestionPage({ token }) {
         <div className={card + ' text-center'}>
           <h1 className="text-xl font-extrabold text-slate-800">{qText(view, 'closedTitle') || Q_TEXTS.closedTitle}</h1>
           <p className="text-sm text-slate-500 mt-2 leading-relaxed">{qText(view, 'closedText')}</p>
+        </div>
+      </Shell>
+    );
+  }
+
+  /**
+   * السؤال ذهب — ما عاد الرمز يدلّ على شيء.
+   *
+   * وهذي كانت تُقرأ «انتهى وقت الجواب»، فيمرّ حذفُ سؤالٍ منشورٍ بين الناس بلا
+   * ما ينتبه له أحد. صار له نصُّه: «ما عاد موجودًا» — كلمةٌ تدفع من قرأها أن
+   * يسأل الفريق، فيعرف الفريقُ بساعته لا بعد ساعتين.
+   */
+  if (state === 'gone') {
+    return (
+      <Shell brand={brand}>
+        <div className={card + ' text-center'}>
+          <h1 className="text-xl font-extrabold text-slate-800">هذا السؤال ما عاد موجودًا</h1>
+          <p className="text-sm text-slate-500 mt-2 leading-relaxed">
+            الرابط ما عاد يفتح على سؤال — يا إنه انحذف، يا إن الفريق جدّده.
+            كلّم الفريق وهم يعطونك الرابط الجديد.
+          </p>
         </div>
       </Shell>
     );

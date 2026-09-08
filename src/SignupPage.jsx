@@ -7,7 +7,7 @@ import { Check, AlertTriangle, Plus, X, Copy, Upload, MessageCircle, Share2, Map
 import { api } from './cloud.js';
 import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 import { isValidPhone } from './people.js';
-import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, coversAll, daysOf, RECEIPT_TYPES, RECEIPT_MAX, txt, TEXTS, CLOSED, waLink, fillTemplate, signupVars } from './signup.js';
+import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, coversAll, daysOf, RECEIPT_TYPES, RECEIPT_MAX, txt, TEXTS, CLOSED, CLOSED_WHY, waLink, fillTemplate, signupVars } from './signup.js';
 
 const input = 'w-full border border-slate-200 rounded-xl px-3.5 py-3 text-[15px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent';
 const inputBad = input.replace('border-slate-200', 'border-red-300');
@@ -493,7 +493,7 @@ export default function SignupPage({ token }) {
 
   const [goWa, setGoWa] = useState('');
   const [closedWa, setClosedWa] = useState('');
-  const [closedTexts, setClosedTexts] = useState({ title: '', text: '' });
+  const [closedTexts, setClosedTexts] = useState({ title: '', text: '', why: '' });
 
   /**
    * بعد التسجيل يشوف رقمه المرجعي أول، ثم يتحوّل للمحادثة. المهلة مقصودة:
@@ -519,7 +519,7 @@ export default function SignupPage({ token }) {
       } else if (r.status === 404) {
         // الرابط مقفل، لكن الخادم يرجّع رقم الفريق عشان يبقى له طريق يوصلنا منه
         setClosedWa(r.body?.wa || '');
-        setClosedTexts({ title: r.body?.closedTitle || '', text: r.body?.closedText || '' });
+        setClosedTexts({ title: r.body?.closedTitle || '', text: r.body?.closedText || '', why: r.body?.why || '' });
         setState('closed');
       } else setState('error');
     })();
@@ -530,15 +530,29 @@ export default function SignupPage({ token }) {
   }
 
   if (state === 'blocked') {
-    // «تواصل مع الفريق» بلا طريق للفريق كلام فاضي، فالزر جزء من الرسالة لا زينة
+    /**
+     * البرنامج بلا أيامٍ مفتوحة أو بلا طريقة تسجيل: ما فيه مكانٌ يستقر فيه
+     * المشترك، فما نقبل تسجيلًا يضيع.
+     *
+     * لكنّ **الرابط باقٍ**، وهذا ما تقوله الصفحة صراحةً. فهو منشورٌ في قروبات
+     * الأهالي وعلى الباركود، ولو قرأه واحدٌ «مقفل» رماه ولم يعد إليه — ثم فتحنا
+     * الأيام فما رجع أحد. فالكلمة هنا «ما فتحنا بعد» لا «انتهى»، ويُقال له صريحًا
+     * إن هذا الرابط نفسه هو الذي يسجّل منه إذا فُتح.
+     */
     const href = waLink(view?.wa?.number, '');
+    const name = view?.programName ? `«${view.programName}» ` : '';
     return (
       <Shell>
         <div className="bg-white rounded-2xl p-8 text-center">
           <div className="text-4xl mb-3">⏳</div>
-          <div className="font-bold text-lg text-slate-800 mb-1">التسجيل مو متاح حاليًا</div>
-          <div className="text-sm text-slate-500 mb-5">
-            {view?.programName ? `«${view.programName}» ` : ''}ما فتح للتسجيل بعد. تواصل مع الفريق.
+          <div className="font-bold text-lg text-slate-800 mb-1">التسجيل ما فتح بعد</div>
+          <div className="text-sm text-slate-500 mb-2">
+            {name}{view?.blocked === 'no_packages'
+              ? 'ما نزلت طريقة التسجيل بعد.'
+              : 'ما نزلت أيام التسجيل بعد.'}
+          </div>
+          <div className="text-[13px] text-slate-400 mb-5 leading-6">
+            احتفظ بهذا الرابط — هو نفسه اللي بتسجّل منه، وما راح يتغيّر.
           </div>
           <WaButton href={href}>{txt(view, 'contact') || TEXTS.contact}</WaButton>
         </div>
@@ -548,13 +562,15 @@ export default function SignupPage({ token }) {
 
   if (state === 'closed') {
     const href = waLink(closedWa, '');
+    // ما كتبه صاحب الفريق أولًا، وإلا نصُّ الحال نفسها، وإلا العام
+    const why = CLOSED_WHY[closedTexts.why] || CLOSED;
     return (
       <Shell>
         <div className="bg-white rounded-2xl p-8 text-center">
           <div className="text-4xl mb-3">🔒</div>
-          <div className="font-bold text-lg text-slate-800 mb-1">{closedTexts.title || CLOSED.title}</div>
-          {(closedTexts.text ?? CLOSED.text) !== '' && (
-            <div className="text-sm text-slate-500 mb-5 whitespace-pre-wrap">{closedTexts.text || CLOSED.text}</div>
+          <div className="font-bold text-lg text-slate-800 mb-1">{closedTexts.title || why.title}</div>
+          {(closedTexts.text || why.text) !== '' && (
+            <div className="text-sm text-slate-500 mb-5 whitespace-pre-wrap">{closedTexts.text || why.text}</div>
           )}
           <WaButton href={href}>{TEXTS.contact}</WaButton>
         </div>

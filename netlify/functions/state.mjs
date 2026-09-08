@@ -10,7 +10,7 @@
 import { getStore } from '@netlify/blobs';
 import crypto from 'node:crypto';
 import { isAdmin, allowed, canWrite } from '../../src/perms.js';
-import { programFor, publicView, validateSubmission, applySubmission, normalizeSubmission, rateLimited, waIntl, isReceipt, makeToken as makeSignupToken } from '../../src/signup.js';
+import { programFor, publicView, validateSubmission, applySubmission, normalizeSubmission, rateLimited, waIntl, isReceipt, closureOf, makeToken as makeSignupToken } from '../../src/signup.js';
 import { questionView, validateAnswer, applyAnswer, answersRateLimited, makeDraw, applyDraw } from '../../src/club.js';
 import { dedupeByPhone, remapParticipants } from '../../src/people.js';
 import { runBackup, backupStatus, readSnapshot } from '../lib/backup.mjs';
@@ -553,8 +553,11 @@ export default async (req) => {
     // الرابط المقفل يرجّع رقم الفريق وحده: «تواصل معنا» بلا طريق كلام فاضي،
     // والرقم عام أصلًا يشوفه كل من فتح أي رابط تسجيل
     if (!program) {
+      // ولماذا هو مقفول: أُقفل قصدًا، أو تجدّد رمزه، أو ما عاد للرابط العام وجهة
+      const { why } = closureOf(doc?.data, body.token);
       return json({
         error: 'closed',
+        why,
         wa: waIntl(doc?.data?.waNumber),
         closedTitle: doc?.data?.closedTitle || '',
         closedText: doc?.data?.closedText || '',
@@ -577,7 +580,12 @@ export default async (req) => {
    */
   if (op === 'question_info') {
     const view = doc && questionView(doc.data, body.token);
-    if (!view) return json({ error: 'closed' }, 404);
+    /**
+     * `gone` لا `closed`: السؤال المقفول يرجع بـ 200 وفيه `open: false`، فما
+     * يصل هنا إلا رمزٌ ما عاد يدلّ على سؤال — حُذف أو تجدّد. وهذي هي التي
+     * ظهرت لنا يومًا بثوب «انتهى وقت الجواب»، فما عرفنا أن السؤال راح.
+     */
+    if (!view) return json({ error: 'closed', why: 'gone' }, 404);
     return json({ ok: true, view });
   }
 

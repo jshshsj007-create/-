@@ -6,7 +6,7 @@
  * مفتوح على برنامج ظنّ صاحبه أنه أقفله.
  */
 import assert from 'node:assert/strict';
-import { publicProgram, programByToken, programFor } from '../src/signup.js';
+import { publicProgram, programByToken, programFor, closureOf, CLOSED_WHY, blocksSignup, publicView } from '../src/signup.js';
 import { qrSvg, qrDataUrl, qrMatrix, QUIET } from '../src/qr.js';
 
 let passed = 0;
@@ -143,6 +143,79 @@ test('ومن وجّه الرابط إلى برنامج، فُتح بابه مع�
   // التوجيه معناه «سجّلوا هنا»، فلا يُترك مقفولًا
   const d = data('p1', [prog('p1', 'جمعة الرواد', open('aaa'))]);
   assert.equal(publicProgram(d)?.name, 'جمعة الرواد');
+});
+
+/* ------------------ كل رابطٍ مقفول يقول لماذا ------------------ */
+
+/**
+ * ثلاثةُ أحوالٍ كانت تُقرأ رسالةً واحدة: «مقفل». والفرق بينها ليس تحسينَ
+ * عبارة — من فتح رابطًا حُذف برنامجُه قرأ «مقفل» فظنّ الإقفال قصدًا، وسكت.
+ */
+test('الذي أُقفل قصدًا يُعرف أنه أُقفل قصدًا', () => {
+  const d = data('', [prog('p1', 'جمعة', { enabled: false, token: 'aaa', switched: { at: 111, by: 'سعد', on: false } })]);
+  const c = closureOf(d, 'aaa');
+  assert.equal(c.why, 'off');
+  assert.equal(c.at, 111);
+  assert.equal(c.programName, 'جمعة');
+});
+
+test('والرمز الذي ما عاد يدلّ على برنامج يقول «تجدّد» لا «مقفل»', () => {
+  const d = data('', [prog('p1', 'جمعة', open('bbb'))]);
+  assert.equal(closureOf(d, 'aaa').why, 'gone');
+});
+
+test('والرابط العام بلا وجهةٍ حالٌ ثالثة', () => {
+  assert.equal(closureOf({ publicLink: { programId: '' }, programs: [] }).why, 'noTarget');
+});
+
+test('ووجهةٌ على برنامجٍ أُقفل تسجيله: أُقفل، ما ضاع', () => {
+  const d = data('p1', [prog('p1', 'جمعة', { enabled: false, token: 'aaa', switched: { at: 222, by: 'سعد', on: false } })]);
+  assert.equal(closureOf(d).why, 'off');
+  assert.equal(closureOf(d).at, 222);
+});
+
+test('ووجهةٌ على برنامجٍ انحذف: ضاع', () => {
+  assert.equal(closureOf({ publicLink: { programId: 'p9' }, programs: [] }).why, 'gone');
+});
+
+test('ولكل حالٍ نصُّها، فما تتشابه على من قرأها', () => {
+  const t = [CLOSED_WHY.off.title, CLOSED_WHY.gone.title, CLOSED_WHY.noTarget.title];
+  assert.equal(new Set(t).size, 3);
+  t.forEach((x) => assert.ok(x.length > 3));
+});
+
+/* ------------------ تحذيرٌ قبل ما يُقفل آخر يوم ------------------ */
+
+const full = (weeks, signup) => ({
+  id: 'p1', name: 'جمعة الرواد', type: 'مجمع', weeks,
+  signup: { enabled: true, price: 30, allowPerDay: true, accounts: [], packages: [], ...signup },
+});
+const wk = (id, status = 'مفتوح') => ({ id, status, name: id, date: '' });
+
+test('برنامجٌ فيه يومٌ مفتوح للتسجيل ما ينحجب', () => {
+  const p = full([wk('w1'), wk('w2')], { openWeeks: ['w1'] });
+  assert.equal(blocksSignup({}, p), '');
+});
+
+test('وإقفال آخر يومٍ متاح يحجبه — وهذا ما يُسأل عنه قبل الضغطة', () => {
+  const p = full([wk('w1'), wk('w2')], { openWeeks: [] });
+  assert.equal(blocksSignup({}, p), 'no_days');
+});
+
+test('ولو بقيت باقةٌ لها أيام، ما انحجب — فما نسأل بلا سبب', () => {
+  const p = full([wk('w1'), wk('w2')], { openWeeks: [], price: 0, packages: [{ id: 'k1', name: 'الموسم', price: 200, days: 6 }] });
+  assert.equal(blocksSignup({}, p), '');
+});
+
+test('وإقفال أيام الموسم كلها يحجب الباقة كذلك', () => {
+  const p = full([wk('w1', 'مغلق'), wk('w2', 'مغلق')], { openWeeks: [], price: 0, packages: [{ id: 'k1', name: 'الموسم', price: 200, days: 6 }] });
+  assert.equal(blocksSignup({}, p), 'no_days');
+});
+
+test('والقاعدة واحدة: ما يحذّر منه التطبيق هو نفسه ما يردّه الخادم', () => {
+  // `blocksSignup` تُحسب بـ `publicView` نفسها، فما تفترقان
+  const p = full([wk('w1')], { openWeeks: [] });
+  assert.equal(blocksSignup({}, p), publicView({}, p).blocked);
 });
 
 console.log(`\n✅ ${passed} اختبارًا للرابط العام والباركود\n`);

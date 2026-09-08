@@ -16,7 +16,7 @@ import { stamped, traceText, agoText } from './trace.js';
 import { trashed, pruned, sortedTrash, leftText, kindLabel, TRASH_DAYS } from './trash.js';
 import { canWrite as canWritePerm } from './perms.js';
 import { conversion, people } from './visits.js';
-import { makeToken as makeSignupToken, packTotal, packSpan, splitLump, subsFor, TEXTS, CLOSED, waIntl, waLink, varNames, fieldsFor, dayLabel, mapHref, waGroupLink, placeOf, DEFAULT_WA_TEMPLATE } from './signup.js';
+import { makeToken as makeSignupToken, packTotal, packSpan, splitLump, subsFor, TEXTS, CLOSED, waIntl, waLink, varNames, fieldsFor, dayLabel, mapHref, waGroupLink, placeOf, blocksSignup, DEFAULT_WA_TEMPLATE } from './signup.js';
 import { readImage, POSTER, GALLERY } from './img.js';
 import { qrDataUrl, qrPngBlob } from './qr.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
@@ -2979,6 +2979,29 @@ export default function App() {
 
   const regenerateToken = () => { linkSet({ programId: program.id, newToken: true }); closeModal(); };
 
+  /**
+   * قبل أن يُقفل آخر يوم.
+   *
+   * الرابط لا يُقفل بمفتاحه وحده: البرنامج الذي ما بقي فيه يومٌ مفتوح ولا باقة
+   * ما عاد يقبل تسجيلًا، فيقرأ الأهالي «ما فتح بعد» وهو منشورٌ بينهم — إقفالٌ
+   * وقع من غير أن يُقصد، وهذا أخطر من إقفالٍ مقصود لأنه يمرّ بلا انتباه.
+   *
+   * فنبني صورةَ البرنامج بعد الضغطة ونسألها بنفس قاعدة الخادم: إن كانت تُقفله
+   * وقفنا وقلنا، وإلا مشينا بلا سؤال. والسؤال لا يمنع — من أراد الإقفال أقفل،
+   * لكنه يعرف ما فعل.
+   */
+  const guardOpen = (nextProgram, run) => {
+    if (!program?.signup?.enabled || !blocksSignup(data, nextProgram)) { run(); return; }
+    askConfirm(
+      'هذي آخر ما بقي مفتوحًا للتسجيل. لو أقفلتها، الرابط يبقى شغّالًا لكن ما يقبل تسجيلات، ومن يفتحه يقرأ «التسجيل ما فتح بعد».',
+      run,
+      'نعم، أقفلها',
+    );
+  };
+
+  /** صورة البرنامج بعد تعديل إعدادات التسجيل، تُسأل قبل أن تقع */
+  const ifSignup = (patch) => ({ ...program, signup: { ...emptySignup(), ...(program?.signup || {}), ...patch } });
+
   /* ---------------------------- الرابط العام ---------------------------- */
 
   /**
@@ -4574,6 +4597,16 @@ export default function App() {
                         <div className="text-xs text-slate-400 mt-0.5">
                           {s.enabled ? 'مفتوح — ولي الأمر يقدر يسجّل' : 'مقفل — ما أحد يقدر يسجّل'}
                         </div>
+                        {/*
+                          من بدّله ومتى. رابطٌ مقفول بلا اسمٍ ولا وقتٍ يترك
+                          السؤال معلّقًا: أنا أقفلته وما انتبهت، أو أحدٌ غيري؟
+                          والسطر يجيب عنه قبل أن يُسأل.
+                        */}
+                        {s.switched?.at && (
+                          <div className="text-[11px] text-slate-400 mt-1">
+                            {s.switched.on ? 'فتحه' : 'أقفله'} <b className="text-slate-600">{s.switched.by || 'غير معروف'}</b> {agoText(s.switched.at)}
+                          </div>
+                        )}
                       </div>
                       <button onClick={toggleSignup}
                         className={`shrink-0 w-14 h-8 rounded-full transition-colors relative ${s.enabled ? 'bg-brand-600' : 'bg-slate-200'}`}>
@@ -4871,14 +4904,18 @@ export default function App() {
                             <button type="button" className="text-xs text-brand-600"
                               onClick={() => patchSignup({ openWeeks: program.weeks.map((w) => w.id) })}>تحديد الكل</button>
                             <span className="text-slate-200">|</span>
-                            <button type="button" className="text-xs text-slate-500" onClick={() => patchSignup({ openWeeks: [] })}>إلغاء الكل</button>
+                            <button type="button" className="text-xs text-slate-500"
+                              onClick={() => guardOpen(ifSignup({ openWeeks: [] }), () => patchSignup({ openWeeks: [] }))}>إلغاء الكل</button>
                           </div>
                           <div className="grid grid-cols-2 gap-2">
                             {(program.weeks || []).map((w) => {
                               const on = (s.openWeeks || []).includes(w.id);
                               return (
                                 <button key={w.id} type="button"
-                                  onClick={() => patchSignup({ openWeeks: on ? s.openWeeks.filter((x) => x !== w.id) : [...(s.openWeeks || []), w.id] })}
+                                  onClick={() => {
+                                    const openWeeks = on ? s.openWeeks.filter((x) => x !== w.id) : [...(s.openWeeks || []), w.id];
+                                    guardOpen(ifSignup({ openWeeks }), () => patchSignup({ openWeeks }));
+                                  }}
                                   className={`text-xs px-3 py-2 rounded-lg border text-right ${on ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`}>
                                   {w.name}
                                 </button>
@@ -5413,7 +5450,12 @@ export default function App() {
                 الزر يقول ما يفعله لا ما هو فيه: كان مكتوبًا عليه «مكتمل» وهو
                 مقفل، فيُقرأ خبرًا لا أمرًا — ويُظنّ اليومُ منتهيًا لا مخفيًّا.
               */}
-              <button onClick={() => patchWeek({ status: week.status === 'مفتوح' ? 'مغلق' : 'مفتوح' })}
+              <button onClick={() => {
+                const status = week.status === 'مفتوح' ? 'مغلق' : 'مفتوح';
+                /* إقفال اليوم ينقص أيام الباقة كذلك، فقد يُقفل الرابطَ من حيث لا تنتبه */
+                const next = { ...program, weeks: (program?.weeks || []).map((w) => (w.id === week.id ? { ...w, status } : w)) };
+                guardOpen(next, () => patchWeek({ status }));
+              }}
                 className={`flex items-center gap-1.5 text-sm font-semibold px-3 py-2 rounded-lg ${week.status === 'مفتوح' ? 'bg-slate-100 text-slate-600' : 'bg-brand-600 text-white'}`}>
                 {week.status === 'مفتوح' ? <><Lock size={15} /> اقفلها</> : <><Unlock size={15} /> افتحها</>}
               </button>
@@ -6303,6 +6345,11 @@ export default function App() {
                     {question.open === false ? 'افتحه' : 'اقفله'}
                   </button>
                 </div>
+                {question.switched?.at && (
+                  <div className="text-[11px] text-slate-400 mb-2">
+                    {question.switched.on ? 'فتحه' : 'أقفله'} <b className="text-slate-600">{question.switched.by || 'غير معروف'}</b> {agoText(question.switched.at)}
+                  </div>
+                )}
                 <div className="bg-slate-50 rounded-xl px-3 py-2.5 text-sm text-slate-700 break-all mb-3" dir="ltr">{url}</div>
                 <div className="flex gap-2">
                   <button className={btnPrimary + ' flex-1'}
