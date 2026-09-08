@@ -8,19 +8,46 @@
 
 const API = '/api/state';
 
-/** نداء واحد للخادم. ما يرمي استثناء: يرجّع status = 0 لو الشبكة فاصلة. */
+/**
+ * مهلةُ النداء.
+ *
+ * الشبكةُ لا تنقطع دائمًا بضجّة: أحيانًا يخرج الطلبُ ولا يرجع — شبكةٌ ضعيفة،
+ * أو خادمٌ تأخّر تحت الضغط. و`fetch` بلا مهلةٍ ينتظر أبدًا، فيقف الحفظُ ولا
+ * يقول شيئًا، وتظنّ التطبيق «علّق». وقد وقع لنا هذا يوم النشر.
+ *
+ * والمهلةُ تحوّل الانتظارَ الصامت إلى «ما وصل» — وهذي حالٌ يعرفها التطبيق:
+ * يحفظ محليًّا ويعيد الإرسال. فالانقطاعُ المعلَن أرحمُ من الانتظار الأبدي.
+ *
+ * ودرجتان: الحفظُ يحمل بيانات الفريق كلها فيحتاج نفَسًا أطول، وما عداه
+ * سؤالٌ وجوابٌ قصير.
+ */
+export const TIMEOUT = 25000;
+export const TIMEOUT_FAST = 12000;
+const SLOW = new Set(['push', 'init', 'snapshot_restore', 'backup_now', 'money', 'ledger', 'img_put']);
+
+/**
+ * نداء واحد للخادم. ما يرمي استثناء: يرجّع status = 0 لو الشبكة فاصلة أو
+ * طالت المهلة — والاثنان عند التطبيق سواء: «ما وصل، أعِد».
+ */
 export const api = async (op, payload = {}) => {
+  const ms = SLOW.has(op) ? TIMEOUT : TIMEOUT_FAST;
+  // `AbortSignal.timeout` ما هو في كل المتصفحات، فنبنيها بأيدينا
+  const stop = typeof AbortController === 'function' ? new AbortController() : null;
+  const bell = stop ? setTimeout(() => stop.abort(), ms) : null;
   try {
     const res = await fetch(API, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ op, ...payload }),
+      ...(stop ? { signal: stop.signal } : {}),
     });
     let body = null;
     try { body = await res.json(); } catch { /* رد بلا JSON */ }
     return { status: res.status, ok: res.ok, body };
   } catch {
     return { status: 0, ok: false, body: null };
+  } finally {
+    if (bell) clearTimeout(bell);
   }
 };
 

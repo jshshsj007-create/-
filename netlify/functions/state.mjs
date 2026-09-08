@@ -17,7 +17,7 @@ import { runBackup, backupStatus, readSnapshot } from '../lib/backup.mjs';
 import { hash, verify, isHashed } from '../lib/password.mjs';
 import { loginBlocked, noteFail, clearFails } from '../../src/login.js';
 import { countVisit, dayKey } from '../../src/visits.js';
-import { moneyChanged, moneyRows, moneyMissing, moneySum } from '../../src/money.js';
+import { moneyChanged, moneyRows, moneyMissing, moneySum, blindMoney, restoreMoney } from '../../src/money.js';
 import { TRASH_DAYS } from '../../src/trash.js';
 
 /**
@@ -327,8 +327,13 @@ const strip = (data, me) => {
    * وهو صاحب الشاشة أصلًا.
    */
   if (!allowed(me, 'المستخدمون والصلاحيات')) out.trash = [];
+  // والمال: من ليست عنده صلاحيتُه لا يصله منه شيء — لا يُخفى في الشاشة، بل لا يُرسل
+  if (!seesMoney(me)) return blindMoney(out);
   return out;
 };
+
+/** صلاحيةُ المال: أيٌّ من البابين يفتحه، وسواهما لا يراه. */
+const seesMoney = (me) => allowed(me, 'المصروفات والتقارير') || allowed(me, 'فيض - الإيرادات والمصروفات');
 
 /* ---------------------------- حارس المحو ---------------------------- */
 /**
@@ -553,7 +558,8 @@ const guard = (incoming, current, me) => {
 
   // والصندوق لا يُمحى بحفظة — لا من موظفٍ ولا من مدير
   out.trash = trashKeep(incoming, current);
-  return out;
+  // وما حُجب عنه من المال يُردّ، وإلا محته حفظةُ حضورٍ من جهازٍ ما رآه
+  return seesMoney(me) ? out : restoreMoney(out, current);
 };
 
 /**

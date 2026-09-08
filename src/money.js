@@ -157,3 +157,104 @@ export const moneyMissing = (rows, data, dropped = new Set()) => {
 
 /** مجموعُ صفوفٍ — للعرض جنب العدد، فيُعرف قدرُ ما ضاع لا عددُه فقط. */
 export const moneySum = (rows) => (rows || []).reduce((s, r) => s + num(r?.amount), 0);
+
+/* ---------------------------- سرّيّة المال ---------------------------- */
+
+/**
+ * الأمور المالية سرٌّ لا يُفتح بصلاحية «أولياء الأمور».
+ *
+ * سُئلت: «إذا عطيت أحدًا صلاحية المشتركين ما يشوف هذي المعلومات، بس يشوف اسم
+ * الابن ورقمه فقط — لأن سرّية الأمور المالية مهمة». وكان يراها كلَّها: كم
+ * دفع كلُّ واحد، وفي أي حساب، وصورةَ إيصاله، وأرصدةَ فيض ومصروفاتِها.
+ *
+ * وحجبُها في الشاشة زينةٌ لا حراسة: البياناتُ تصل الجهاز كاملةً، ومن فتح
+ * جهازه رآها. فالحجب هنا — في ما يخرج من الخادم أصلًا.
+ */
+export const MONEY_LISTS = ['collections', 'expenseItems', 'schoolPayouts', 'faidPayouts'];
+/** ما في المشترك من مال. اسمُه وجوالُه وحضورُه ليست منه. */
+export const PART_MONEY = ['amount', 'accountId', 'receipt', 'receiptNo', 'sub', 'pending', 'method', 'discount'];
+
+const without = (obj, fields) => {
+  if (!obj || typeof obj !== 'object') return obj;
+  let hit = false;
+  const out = {};
+  for (const k of Object.keys(obj)) {
+    if (fields.includes(k)) { hit = true; continue; }
+    out[k] = obj[k];
+  }
+  return hit ? out : obj;
+};
+
+const blindLedger = (l) => {
+  if (!l || typeof l !== 'object') return l;
+  const out = { ...l };
+  for (const k of MONEY_LISTS) if (out[k]) out[k] = [];
+  if (out.faidTransfer) out.faidTransfer = null;
+  if (out.quickRevenue) out.quickRevenue = 0;
+  if (Array.isArray(out.participants)) out.participants = out.participants.map((x) => without(x, PART_MONEY));
+  return out;
+};
+
+/** البيانات بلا مال — لمن ليست عنده صلاحيةُ المال. */
+export const blindMoney = (data) => {
+  if (!data) return data;
+  return {
+    ...data,
+    faidAdjustments: [],
+    handovers: [],
+    faidAccounts: [],
+    programs: (data.programs || []).map((p) => {
+      const q = blindLedger(p);
+      return { ...q, weeks: (q.weeks || []).map(blindLedger) };
+    }),
+    trips: (data.trips || []).map((t) => ({ ...t, incomeItems: [], expenseItems: [] })),
+  };
+};
+
+/**
+ * وما حُجب يُردّ عند الحفظ.
+ *
+ * وإلا محته حفظةُ حضورٍ من موظفٍ ما رآه أصلًا: يفتح اليوم فيسجّل الحاضرين،
+ * فتذهب مصروفاتُ اليوم ومبالغُ المشتركين معها — لأن جهازَه ما كان فيها شيء.
+ * وهذا حجبٌ يُتلف، لا حجبٌ يحفظ.
+ */
+export const restoreMoney = (incoming, current) => {
+  if (!incoming) return incoming;
+  const backLedger = (mine, was) => {
+    if (!was) return mine;
+    const out = { ...mine };
+    for (const k of MONEY_LISTS) out[k] = was[k] || [];
+    out.faidTransfer = was.faidTransfer ?? null;
+    out.quickRevenue = was.quickRevenue ?? 0;
+    if (Array.isArray(out.participants)) {
+      const old = new Map((was.participants || []).map((x) => [x?.id, x]));
+      out.participants = out.participants.map((x) => {
+        const o = old.get(x?.id);
+        if (!o) return x;
+        const add = {};
+        for (const k of PART_MONEY) if (o[k] !== undefined) add[k] = o[k];
+        return { ...x, ...add };
+      });
+    }
+    return out;
+  };
+  const wasProg = new Map((current?.programs || []).map((p) => [p.id, p]));
+  const wasTrip = new Map((current?.trips || []).map((t) => [t.id, t]));
+  return {
+    ...incoming,
+    faidAdjustments: current?.faidAdjustments || [],
+    handovers: current?.handovers || [],
+    faidAccounts: current?.faidAccounts || [],
+    programs: (incoming.programs || []).map((p) => {
+      const was = wasProg.get(p.id);
+      if (!was) return p;
+      const q = backLedger(p, was);
+      const wasWeeks = new Map((was.weeks || []).map((w) => [w.id, w]));
+      return { ...q, weeks: (q.weeks || []).map((w) => backLedger(w, wasWeeks.get(w.id))) };
+    }),
+    trips: (incoming.trips || []).map((t) => {
+      const was = wasTrip.get(t.id);
+      return was ? { ...t, incomeItems: was.incomeItems || [], expenseItems: was.expenseItems || [] } : t;
+    }),
+  };
+};
