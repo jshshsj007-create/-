@@ -79,6 +79,23 @@ export default function QuestionPage({ token }) {
     return () => clearInterval(t);
   }, []);
 
+  /**
+   * وبعد الجواب يُحوَّل إلى التسجيل من نفسه.
+   *
+   * السؤال يجمع الأهالي، والتسجيل هو المقصود — وأكثرُ الناس لا يضغط زرًّا،
+   * فمن وقف عند «شكرًا لك» ذهب ولم يسجّل. ولحظتان قبله: يقرأ أن جوابه وصل،
+   * ثم يجد نفسه في التسجيل — لا قفزةٌ صامتة يظنّها غلطة منه.
+   *
+   * ولا يقع إلا بعد جوابٍ وصل فعلًا، وإلى بابٍ مفتوح — والخادم هو الذي يقرّر
+   * أيّهما، فما يُحوَّل أحدٌ إلى بابٍ مقفول.
+   */
+  const goToken = state === 'done' && view?.then?.auto ? view.then.token : '';
+  useEffect(() => {
+    if (!goToken) return undefined;
+    const t = setTimeout(() => { try { location.href = `/r/${goToken}`; } catch { /* يبقى الزر */ } }, 2200);
+    return () => clearTimeout(t);
+  }, [goToken]);
+
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -186,10 +203,21 @@ export default function QuestionPage({ token }) {
             تسجيلُه مفتوحًا فعلًا، فما نرسل أحدًا إلى بابٍ مقفول.
           */}
           {view?.then?.token && (
-            <a href={`/r/${view.then.token}`}
-              className="mt-6 block bg-brand-600 text-white font-bold rounded-xl py-3.5 text-sm">
-              سجّل ابنك في {view.then.name || 'البرنامج'}
-            </a>
+            <>
+              {/*
+                يُقال له إنه يُحوَّل قبل أن يُحوَّل.
+                التحويلُ الصامت يُربك: يقرأ «شكرًا» فتقفز به الصفحة، فيظنّ
+                أنه ضغط شيئًا بالغلط. ولحظتان تكفيان ليقرأ ويفهم.
+              */}
+              {view.then.auto && (
+                <div className="mt-5 text-[12.5px] text-slate-400">نحوّلك الآن لصفحة التسجيل…</div>
+              )}
+              {/* والزرُّ يبقى: التحويل قد يمنعه المتصفح، فلا يبقى بلا طريق */}
+              <a href={`/r/${view.then.token}`}
+                className="mt-3 block bg-brand-600 text-white font-bold rounded-xl py-3.5 text-sm">
+                سجّل ابنك في {view.then.name || 'البرنامج'}
+              </a>
+            </>
           )}
         </div>
       </Shell>

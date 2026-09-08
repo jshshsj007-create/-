@@ -6716,8 +6716,18 @@ export default function App() {
                       </option>
                     ))}
                   </select>
+                  {question.thenProgramId && (
+                    <div className="mt-3">
+                      <Toggle label="يحوّله على طول"
+                        hint={question.thenAuto !== false
+                          ? 'يقرأ «شكرًا لك» لحظتين، ثم تفتح له صفحة التسجيل من نفسها. وأكثر الناس ما يضغط زرًّا.'
+                          : 'يشوف زرًّا يضغطه لو حبّ — ومن ما ضغطه راح ولا سجّل.'}
+                        on={question.thenAuto !== false}
+                        onChange={(v) => saveQuestion({ thenAuto: v })} />
+                    </div>
+                  )}
                   <div className="text-[11px] text-slate-400 mt-2">
-                    الزر ما يطلع إلا إذا كان تسجيل البرنامج مفتوحًا فعلًا — فما نرسل أحدًا لباب مقفول.
+                    ما يصير شيءٌ من هذا إلا إذا كان تسجيل البرنامج مفتوحًا فعلًا — فما نرسل أحدًا لباب مقفول.
                   </div>
                 </div>
               </div>

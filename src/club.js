@@ -372,7 +372,13 @@ export const questionView = (data, token, now = Date.now()) => {
     mode: q.mode === 'choice' ? 'choice' : 'open',
     options: (q.options || []).map((o) => ({ id: o.id, text: o.text })),
     texts: q.texts || {},
-    ...(goToken ? { then: { token: goToken, name: p.name || '' } } : {}),
+    /**
+     * و`auto` يقول: يُحوَّل من نفسه أم ينتظر ضغطة؟
+     *
+     * الزرُّ يحترم من قرأ «شكرًا لك» وأراد أن يقف عندها، والتحويلُ يأخذ من
+     * لا يضغط — وأكثرُ الناس لا يضغط. فصار الاختيار لصاحب السؤال، لا لنا.
+     */
+    ...(goToken ? { then: { token: goToken, name: p.name || '', auto: q.thenAuto !== false } } : {}),
   };
 };
 

@@ -515,7 +515,17 @@ test('وما أقفلتَه بيدك يبقى مقفولًا ولو ما مضى 
 test('وبابُ التسجيل بعد الجواب: يُبنى إن كان مفتوحًا', () => {
   const d = { questions: [{ ...q1, thenProgramId: 'p1' }],
     programs: [{ id: 'p1', name: 'خريف', signup: { enabled: true, token: 'kh1' } }] };
-  assert.deepEqual(questionView(d, 'aaa').then, { token: 'kh1', name: 'خريف' });
+  assert.deepEqual(questionView(d, 'aaa').then, { token: 'kh1', name: 'خريف', auto: true });
+});
+
+test('ويُحوَّل من نفسه ما لم تقل غير ذلك — فأكثرُ الناس لا يضغط زرًّا', () => {
+  const prog = [{ id: 'p1', name: 'خريف', signup: { enabled: true, token: 'kh1' } }];
+  const on = questionView({ questions: [{ ...q1, thenProgramId: 'p1' }], programs: prog }, 'aaa');
+  assert.equal(on.then.auto, true);
+  const off = questionView({ questions: [{ ...q1, thenProgramId: 'p1', thenAuto: false }], programs: prog }, 'aaa');
+  assert.equal(off.then.auto, false);
+  // والزرّ يبقى في الحالين، فالتحويل قد يمنعه المتصفح
+  assert.equal(off.then.token, 'kh1');
 });
 
 test('ولا نرسل أحدًا إلى بابٍ مقفول', () => {
