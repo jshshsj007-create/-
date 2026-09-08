@@ -1857,8 +1857,26 @@ export default function App() {
   const intoTrash = (kind, item, opts = {}) =>
     pruned([...(data.trash || []), trashed(kind, item, { by: currentUser?.name || '', ...opts })]);
 
-  const removeFromTrash = (id) => save({ ...data, trash: (data.trash || []).filter((t) => t.id !== id) });
-  const emptyTrash = () => save({ ...data, trash: [] });
+  /**
+   * الخروج من الصندوق يمرّ ببابه.
+   *
+   * الصندوق صار لا يُمحى بحفظة — وإلا محته حفظةٌ من جهازٍ متأخّر فسقط معه
+   * الحارسُ كلُّه. فما يخرج منه يخرج بفعلٍ مقصود، لا ضمن حفظةٍ عابرة. وبلا
+   * سحابةٍ يُحذف محليًّا كما كان، فالجهاز وحده لا يزاحمه أحد.
+   */
+  const trashDrop = async (patch) => {
+    if (!cloudOn) {
+      save({ ...data, trash: patch.all ? [] : (data.trash || []).filter((t) => !patch.ids.includes(t.id)) });
+      return;
+    }
+    const r = await api('trash_drop', { token: sess.current.token, ...patch });
+    if (r.status !== 200 || !r.body?.data) return;
+    revRef.current = r.body.rev;
+    baseRef.current = clone(r.body.data);
+    setData(migrate(clone(r.body.data)));
+  };
+  const removeFromTrash = (id) => trashDrop({ ids: [id] });
+  const emptyTrash = () => trashDrop({ all: true });
 
   /**
    * الإرجاع يعرف مكان كل نوع. المشارك وحده يحتاج `where` — الباقي قوائم
@@ -2250,8 +2268,22 @@ export default function App() {
     closeModal();
   };
 
+  /**
+   * إلغاء الترحيل يمرّ بالصندوق كذلك.
+   *
+   * صفوفُه تُحذف من حركات فيض، وهي محروسةٌ الآن — فبلا سجلِّ حذفٍ يقرأ الحارسُ
+   * غيابَها حادثًا فيعيدها، فيصير النصيب مرحَّلًا مرتين وأنت تظنّه أُلغي.
+   */
   const undoTransfer = (ref, batchId) => {
-    let next = { ...data, faidAdjustments: data.faidAdjustments.filter((a) => a.batchId !== batchId) };
+    const goneRows = data.faidAdjustments.filter((a) => a.batchId === batchId);
+    let next = {
+      ...data,
+      faidAdjustments: data.faidAdjustments.filter((a) => a.batchId !== batchId),
+      trash: goneRows.reduce((tr, row) => pruned([...tr, trashed('faidAdjustment', row, {
+        by: currentUser?.name || '',
+        label: `ترحيل ملغى — ${fmt(row.amount)} ر.س${row.note ? ` · ${row.note}` : ''}`,
+      })]), data.trash || []),
+    };
     next = withLedger(next, ref, () => ({ faidTransfer: null }));
     save(next);
   };
@@ -2376,7 +2408,12 @@ export default function App() {
     closeModal();
   };
   const removeFaidAccount = (accId) => {
-    save({ ...data, faidAccounts: data.faidAccounts.filter((a) => a.id !== accId) });
+    const gone = data.faidAccounts.find((a) => a.id === accId);
+    save({
+      ...data,
+      faidAccounts: data.faidAccounts.filter((a) => a.id !== accId),
+      ...(gone ? { trash: intoTrash('faidAccount', gone) } : {}),
+    });
   };
   const accountInUse = (accId) =>
     data.faidAdjustments.some((a) => a.accountId === accId) ||
@@ -2551,7 +2588,14 @@ export default function App() {
     });
     closeModal();
   };
-  const removeRun = (rid) => save({ ...data, clubRuns: (data.clubRuns || []).filter((r) => r.id !== rid) });
+  const removeRun = (rid) => {
+    const gone = (data.clubRuns || []).find((r) => r.id === rid);
+    save({
+      ...data,
+      clubRuns: (data.clubRuns || []).filter((r) => r.id !== rid),
+      ...(gone ? { trash: intoTrash('clubRun', gone, { label: data.competitions.find((c) => c.id === gone.compId)?.name || 'مسابقة منفَّذة' }) } : {}),
+    });
+  };
 
   /** دوري أو بطولة. الفرق تُنشأ بأسمائها هنا، فلا تتغيّر معرّفاتها بعدها. */
   const saveTournament = () => {
@@ -5902,7 +5946,11 @@ export default function App() {
                 onHandover={() => { setForm({}); setModal('handover'); }}
                 onUndo={isAdmin ? (h) => askConfirm(
                   `إلغاء تسليم ${fmt(h.amount)} ر.س من ${h.fromName} إلى ${h.toName}؟`,
-                  () => save({ ...data, handovers: data.handovers.filter((x) => x.id !== h.id) }),
+                  () => save({
+                    ...data,
+                    handovers: data.handovers.filter((x) => x.id !== h.id),
+                    trash: intoTrash('handover', h, { label: `${fmt(h.amount)} ر.س · ${h.fromName} ← ${h.toName}` }),
+                  }),
                 ) : null}
               />
             )}
@@ -7203,7 +7251,9 @@ export default function App() {
                             {!locked && isAdmin && (
                               <button className="text-red-400 p-1"
                                 onClick={() => askConfirm(`حذف خانة «${f.label}» من كل الروابط؟`, () => save({
-                                  ...data, signupFields: data.signupFields.filter((x) => x.id !== f.id),
+                                  ...data,
+                                  signupFields: data.signupFields.filter((x) => x.id !== f.id),
+                                  trash: intoTrash('signupField', f, { label: f.label }),
                                 }))}>
                                 <Trash2 size={15} />
                               </button>

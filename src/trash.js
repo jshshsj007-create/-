@@ -27,6 +27,14 @@ export const KINDS = {
   question: 'سؤال اليوم',
   answer: 'جواب',
   week: 'يوم',
+  /**
+   * وهذي كانت تُحذف بلا سجل، فما كان للحارس ما يميّز به حذفَها من ضياعها —
+   * فتُرك حراسُها كلُّها. والسجلّ هو ثمن الحراسة.
+   */
+  handover: 'تسليم',
+  faidAccount: 'حساب',
+  signupField: 'خانة تسجيل',
+  clubRun: 'مسابقة منفَّذة',
 };
 
 export const kindLabel = (kind) => KINDS[kind] || 'سجل';

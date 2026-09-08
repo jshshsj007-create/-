@@ -18,6 +18,7 @@ import { hash, verify, isHashed } from '../lib/password.mjs';
 import { loginBlocked, noteFail, clearFails } from '../../src/login.js';
 import { countVisit, dayKey } from '../../src/visits.js';
 import { moneyChanged, moneyRows, moneyMissing, moneySum } from '../../src/money.js';
+import { TRASH_DAYS } from '../../src/trash.js';
 
 /**
  * القاعدة تُفرض هنا، لا في المتصفح: ولي أمر واحد لكل جوال، وابن واحد لكل اسم
@@ -377,10 +378,29 @@ const repair = (incoming, current) => {
   const note = (kind, rows) => rows.forEach((r) => back.push({ kind, name: r.name || '' }));
 
   for (const [key, kind] of [['guardians', 'ولي أمر'], ['students', 'طالب'],
-    ['competitions', 'مسابقة'], ['trips', 'سفرة'], ['tournaments', 'دوري']]) {
+    ['competitions', 'مسابقة'], ['trips', 'سفرة'], ['tournaments', 'دوري'],
+    /**
+     * وهذي الخمس كانت بلا حارس، وفيها المال.
+     *
+     * حركاتُ فيض والتسليمات هي رصيدُك نفسه، فضياعُ صفٍّ منها يغيّر ما في يدك.
+     * والحسابات جذورُها — يذهب الحساب فتصير الحركاتُ كلها بلا اسم. وخاناتُ
+     * التسجيل هي شكل الرابط، وسجلُّ النادي هو ذاكرةُ ما نُفِّذ.
+     */
+    ['faidAdjustments', 'حركة مالية'], ['handovers', 'تسليم'],
+    ['faidAccounts', 'حساب'], ['signupFields', 'خانة تسجيل'], ['clubRuns', 'مسابقة منفَّذة']]) {
     const r = listBack(out[key], current[key], keep);
     out[key] = r.list; note(kind, r.back);
   }
+
+  /**
+   * ولا يُبعث ما ذهب أصلُه.
+   *
+   * حذفُ مسابقةٍ يُمضي معها سجلَّ تنفيذها، وحذفُ حسابٍ يُمضي ما عليه — ولا
+   * سجلَّ حذفٍ لكل صفٍّ منها، فيقرأ الحارسُ غيابَها حادثًا فيعيدها معلَّقةً على
+   * ما لم يعد موجودًا. فما ذهب أصلُه لا يُعاد.
+   */
+  const compIds = new Set((out.competitions || []).map((c) => c?.id));
+  out.clubRuns = (out.clubRuns || []).filter((r) => !r?.compId || compIds.has(r.compId));
 
   /**
    * والسؤال يُحرس بأجوبته: الولد يجاوب فينزل جوابُه داخل السؤال، فلو نظرنا
@@ -529,13 +549,46 @@ const guard = (incoming, current, me) => {
    * فنقبل منه الإضافة وحدها: ما جاء جديدًا يُضاف، وما كان قائمًا يبقى.
    * والإعدادات تُكتب من شاشة المدير، فتبقى له.
    */
-  if (!allowed(me, 'المستخدمون والصلاحيات')) {
-    const kept = current?.trash || [];
-    const known = new Set(kept.map((t) => t.id));
-    out.trash = [...kept, ...(incoming?.trash || []).filter((t) => t?.id && !known.has(t.id))];
-    out.settings = current?.settings || {};
-  }
+  if (!allowed(me, 'المستخدمون والصلاحيات')) out.settings = current?.settings || {};
+
+  // والصندوق لا يُمحى بحفظة — لا من موظفٍ ولا من مدير
+  out.trash = trashKeep(incoming, current);
   return out;
+};
+
+/**
+ * الصندوق أساسُ الحارس، فلا يُمحى بحفظة.
+ *
+ * كل ما بُني فوقه يقوم عليه: الحارسُ يميّز الذاهبَ بإذنٍ من الذاهب بغلط
+ * بسجلِّ حذفه، والدفنُ لا يقع إلا بسجلٍّ عند الطرفين، والمطابقةُ لا تعدّ
+ * المحذوفَ باليد ضائعًا. فلو محت حفظةٌ من جهازٍ متأخّر الصندوقَ، سقط الثلاثة
+ * معًا في لحظة — وهذي أخطر من ضياع سجلٍّ واحد، لأنها تُعطّل ما يحرس الباقي.
+ *
+ * وكان الاتحادُ للموظف وحده، والمديرُ تُقبل قائمتُه كما هي. وجهازُ المدير
+ * ليس أقلَّ تأخّرًا من غيره.
+ *
+ * فالسجلّ لا يخرج إلا بأحد بابين: أن يُسترجع صاحبُه — فيعود السجل إلى مكانه
+ * في البيانات، وهذي علامةٌ لا تُصطنع — أو أن يمضي شهرُه.
+ */
+const trashKeep = (incoming, current) => {
+  const mine = Array.isArray(incoming?.trash) ? incoming.trash : [];
+  const kept = Array.isArray(current?.trash) ? current.trash : [];
+  if (!kept.length) return mine;
+  const here = new Set(mine.map((t) => t?.id).filter(Boolean));
+  // ما رجع إلى البيانات فقد استُرجع بإذن صاحبه — ولا شيء غيرُه يُخرجه
+  const live = deepIds(incoming?.programs || []);
+  deepIds(incoming?.guardians || [], live);
+  deepIds(incoming?.students || [], live);
+  deepIds(incoming?.questions || [], live);
+  deepIds(incoming?.competitions || [], live);
+  deepIds(incoming?.trips || [], live);
+  deepIds(incoming?.tournaments || [], live);
+  deepIds(incoming?.faidAdjustments || [], live);
+  deepIds(incoming?.khayr || {}, live);
+  // وشهرُه يمضي هنا كذلك: لولا ذلك ما مضى أبدًا، فالتطبيق يُسقطه ونحن نُعيده
+  const old = Date.now() - TRASH_DAYS * 24 * 60 * 60 * 1000;
+  const gone = kept.filter((t) => t?.id && !here.has(t.id) && !live.has(t.item?.id) && Number(t.at || 0) > old);
+  return gone.length ? [...mine, ...gone] : mine;
 };
 
 /* ---------------------------------- المعالج ---------------------------------- */
@@ -874,6 +927,29 @@ export default async (req) => {
       }
       if (data === d.data) return { reject: json({ error: 'nothing' }, 400) };
       return { doc: { ...d, rev: d.rev + 1, updatedAt: new Date(now).toISOString(), data } };
+    }, doc);
+    if (r.reject) return r.reject;
+    if (r.busy) return json({ error: 'busy' }, 503);
+    return json({ ok: true, rev: r.doc.rev, data: strip(r.doc.data, me) });
+  }
+
+  /**
+   * إفراغ الصندوق — بابٌ مقصود.
+   *
+   * الصندوق صار لا يُمحى بحفظة، ولو تركناه هكذا وحده لصار «أفرغ الصندوق»
+   * زرًّا لا يفعل شيئًا: الحفظةُ تُرسل قائمةً فاضية، والخادم يُعيدها ملأى.
+   *
+   * فأُفرد له بابٌ كما أُفرد للروابط: ما يخرج من الصندوق لا يخرج إلا بفعلٍ
+   * يقول «قصدتُ هذا»، ولا يخرج بحفظةٍ عابرة من جهازٍ متأخّر.
+   */
+  if (op === 'trash_drop') {
+    if (!allowed(me, 'المستخدمون والصلاحيات')) return json({ error: 'forbidden' }, 403);
+    const ids = new Set((Array.isArray(body.ids) ? body.ids : []).map(String));
+    if (!ids.size && body.all !== true) return json({ error: 'nothing' }, 400);
+    const r = await commit((d) => {
+      const kept = body.all === true ? [] : (d.data?.trash || []).filter((t) => !ids.has(String(t?.id)));
+      if (kept.length === (d.data?.trash || []).length) return { reject: json({ error: 'nothing' }, 400) };
+      return { doc: { ...d, rev: d.rev + 1, updatedAt: new Date().toISOString(), data: { ...d.data, trash: kept } } };
     }, doc);
     if (r.reject) return r.reject;
     if (r.busy) return json({ error: 'busy' }, 503);
