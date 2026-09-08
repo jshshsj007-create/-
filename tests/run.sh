@@ -69,4 +69,5 @@ node tests/cash.test.mjs
 node tests/perms.test.mjs
 node tests/login.test.mjs
 node tests/visits.test.mjs
+node tests/money.test.mjs
 rm -rf "$STUB" tests/build

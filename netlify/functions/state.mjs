@@ -17,6 +17,7 @@ import { runBackup, backupStatus, readSnapshot } from '../lib/backup.mjs';
 import { hash, verify, isHashed } from '../lib/password.mjs';
 import { loginBlocked, noteFail, clearFails } from '../../src/login.js';
 import { countVisit, dayKey } from '../../src/visits.js';
+import { moneyChanged, moneyRows, moneyMissing, moneySum } from '../../src/money.js';
 
 /**
  * القاعدة تُفرض هنا، لا في المتصفح: ولي أمر واحد لكل جوال، وابن واحد لكل اسم
@@ -188,6 +189,34 @@ const ledRead = async (kind, cap = 400) => {
   }
   rows.sort((a, b) => Number(b?.at || 0) - Number(a?.at || 0));
   return { rows, total, more: total > take.length };
+};
+
+/* ------------------------------ دفتر المال ------------------------------ */
+/**
+ * كل حركةٍ مالية تُكتب سطرًا لا يُمحى.
+ *
+ * التسجيلُ والجواب يصلان من بابهما فيُكتبان ساعتهما، والمالُ يصل ضمن ملف
+ * البيانات كله — فلا بابَ له. فنصنعه هنا: نقابل ما جاء بما كان، فما جدّ أو
+ * تبدّل يُكتب.
+ *
+ * وله سقفٌ في النداء الواحد: الحفظةُ الواحدة لا تحمل خمسين حركة إلا أن تكون
+ * استرجاعَ موسمٍ كامل، وذاك له بابُه (`money` بـ `seed`). والسقف يمنع أن تعلّق
+ * حفظةٌ عاديّة على كتابة ألف مفتاح.
+ */
+const MONEY_MAX = 60;
+/** وللتأسيس قدرٌ أوسع: يُضغط مرةً أو مرّتين، لا مع كل حفظة */
+const SEED_MAX = 240;
+const moneyLog = async (before, after, by) => {
+  let fresh = [];
+  try { fresh = moneyChanged(before, after); } catch { return 0; }
+  if (!fresh.length) return 0;
+  const at = Date.now();
+  const take = fresh.slice(0, MONEY_MAX);
+  for (let i = 0; i < take.length; i += LED_STEP) {
+    // وقتُ الحركة نفسها إن كان لها وقت، وإلا وقتُ كتابتها — والدفتر يُرتَّب عليه
+    await Promise.all(take.slice(i, i + LED_STEP).map((r) => ledWrite('mal', r.key, { ...r, at: Number(r.at || 0) || at, wroteAt: at, by })));
+  }
+  return take.length;
 };
 
 /* ------------------------------ عدّاد الفتحات ------------------------------ */
@@ -852,6 +881,51 @@ export default async (req) => {
   }
 
   /**
+   * دفتر المال: قراءةٌ ومطابقةٌ وتأسيس.
+   *
+   * `read` يعرض آخر ما كُتب فيه. و`match` يقابله بالبيانات فيقول ما ضاع —
+   * حركةٌ مكتوبةٌ في الدفتر ولا أثر لها في التطبيق ولا في صندوق المحذوفات.
+   * و`seed` يكتب فيه كلَّ ما في البيانات اليوم: يُستعمل مرةً واحدة أولَ ما
+   * يُشغَّل الدفتر، فما قبله من حركاتٍ ما كان لها بابٌ يومَ وقعت.
+   *
+   * والمال لا يُقرأ إلا للمدير: الأرقام والحسابات سرٌّ لا يُفتح لمن أُعطي
+   * «أولياء الأمور» وحدها.
+   */
+  if (op === 'money') {
+    if (!isAdmin(me)) return json({ error: 'forbidden' }, 403);
+
+    /**
+     * التأسيس على دفعات.
+     *
+     * موسمٌ كامل فيه مئاتُ الحركات، وكتابتُها كلها في نداءٍ واحد تبلغ حدَّ
+     * الوقت فيقف الزرّ. فيأخذ كلُّ نداءٍ قدرًا ويردّ موضعَ ما بعده، والتطبيق
+     * يواصل حتى ينتهي.
+     */
+    const rows = moneyRows(doc?.data || {});
+    if (body.mode === 'seed') {
+      const from = Math.max(0, Number(body.from || 0));
+      const take = rows.slice(from, from + SEED_MAX);
+      const at = Date.now();
+      for (let i = 0; i < take.length; i += LED_STEP) {
+        await Promise.all(take.slice(i, i + LED_STEP)
+          .map((r) => ledWrite('mal', r.key, { ...r, at: Number(r.at || 0) || at, wroteAt: at, by: me?.name || '' })));
+      }
+      const next = from + take.length;
+      return json({ ok: true, wrote: take.length, done: next, rows: rows.length, more: next < rows.length, next });
+    }
+
+    // المطابقة تبحث عن غائب فتحتاج مدًى أوسع؛ والعرض يكفيه آخرُ ما وصل
+    const match = body.mode === 'match';
+    const led = await ledRead('mal', match ? 3000 : 200);
+    if (!match) return json({ ok: true, rows: led.rows, total: led.total, more: led.more });
+
+    // ومن حذفتَه بيدك لا يُعدّ ضائعًا: سجلُّ حذفه هو الفرق بين القرار والعطب
+    const dropped = deepIds(doc?.data?.trash || []);
+    const missing = moneyMissing(led.rows, doc?.data || {}, dropped);
+    return json({ ok: true, missing, sum: moneySum(missing), total: led.total, more: led.more });
+  }
+
+  /**
    * الدفتر: قراءةٌ ومطابقة.
    *
    * `read` يعرض ما فيه. و`match` يقارنه بالبيانات ويُرجع من نقص — بتفاصيله
@@ -1006,10 +1080,12 @@ export default async (req) => {
       const fixed = body.replace === true && isAdmin(me) ? { data: safe, back: [] } : repair(safe, d.data);
       const data = enforceOnePerPhone(fixed.data);
       // ننشر الوثيقة كما هي ثم نستبدل ما تغيّر: أي سجلٍّ نضيفه لاحقًا يبقى
-      return { doc: { ...d, rev: d.rev + 1, updatedAt: new Date().toISOString(), data }, out: { back: fixed.back } };
+      return { doc: { ...d, rev: d.rev + 1, updatedAt: new Date().toISOString(), data }, out: { back: fixed.back, was: d.data } };
     }, doc);
     if (r.reject) return r.reject;
     if (r.busy) return json({ error: 'busy' }, 503);
+    // المال يُكتب بعد أن يستقرّ الحفظ: ما جدّ أو تبدّل يصير سطرًا لا يُمحى
+    await moneyLog(r.out?.was, r.doc.data, me?.name || '');
     // نخبر الجهاز بما أُرجع، فيسحبه ويعرضه لصاحبه — لا يُرجَع في صمت
     return json({ ok: true, rev: r.doc.rev, visits: await visitsFor(r.doc), back: r.out?.back || [] });
   }

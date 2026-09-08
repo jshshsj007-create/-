@@ -3636,6 +3636,59 @@ export default function App() {
     setBackup((b) => ({ ...b, busy: false, msg: `رجّعنا ${records(back.length)}.` }));
   };
 
+  /**
+   * مطابقة دفتر المال.
+   *
+   * الدفتر يُكتب من نفسه مع كل حفظة، وهذا يقرؤه: حركةٌ مكتوبةٌ فيه ولا أثر لها
+   * في التطبيق ولا في صندوق المحذوفات = حسابٌ ضاع. ويُقال قدرُه بالريال لا
+   * عددُه فقط، فالسؤال الأول عند من ضاعت حساباته: «كم؟».
+   */
+  const matchMoney = async () => {
+    setBackup((b) => ({ ...b, busy: true, msg: '' }));
+    const r = await api('money', { token: sess.current.token, mode: 'match' });
+    if (r.status !== 200) {
+      setBackup((b) => ({ ...b, busy: false, msg: 'ما قدرنا نقرأ دفتر المال.' }));
+      return;
+    }
+    const gone = r.body?.missing || [];
+    if (!gone.length) {
+      setBackup((b) => ({ ...b, busy: false, msg: `دفتر المال مطابق — ${fmt(r.body?.total || 0)} حركة، ما ينقص منها شيء.` }));
+      return;
+    }
+    const lines = gone.slice(0, 10).map((x) => `${x.label}: ${fmt(x.amount)} ر.س${x.where?.programName ? ` · ${x.where.programName}` : ''}${x.note ? ` · ${x.note}` : ''}`);
+    setBackup((b) => ({ ...b, busy: false, msg: '' }));
+    askConfirm(
+      `في دفتر المال ${fmt(gone.length)} حركة ما لها أثر عندك، مجموعها ${fmt(r.body?.sum || 0)} ر.س.`,
+      () => {},
+      'فهمت',
+      { lines: [...lines, ...(gone.length > 10 ? [`وغيرها ${gone.length - 10}`] : []), 'الدفتر ما ينمحي، فهي محفوظة. راجعها في اللقطات أو أضفها من جديد.'] },
+    );
+  };
+
+  /**
+   * أولُ تشغيلٍ للدفتر: يُكتب فيه ما وقع قبل أن يوجد.
+   *
+   * على دفعات، فالنداء الواحد لا يحمل موسمًا كاملًا. والحلقة محدودة بعشرين
+   * دورة: لو ردّ الخادمُ موضعًا لا يتقدّم، وقفنا بدل أن ندور بلا نهاية.
+   */
+  const seedMoney = async () => {
+    setBackup((b) => ({ ...b, busy: true, msg: '' }));
+    let from = 0;
+    let wrote = 0;
+    for (let i = 0; i < 20; i++) {
+      const r = await api('money', { token: sess.current.token, mode: 'seed', from });
+      if (r.status !== 200) {
+        setBackup((b) => ({ ...b, busy: false, msg: 'ما قدرنا نكتب في الدفتر.' }));
+        return;
+      }
+      wrote += Number(r.body?.wrote || 0);
+      const next = Number(r.body?.next || 0);
+      if (!r.body?.more || next <= from) { from = next; break; }
+      from = next;
+    }
+    setBackup((b) => ({ ...b, busy: false, msg: `كتبنا ${fmt(wrote)} حركة في دفتر المال.` }));
+  };
+
   const backupText = () => JSON.stringify({ app: 'Faydh', version: 1, savedAt: new Date().toISOString(), data }, null, 2);
   const backupName = () => `Faydh-backup-${new Date().toISOString().slice(0, 10)}.json`;
 
@@ -7321,6 +7374,30 @@ export default function App() {
                     )}
                   </div>
                 )}
+
+                {/*
+                  دفتر المال.
+                  كل حركةٍ مالية لها مفتاحٌ خارج ملف البيانات، ما يمرّ عليه حذفٌ
+                  ولا استرجاع. وهنا يُقرأ: «كم ضاع؟» بالريال، لا بعدد السطور.
+                */}
+                <div className={cardCls}>
+                  <div className="font-semibold text-slate-700 mb-1">دفتر المال</div>
+                  <div className="text-xs text-slate-400 mb-4 leading-relaxed">
+                    كل مصروفٍ وتحصيلٍ وترحيلٍ وتسليمٍ واشتراك يُكتب — ساعة حفظه — في دفترٍ خارج
+                    البيانات، ما ينمحي بحفظةٍ ولا باسترجاع. وهذا يقابله بحساباتك ويقول إن نقص شيء.
+                  </div>
+                  <button className={btnPrimary + ' w-full'} disabled={backup.busy} onClick={matchMoney}>
+                    <Layers size={16} /> {backup.busy ? 'جاري...' : 'طابق دفتر المال'}
+                  </button>
+                  <button className={btnGhost + ' w-full mt-2'} disabled={backup.busy} onClick={seedMoney}>
+                    أسّس الدفتر بما عندك الآن
+                  </button>
+                  <div className="text-[11px] text-slate-400 mt-2 leading-relaxed">
+                    التأسيس يُضغط مرةً واحدة: يكتب حساباتك الحالية في الدفتر، لأن ما وقع قبل
+                    إنشائه ما كان له بابٌ يُكتب منه. وبعدها يكتب نفسه.
+                  </div>
+                  {backup.msg && <div className="text-xs text-slate-500 mt-3 text-center">{backup.msg}</div>}
+                </div>
 
                 <div className={cardCls}>
                   <div className="font-semibold text-slate-700 mb-1">أخذ نسخة احتياطية</div>
