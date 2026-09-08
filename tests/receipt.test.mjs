@@ -39,6 +39,42 @@ test('ولو تكرّر رقمٌ يومًا، تجاوزه ما بعده ولا 
   assert.equal(nextRef(withParts('FA-1448-0004', 'FA-1448-0004'), '1448'), 'FA-1448-0005');
 });
 
+test('والمحذوف يُعدّ: ورقتُه في يد ولي الأمر، والحذف عندك لا يمحوها', () => {
+  // آخرُ من في البيانات 0003، وأكبرُ ما استُعمل 0007 وهو في الصندوق
+  const d = {
+    ...withParts('FA-1448-0003'),
+    trash: [{ id: 't1', kind: 'participant', item: { id: 'gone', ref: 'FA-1448-0007' } }],
+  };
+  assert.equal(nextRef(d, '1448'), 'FA-1448-0008');
+});
+
+test('ويومٌ محذوفٌ فيه عشرة يُقرأ ما فيهم', () => {
+  const d = {
+    ...withParts('FA-1448-0002'),
+    trash: [{ id: 't1', kind: 'week', item: { id: 'w9', participants: [{ id: 'a', ref: 'FA-1448-0011' }] } }],
+  };
+  assert.equal(nextRef(d, '1448'), 'FA-1448-0012');
+});
+
+test('وبرنامجٌ محذوفٌ بأيامه ومشتركيه كذلك', () => {
+  const d = {
+    ...withParts('FA-1448-0002'),
+    trash: [{ id: 't1', kind: 'program', item: { id: 'p9',
+      participants: [{ id: 'a', ref: 'FA-1448-0020' }],
+      weeks: [{ id: 'w', participants: [{ id: 'b', ref: 'FA-1448-0033' }] }] } }],
+  };
+  assert.equal(nextRef(d, '1448'), 'FA-1448-0034');
+});
+
+test('وصندوقٌ فيه ما ليس مشتركًا لا يكسر الترقيم', () => {
+  const d = {
+    ...withParts('FA-1448-0002'),
+    trash: [{ id: 't1', kind: 'faidAdjustment', item: { id: 'a', amount: 300 } },
+      { id: 't2', kind: 'x' }, { id: 't3', item: null }],
+  };
+  assert.equal(nextRef(d, '1448'), 'FA-1448-0003');
+});
+
 test('وكل سنة تبدأ من جديد', () => {
   const d = withParts('FA-1448-0031');
   assert.equal(nextRef(d, '1449'), 'FA-1449-0001', 'ما ورث رقم السنة الماضية');

@@ -585,7 +585,17 @@ export function migrate(loaded) {
     delete comp.level;
     return comp;
   });
-  d.clubRuns = (d.clubRuns || []).filter((r) => r && r.compId && r.programId);
+  /**
+   * سجلُّ النادي: صفٌّ بلا معرّف يُعطى معرّفًا، ولا يُرمى.
+   *
+   * كان يُصفّى بصمت — كلُّ صفٍّ نقص منه `compId` أو `programId` يمضي بلا خبر.
+   * وصفوفُه محروسةٌ الآن في الخادم، فالحارس يعيدها والتطبيق يرميها في كل
+   * تحميل: دورةٌ لا تنتهي. والصفُّ الناقص خبرٌ ناقص لا خبرٌ كاذب، فيبقى —
+   * ومن أراد إمضاءه أمضاه بيده، فيُكتب في الصندوق كغيره.
+   */
+  d.clubRuns = (d.clubRuns || [])
+    .filter((r) => r && typeof r === 'object')
+    .map((r) => (r.id ? r : { ...r, id: uid() }));
   d.tournaments = (d.tournaments || []).map((t) => ({
     type: LEAGUE, levels: [], teams: [], matches: [], players: '', programId: '', weekId: '', ...t,
   }));

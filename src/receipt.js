@@ -30,17 +30,40 @@ export const refPrefix = (year) => `FA-${clean(year) || '0000'}-`;
  * ولا نحفظ عدّادًا: العدّاد يخزَّن في مكان واحد، ولو دمج التطبيقُ حفظتين
  * تعارضتا رجّح إحداهما فأعاد الرقم مرتين. أما الاشتقاق من أكبر موجود فيصلح
  * نفسه: لو تكرّر رقمٌ يومًا، تجاوزه الذي بعده ولم يبنِ عليه.
+ *
+ * ونقرأ المحذوفات معه: الورقة المطبوعة لا يمحوها حذفٌ في التطبيق.
  */
 export const nextRef = (data, year) => {
   const pre = refPrefix(year);
   let max = 0;
-  eachParticipant(data, (x) => {
-    const r = clean(x.ref);
+  const eye = (r0) => {
+    const r = clean(r0);
     if (!r.startsWith(pre)) return;
     const n = parseInt(r.slice(pre.length), 10);
     if (Number.isFinite(n) && n > max) max = n;
-  });
+  };
+  eachParticipant(data, (x) => eye(x.ref));
+  /**
+   * والمحذوف يُعدّ كذلك.
+   *
+   * الرقم يُطبع في ورقةٍ تُسلَّم لولي الأمر، فهي خارج التطبيق ولا يمحوها
+   * حذفٌ فيه. فلو حُذف تسجيلٌ ثم أُعطي رقمُه لغيره، صار في أيدي الناس ورقتان
+   * برقمٍ واحد — ولا يُكتشف ذلك إلا يوم يُراجَع المال، وعندها لا يُعرف
+   * أيُّهما الصحيحة.
+   *
+   * والصندوق يمضي بعد شهر، فيعود الرقم بعده. وهو أبعد بكثيرٍ من موسمٍ واحد،
+   * ودونه حارسُ الساعة يقول: «رقم إيصال مكرّر».
+   */
+  for (const t of data?.trash || []) eachRef(t?.item, eye);
   return pre + String(max + 1).padStart(4, '0');
+};
+
+/** أرقامُ الإيصالات في سجلٍّ محذوف: قد يكون مشتركًا واحدًا أو يومًا فيه عشرة. */
+const eachRef = (item, fn) => {
+  if (!item || typeof item !== 'object') return;
+  if (item.ref) fn(item.ref);
+  for (const x of item.participants || []) if (x?.ref) fn(x.ref);
+  for (const w of item.weeks || []) for (const x of w?.participants || []) if (x?.ref) fn(x.ref);
 };
 
 /** السنة من مفتاح الموسم: «1448-الترم الأول» ← «1448». */
