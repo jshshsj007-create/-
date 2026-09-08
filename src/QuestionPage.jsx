@@ -180,10 +180,6 @@ export default function QuestionPage({ token }) {
       <Shell brand={brand}>
         <div className={card + ' text-center'}>
           <h1 className="text-xl font-extrabold text-slate-800">هذا السؤال ما عاد موجودًا</h1>
-          <p className="text-sm text-slate-500 mt-2 leading-relaxed">
-            الرابط ما عاد يفتح على سؤال — يا إنه انحذف، يا إن الفريق جدّده.
-            كلّم الفريق وهم يعطونك الرابط الجديد.
-          </p>
         </div>
       </Shell>
     );
