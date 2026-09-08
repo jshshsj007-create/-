@@ -3673,12 +3673,12 @@ export default function App() {
   };
 
   const sendBackupNow = async () => {
-    setBackup((b) => ({ ...b, busy: true, msg: '' }));
+    setBackup((b) => ({ ...b, busy: true, msg: '', who: '' }));
     const r = await api('backup_now', { token: sess.current.token });
     if (r.status === 200) {
       setBackup({ status: r.body.status, busy: false, msg: 'تمت النسخة.' });
     } else {
-      setBackup((b) => ({ ...b, busy: false, msg: 'ما نفعت النسخة. جرّب مرة ثانية.' }));
+      setBackup((b) => ({ ...b, busy: false, who: 'plan', msg: 'ما نفعت النسخة. جرّب مرة ثانية.' }));
     }
   };
 
@@ -3694,10 +3694,10 @@ export default function App() {
    * له صار له رجعة.
    */
   const restoreSnapshot = async (stamp, check = true) => {
-    setBackup((b) => ({ ...b, busy: true, msg: '' }));
+    setBackup((b) => ({ ...b, busy: true, msg: '', who: '' }));
     const r = await api('snapshot_restore', { token: sess.current.token, stamp, ...(check ? { check: true } : {}) });
     if (r.status !== 200) {
-      setBackup((b) => ({ ...b, busy: false, msg: 'ما قدرنا نرجّع اللقطة.' }));
+      setBackup((b) => ({ ...b, busy: false, who: 'plan', msg: 'ما قدرنا نرجّع اللقطة.' }));
       return;
     }
     if (check) {
@@ -3727,7 +3727,7 @@ export default function App() {
       baseRef.current = clone(r.body.data);
       setData(migrate(clone(r.body.data)));
     }
-    setBackup((b) => ({ ...b, busy: false, undo: Boolean(r.body?.undo), msg: `رجّعنا البيانات لحالة ${stamp}.` }));
+    setBackup((b) => ({ ...b, busy: false, who: 'plan', undo: Boolean(r.body?.undo), msg: `رجّعنا البيانات لحالة ${stamp}.` }));
   };
 
   /** الرجعة عن الاسترجاع: اللقطة المحفوظة قبله تُسترجع بلا سؤالٍ ثانٍ. */
@@ -3741,15 +3741,15 @@ export default function App() {
    * فما حذفتَه قصدًا يبقى محذوفًا، وما ضاع يرجع.
    */
   const recoverMissing = async (stamp, check) => {
-    setBackup((b) => ({ ...b, busy: true, msg: '' }));
+    setBackup((b) => ({ ...b, busy: true, msg: '', who: '' }));
     const r = await api('snapshot_restore', { token: sess.current.token, stamp, only: 'missing', check });
     if (r.status !== 200) {
-      setBackup((b) => ({ ...b, busy: false, msg: 'ما قدرنا نقرأ اللقطة.' }));
+      setBackup((b) => ({ ...b, busy: false, who: 'plan', msg: 'ما قدرنا نقرأ اللقطة.' }));
       return;
     }
     const back = r.body?.back || [];
     if (!back.length) {
-      setBackup((b) => ({ ...b, busy: false, msg: `ما فيه شيءٌ مفقود من لقطة ${stamp}.` }));
+      setBackup((b) => ({ ...b, busy: false, who: 'plan', msg: `ما فيه شيءٌ مفقود من لقطة ${stamp}.` }));
       return;
     }
     if (check) {
@@ -3773,7 +3773,7 @@ export default function App() {
       baseRef.current = clone(r.body.data);
       setData(migrate(clone(r.body.data)));
     }
-    setBackup((b) => ({ ...b, busy: false, msg: `رجّعنا ${records(back.length)}.` }));
+    setBackup((b) => ({ ...b, busy: false, who: 'plan', msg: `رجّعنا ${records(back.length)}.` }));
   };
 
   /**
@@ -3786,15 +3786,15 @@ export default function App() {
    * مبلغه ولا باقته ولا إيصاله. وهذا يبني من الدفتر، فيرجع كما وصل أول مرة.
    */
   const matchSubs = async (check = true) => {
-    setBackup((b) => ({ ...b, busy: true, msg: '' }));
+    setBackup((b) => ({ ...b, busy: true, msg: '', who: '' }));
     const r = await api('ledger', { token: sess.current.token, kind: 'sub', mode: 'match', ...(check ? { check: true } : {}) });
     if (r.status !== 200) {
-      setBackup((b) => ({ ...b, busy: false, msg: 'ما قدرنا نقرأ دفتر التسجيلات.' }));
+      setBackup((b) => ({ ...b, busy: false, who: 'subs', msg: 'ما قدرنا نقرأ دفتر التسجيلات.' }));
       return;
     }
     const gone = r.body?.missing || [];
     if (!gone.length) {
-      setBackup((b) => ({ ...b, busy: false, msg: `دفتر التسجيلات مطابق — ${fmt(r.body?.total || 0)} تسجيلًا، ما ينقص منها أحد.` }));
+      setBackup((b) => ({ ...b, busy: false, who: 'subs', msg: `دفتر التسجيلات مطابق — ${fmt(r.body?.total || 0)} تسجيلًا، ما ينقص منها أحد.` }));
       return;
     }
     if (check) {
@@ -3819,20 +3819,20 @@ export default function App() {
       baseRef.current = clone(r.body.data);
       setData(migrate(clone(r.body.data)));
     }
-    setBackup((b) => ({ ...b, busy: false, msg: `رجّعنا ${records(gone.length)}.` }));
+    setBackup((b) => ({ ...b, busy: false, who: 'subs', msg: `رجّعنا ${records(gone.length)}.` }));
   };
 
   /** ومثلُه دفتر الأجوبة: جوابُ الولد ما يعيش في السؤال وحده. */
   const matchAnswers = async (check = true) => {
-    setBackup((b) => ({ ...b, busy: true, msg: '' }));
+    setBackup((b) => ({ ...b, busy: true, msg: '', who: '' }));
     const r = await api('ledger', { token: sess.current.token, kind: 'ans', mode: 'match', ...(check ? { check: true } : {}) });
     if (r.status !== 200) {
-      setBackup((b) => ({ ...b, busy: false, msg: 'ما قدرنا نقرأ دفتر الأجوبة.' }));
+      setBackup((b) => ({ ...b, busy: false, who: 'subs', msg: 'ما قدرنا نقرأ دفتر الأجوبة.' }));
       return;
     }
     const gone = r.body?.missing || [];
     if (!gone.length) {
-      setBackup((b) => ({ ...b, busy: false, msg: `دفتر الأجوبة مطابق — ${fmt(r.body?.total || 0)} جوابًا، ما ينقص منها شيء.` }));
+      setBackup((b) => ({ ...b, busy: false, who: 'subs', msg: `دفتر الأجوبة مطابق — ${fmt(r.body?.total || 0)} جوابًا، ما ينقص منها شيء.` }));
       return;
     }
     if (check) {
@@ -3856,7 +3856,7 @@ export default function App() {
       baseRef.current = clone(r.body.data);
       setData(migrate(clone(r.body.data)));
     }
-    setBackup((b) => ({ ...b, busy: false, msg: `رجّعنا ${fmt(gone.length)} جوابًا.` }));
+    setBackup((b) => ({ ...b, busy: false, who: 'subs', msg: `رجّعنا ${fmt(gone.length)} جوابًا.` }));
   };
 
   /**
@@ -3867,15 +3867,15 @@ export default function App() {
    * عددُه فقط، فالسؤال الأول عند من ضاعت حساباته: «كم؟».
    */
   const matchMoney = async () => {
-    setBackup((b) => ({ ...b, busy: true, msg: '' }));
+    setBackup((b) => ({ ...b, busy: true, msg: '', who: '' }));
     const r = await api('money', { token: sess.current.token, mode: 'match' });
     if (r.status !== 200) {
-      setBackup((b) => ({ ...b, busy: false, msg: 'ما قدرنا نقرأ دفتر المال.' }));
+      setBackup((b) => ({ ...b, busy: false, who: 'mal', msg: 'ما قدرنا نقرأ دفتر المال.' }));
       return;
     }
     const gone = r.body?.missing || [];
     if (!gone.length) {
-      setBackup((b) => ({ ...b, busy: false, msg: `دفتر المال مطابق — ${fmt(r.body?.total || 0)} حركة، ما ينقص منها شيء.` }));
+      setBackup((b) => ({ ...b, busy: false, who: 'mal', msg: `دفتر المال مطابق — ${fmt(r.body?.total || 0)} حركة، ما ينقص منها شيء.` }));
       return;
     }
     const lines = gone.slice(0, 10).map((x) => `${x.label}: ${fmt(x.amount)} ر.س${x.where?.programName ? ` · ${x.where.programName}` : ''}${x.note ? ` · ${x.note}` : ''}`);
@@ -3895,13 +3895,13 @@ export default function App() {
    * دورة: لو ردّ الخادمُ موضعًا لا يتقدّم، وقفنا بدل أن ندور بلا نهاية.
    */
   const seedMoney = async () => {
-    setBackup((b) => ({ ...b, busy: true, msg: '' }));
+    setBackup((b) => ({ ...b, busy: true, msg: '', who: '' }));
     let from = 0;
     let wrote = 0;
     for (let i = 0; i < 20; i++) {
       const r = await api('money', { token: sess.current.token, mode: 'seed', from });
       if (r.status !== 200) {
-        setBackup((b) => ({ ...b, busy: false, msg: 'ما قدرنا نكتب في الدفتر.' }));
+        setBackup((b) => ({ ...b, busy: false, who: 'mal', msg: 'ما قدرنا نكتب في الدفتر.' }));
         return;
       }
       wrote += Number(r.body?.wrote || 0);
@@ -3909,7 +3909,7 @@ export default function App() {
       if (!r.body?.more || next <= from) { from = next; break; }
       from = next;
     }
-    setBackup((b) => ({ ...b, busy: false, msg: `كتبنا ${fmt(wrote)} حركة في دفتر المال.` }));
+    setBackup((b) => ({ ...b, busy: false, who: 'mal', msg: `كتبنا ${fmt(wrote)} حركة في دفتر المال.` }));
   };
 
   const backupText = () => JSON.stringify({ app: 'Faydh', version: 1, savedAt: new Date().toISOString(), data }, null, 2);
@@ -7756,7 +7756,8 @@ export default function App() {
                     <button className={btnPrimary + ' w-full'} disabled={backup.busy} onClick={sendBackupNow}>
                       <RotateCcw size={16} /> {backup.busy ? 'جاري الإرسال...' : 'أرسل نسخة الآن'}
                     </button>
-                    {backup.msg && <div className="text-xs text-slate-500 mt-2 text-center">{backup.msg}</div>}
+                    {/* لكل بطاقةٍ رسالتُها: رسالةٌ واحدة تُعرض في ثلاثة مواضع تُقرأ غلطًا */}
+                    {backup.msg && backup.who === 'plan' && <div className="text-xs text-slate-500 mt-2 text-center">{backup.msg}</div>}
 
                     {(backup.status?.snapshots || []).length > 0 && (
                       <div className="mt-4">
@@ -7830,7 +7831,8 @@ export default function App() {
                   <div className="text-[11px] text-slate-400 mt-2 leading-relaxed">
                     ومن ضغطتَ عليه «ما وصل» يبقى مرفوضًا — الدفتر يحفظ ما وصل، لا ما قبِلتَه.
                   </div>
-                  {backup.msg && <div className="text-xs text-slate-500 mt-3 text-center">{backup.msg}</div>}
+                  {/* لكل بطاقةٍ رسالتُها: رسالةٌ واحدة تُعرض في ثلاثة مواضع تُقرأ غلطًا */}
+                  {backup.msg && backup.who === 'subs' && <div className="text-xs text-slate-500 mt-3 text-center">{backup.msg}</div>}
                 </div>
 
                 {/*
@@ -7854,7 +7856,8 @@ export default function App() {
                     التأسيس يُضغط مرةً واحدة: يكتب حساباتك الحالية في الدفتر، لأن ما وقع قبل
                     إنشائه ما كان له بابٌ يُكتب منه. وبعدها يكتب نفسه.
                   </div>
-                  {backup.msg && <div className="text-xs text-slate-500 mt-3 text-center">{backup.msg}</div>}
+                  {/* لكل بطاقةٍ رسالتُها: رسالةٌ واحدة تُعرض في ثلاثة مواضع تُقرأ غلطًا */}
+                  {backup.msg && backup.who === 'mal' && <div className="text-xs text-slate-500 mt-3 text-center">{backup.msg}</div>}
                 </div>
 
                 <div className={cardCls}>
