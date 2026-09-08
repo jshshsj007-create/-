@@ -2647,10 +2647,10 @@ export default function App() {
       ...(gone ? { trash: intoTrash('question', gone, { label: gone.text || 'سؤال' }) } : {}),
     });
   };
-  const toggleQuestion = (qid) => save({
-    ...data,
-    questions: data.questions.map((q) => (q.id !== qid ? q : { ...q, open: q.open === false })),
-  });
+  const toggleQuestion = (qid) => {
+    const q = data.questions.find((x) => x.id === qid);
+    linkSet({ questionId: qid, open: q?.open === false });
+  };
   /** تعليم جوابٍ بيدك. والثالثة تمسح ما علّمته فيرجع لحكم الآلة. */
   const markAnswer = (qid, aid, mark2) => save({
     ...data,
@@ -2929,6 +2929,20 @@ export default function App() {
     programs: data.programs.map((p) => (p.id !== program.id ? p
       : { ...p, signup: { ...emptySignup(), ...(p.signup || {}), ...patch } })),
   });
+  /**
+   * مفتاح الرابط ورمزُه ووجهتُه لا تتغيّر بحفظٍ أبدًا — حصّنها الخادم.
+   * فتُغيَّر بفعلٍ مقصود، ويُكتب من فعله ومتى.
+   */
+  const linkSet = useCallback(async (patch) => {
+    if (!cloudOn) return false;
+    const r = await api('link_set', { token: sess.current.token, ...patch });
+    if (r.status !== 200 || !r.body?.data) return false;
+    revRef.current = r.body.rev;
+    baseRef.current = clone(r.body.data);
+    setData(migrate(clone(r.body.data)));
+    return true;
+  }, [cloudOn]);
+
   const patchSignup = (patch) => save(signupPatched(patch));
   /** للخانات اللي تُكتب حرفًا حرفًا: نفس الحفظ، بس بعد ما يخلص الكاتب. */
   const typeSignup = (patch) => saveTyping(signupPatched(patch));
@@ -2945,30 +2959,25 @@ export default function App() {
       if (publicProgramId === program.id) {
         askConfirm(
           `«${program.name}» هو وجهة الرابط العام والباركود. إذا أقفلت تسجيله الذاتي، صار من يمسح الباركود يشوف «التسجيل مقفل». نقفله ونوقف الرابط العام معه؟`,
-          () => save({
-            ...data,
-            publicLink: { programId: '' },
-            programs: data.programs.map((p) => (p.id !== program.id ? p
-              : { ...p, signup: { ...emptySignup(), ...(p.signup || {}), enabled: false } })),
-          }),
+          () => linkSet({ programId: program.id, enabled: false, publicProgramId: '' }),
           'نعم، أقفله',
         );
         return;
       }
-      patchSignup({ enabled: false });
+      linkSet({ programId: program.id, enabled: false });
       return;
     }
+    // الإعدادات المرافقة تُحفظ عاديًّا، والمفتاح وحده يمرّ بالباب المقصود
     patchSignup({
-      enabled: true,
-      token: s.token || makeSignupToken(),
       price: s.price || (program.type === 'مجمع' ? program.dayPrice || '' : ''),
       allowPerDay: s.allowPerDay !== false,
       openWeeks: s.openWeeks?.length ? s.openWeeks : (program.weeks || []).map((w) => w.id),
       accounts: s.accounts?.length ? s.accounts : data.faidAccounts.map((a) => a.id),
     });
+    linkSet({ programId: program.id, enabled: true, ...(s.token ? {} : { newToken: true }) });
   };
 
-  const regenerateToken = () => { patchSignup({ token: makeSignupToken() }); closeModal(); };
+  const regenerateToken = () => { linkSet({ programId: program.id, newToken: true }); closeModal(); };
 
   /* ---------------------------- الرابط العام ---------------------------- */
 
@@ -2984,36 +2993,29 @@ export default function App() {
    * التحويل يقفل التسجيل الذاتي عن السابق: الرابط ما يفتح إلا على واحد،
    * وتركُ القديم مفتوحًا يخلّي بابًا ما أحد ينتبه له.
    */
-  const setPublicTarget = (pid) => save({
-    ...data,
-    publicLink: { programId: pid },
-    programs: data.programs.map((p) => {
-      // السابق يُقفل: الرابط ما يفتح إلا على واحد، وترك القديم بابٌ لا يُنتبه له
-      if (p.id === publicProgramId && p.id !== pid && p.signup) {
-        return { ...p, signup: { ...p.signup, enabled: false } };
-      }
-      /**
-       * والجديد يُفتح معه.
-       *
-       * كانا مفتاحين منفصلين: يوجّه الرابطَ إلى برنامجٍ تسجيلُه مقفول، فتقول
-       * البطاقة «يفتح عليه ✓» ويقول الرابط لولي الأمر «التسجيل مقفل». وتوجيهُ
-       * الرابط إلى برنامجٍ معناه «سجّلوا هنا»، فلا يُترك بابه موصدًا.
-       */
-      if (p.id !== pid) return p;
-      const sg = { ...emptySignup(), ...(p.signup || {}) };
-      return {
-        ...p,
+  const setPublicTarget = async (pid) => {
+    const p = data.programs.find((x) => x.id === pid);
+    const sg = { ...emptySignup(), ...(p?.signup || {}) };
+    /**
+     * الوجهة والمفتاح يمرّان بالباب المقصود، والإعدادات المرافقة بالحفظ العادي.
+     * والسابق يُقفل: الرابط ما يفتح إلا على واحد، وترك القديم بابٌ لا يُنتبه له.
+     * والجديد يُفتح معه، فما تقول البطاقة «يفتح عليه» ويقول الرابط «مقفل».
+     */
+    save({
+      ...data,
+      programs: data.programs.map((x) => (x.id !== pid ? x : {
+        ...x,
         signup: {
           ...sg,
-          enabled: true,
-          token: sg.token || makeSignupToken(),
-          openWeeks: sg.openWeeks?.length ? sg.openWeeks : (p.weeks || []).map((w) => w.id),
+          openWeeks: sg.openWeeks?.length ? sg.openWeeks : (x.weeks || []).map((w) => w.id),
           accounts: sg.accounts?.length ? sg.accounts : data.faidAccounts.map((a) => a.id),
         },
-      };
-    }),
-  });
-  const clearPublicTarget = () => save({ ...data, publicLink: { programId: '' } });
+      })),
+    });
+    if (publicProgramId && publicProgramId !== pid) await linkSet({ programId: publicProgramId, enabled: false });
+    await linkSet({ programId: pid, enabled: true, publicProgramId: pid, ...(sg.token ? {} : { newToken: true }) });
+  };
+  const clearPublicTarget = () => linkSet({ publicProgramId: '' });
 
   /**
    * الباركود صورةً في جهازك — تنفتح في الاستوديو، وتنرسل في واتساب،

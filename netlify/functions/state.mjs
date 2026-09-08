@@ -10,7 +10,7 @@
 import { getStore } from '@netlify/blobs';
 import crypto from 'node:crypto';
 import { isAdmin, allowed, canWrite } from '../../src/perms.js';
-import { programFor, publicView, validateSubmission, applySubmission, normalizeSubmission, rateLimited, waIntl, isReceipt } from '../../src/signup.js';
+import { programFor, publicView, validateSubmission, applySubmission, normalizeSubmission, rateLimited, waIntl, isReceipt, makeToken as makeSignupToken } from '../../src/signup.js';
 import { questionView, validateAnswer, applyAnswer, answersRateLimited, makeDraw, applyDraw } from '../../src/club.js';
 import { dedupeByPhone, remapParticipants } from '../../src/people.js';
 import { runBackup, backupStatus, readSnapshot } from '../lib/backup.mjs';
@@ -469,6 +469,32 @@ const guard = (incoming, current, me) => {
   if (!allowed(me, 'النادي')) out.questions = current?.questions || [];
 
   /**
+   * مفتاح الرابط ورمزُه ملكُ صاحبه وحده.
+   *
+   * كانا يعيشان في البيانات كأي رقم، فحفظةٌ من جهازٍ متأخّر تُرجعهما إلى حالٍ
+   * قديمة — فيُقفل رابطٌ نشرتَه في مجموعة، أو يتبدّل رمزُه فتموت الرسالة التي
+   * أرسلتها لألف واحد. ومثله السؤال: يُقفل وأنت تظنّه مفتوحًا، فيقف الأولاد
+   * أمام باب.
+   *
+   * فصارت هذي الأربعة لا تتغيّر بحفظٍ أبدًا — لا من جهازك ولا من غيره — وإنما
+   * بفعلٍ مقصودٍ وحده (`link_set`). وما جاء في الحفظة منها يُردّ إلى ما عند
+   * الخادم، مهما كان مصدره.
+   */
+  const wasProg = new Map((current?.programs || []).map((p) => [p.id, p]));
+  out.programs = (out.programs || []).map((p) => {
+    const was = wasProg.get(p.id);
+    if (!was?.signup || !p.signup) return p;
+    return { ...p, signup: { ...p.signup, enabled: was.signup.enabled, token: was.signup.token } };
+  });
+  const wasQ = new Map((current?.questions || []).map((q) => [q.id, q]));
+  out.questions = (out.questions || []).map((q) => {
+    const was = wasQ.get(q.id);
+    return was ? { ...q, open: was.open, token: was.token } : q;
+  });
+  // ووجهةُ الرابط العام: باركودٌ مطبوعٌ موزَّع، لا يُبدَّل بحفظة
+  if (current?.publicLink) out.publicLink = current.publicLink;
+
+  /**
    * الصندوق: الموظف ما يشوفه (حجبناه في `strip`)، فلو قبلنا قائمته كما هي
    * محا محذوفات المدير كلها بحفظة عادية. لكن حذفه هو يستحق الرجعة مثل غيره،
    * فنقبل منه الإضافة وحدها: ما جاء جديدًا يُضاف، وما كان قائمًا يبقى.
@@ -768,6 +794,53 @@ export default async (req) => {
       .map((e) => ({ at: e.at || 0, phone: String(e.phone) }))
       .sort((a, b) => b.at - a.at);
     return json({ ok: true, rows });
+  }
+
+  /**
+   * فتحُ الرابط وإقفاله وتجديد رمزه — الباب الوحيد.
+   *
+   * حُصّنت في `guard` من كل حفظ، فلا تتغيّر إلا من هنا: ضغطةٌ مقصودة من صاحبها.
+   * ومعها يُكتب من فعلها ومتى، فيُعرف لماذا أُقفل الرابط — بدل أن يُحار فيه
+   * ساعتان كما حِرنا.
+   */
+  if (op === 'link_set') {
+    const may = isAdmin(me) || (allowed(me, 'المصروفات والتقارير') && allowed(me, 'أولياء الأمور'));
+    if (!may) return json({ error: 'forbidden' }, 403);
+    const now = Date.now();
+    const by = me.name || me.username || '';
+    const r = await commit((d) => {
+      let data = d.data;
+      if (body.programId) {
+        const p = (data.programs || []).find((x) => x.id === body.programId);
+        if (!p?.signup) return { reject: json({ error: 'not_found' }, 404) };
+        const s = { ...p.signup };
+        if (body.newToken) s.token = makeSignupToken();
+        if (body.enabled !== undefined) {
+          s.enabled = Boolean(body.enabled);
+          s.switched = { at: now, by, on: s.enabled };
+        }
+        data = { ...data, programs: data.programs.map((x) => (x.id !== p.id ? x : { ...x, signup: s })) };
+      }
+      if (body.questionId) {
+        const q = (data.questions || []).find((x) => x.id === body.questionId);
+        if (!q) return { reject: json({ error: 'not_found' }, 404) };
+        const nq = { ...q };
+        if (body.newToken) nq.token = makeSignupToken();
+        if (body.open !== undefined) {
+          nq.open = Boolean(body.open);
+          nq.switched = { at: now, by, on: nq.open };
+        }
+        data = { ...data, questions: data.questions.map((x) => (x.id !== q.id ? x : nq)) };
+      }
+      if (body.publicProgramId !== undefined) {
+        data = { ...data, publicLink: { programId: String(body.publicProgramId || '') } };
+      }
+      if (data === d.data) return { reject: json({ error: 'nothing' }, 400) };
+      return { doc: { ...d, rev: d.rev + 1, updatedAt: new Date(now).toISOString(), data } };
+    }, doc);
+    if (r.reject) return r.reject;
+    if (r.busy) return json({ error: 'busy' }, 503);
+    return json({ ok: true, rev: r.doc.rev, data: strip(r.doc.data, me) });
   }
 
   /**
