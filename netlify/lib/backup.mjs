@@ -86,9 +86,26 @@ export const runBackup = async (store, { now = Date.now(), env = process.env } =
 export const backupStatus = async (store) =>
   (await store.get(STATUS, { type: 'json' })) || null;
 
+/**
+ * لقطةُ ما قبل الاسترجاع.
+ *
+ * الاسترجاع الكامل يستبدل كل شيء بحالةِ يومٍ مضى، وما بعده يمضي. وهذا فعلٌ
+ * لا رجعة له — وأخطرُ ما فيه أنه يُضغط في لحظة فزع: ضاع شيءٌ فرجعتَ به،
+ * فذهب معه شغلُ اليوم كلِّه، ولا سبيل إلى ردّه.
+ *
+ * فتُكتب حالُك قبله في هذي، فيصير له رجعة. وهي خارج الفهرس عمدًا: لا يُنظّفها
+ * النسخُ الأسبوعي، ولا تُعرض في قائمة اللقطات فتُسترجَع بالغلط — لها زرُّها.
+ */
+export const UNDO = 'undo';
+
+export const writeUndo = async (store, data, now = Date.now()) => {
+  try { await store.set(SNAP + UNDO, backupFile(data, now)); return true; } catch { return false; }
+};
+
 /** محتوى لقطة محفوظة، أو null لو ما عادت موجودة. */
 export const readSnapshot = async (store, stamp) => {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(stamp || ''))) return null;
+  const s = String(stamp || '');
+  if (s !== UNDO && !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
   const raw = await store.get(SNAP + stamp);
   if (!raw) return null;
   try {

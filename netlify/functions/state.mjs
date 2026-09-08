@@ -13,7 +13,7 @@ import { isAdmin, allowed, canWrite } from '../../src/perms.js';
 import { programFor, publicView, validateSubmission, applySubmission, normalizeSubmission, rateLimited, waIntl, isReceipt, closureOf, makeToken as makeSignupToken } from '../../src/signup.js';
 import { questionView, validateAnswer, applyAnswer, answersRateLimited, makeDrawMany, applyDrawMany } from '../../src/club.js';
 import { dedupeByPhone, remapParticipants } from '../../src/people.js';
-import { runBackup, backupStatus, readSnapshot } from '../lib/backup.mjs';
+import { runBackup, backupStatus, readSnapshot, writeUndo, UNDO } from '../lib/backup.mjs';
 import { hash, verify, isHashed } from '../lib/password.mjs';
 import { loginBlocked, noteFail, clearFails } from '../../src/login.js';
 import { countVisit, dayKey } from '../../src/visits.js';
@@ -921,11 +921,27 @@ export default async (req) => {
       if (rr.busy) return json({ error: 'busy' }, 503);
       return json({ ok: true, back: found.back, rev: rr.doc.rev, data: strip(rr.doc.data, me) });
     }
+    /**
+     * والاسترجاع الكامل: يُرى قبل أن يقع، وله رجعة بعد أن وقع.
+     *
+     * `check` يعدّ ما سيمضي — لا يقول «كل ما بعدها ينمسح» وحدها، بل يقول كم
+     * ومن أيّ نوع. فالرقم يوقف اليدَ حيث لا توقفها العبارة.
+     */
+    const lost = repair(data, doc.data).back;
+    if (body.check) return json({ ok: true, lost, stamp: body.stamp });
+
+    // وحالُك تُكتب قبله، فيصير للفعل الذي لا رجعة له رجعة
+    await writeUndo(store(), doc.data);
     const r = await commit((d) => ({
-      doc: { rev: d.rev + 1, updatedAt: new Date().toISOString(), secret: d.secret, data, signupLog: d.signupLog || [] },
+      doc: {
+        rev: d.rev + 1, updatedAt: new Date().toISOString(), secret: d.secret, data,
+        // سجلّاتُ الخادم ليست من البيانات، فلا يمحوها استرجاعُ بيانات
+        signupLog: d.signupLog || [], loginLog: d.loginLog || [], answerLog: d.answerLog || [],
+        wlog: d.wlog || [],
+      },
     }), doc);
     if (r.busy) return json({ error: 'busy' }, 503);
-    return json({ ok: true, rev: r.doc.rev, data: strip(data, me) });
+    return json({ ok: true, rev: r.doc.rev, data: strip(data, me), undo: true, lost });
   }
 
   /**

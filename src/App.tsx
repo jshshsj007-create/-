@@ -1967,6 +1967,20 @@ export default function App() {
     // كان الزر ما يسوي شيئًا بصمت لو نسي يختار الحساب
     if (!form.accountId) { setForm({ ...form, error: 'اختر الحساب' }); return; }
     if (!(Number(form.amount) > 0)) { setForm({ ...form, error: 'اكتب المبلغ' }); return; }
+    /**
+     * ولا يُوزَّع أكثر من الصافي.
+     *
+     * نصيبُ المدرسة ونصيبُ فيض يُقتطعان مما بقي، فلو زادا عليه صار الدفتر
+     * يقول ما ليس فيه: مبلغٌ خرج من صندوقٍ ما دخله. وكان يُقبل بصمت ثم يُقرأ
+     * «الباقي بالسالب» في شاشةٍ أخرى، فيُبحث عن الخطأ في غير موضعه.
+     */
+    if (key === 'schoolPayouts' || key === 'faidPayouts') {
+      const rest = L.remaining(activeLedger);
+      if (Number(form.amount) > rest + 1) {
+        setForm({ ...form, error: rest > 0 ? `الباقي للتوزيع ${fmt(Math.round(rest))} ر.س فقط` : 'ما بقي شيء للتوزيع في هذا الدفتر' });
+        return;
+      }
+    }
     patchLedger(activeRef, (l) => ({ [key]: [...(l[key] || []), { id: uid(), accountId: form.accountId, amount: Number(form.amount), note: form.note || '' }] }));
     closeModal();
   };
@@ -3645,18 +3659,55 @@ export default function App() {
   };
 
   /** الاسترجاع يمر بالخادم، فينزل على كل الأجهزة لا على جهازك وحده. */
-  const restoreSnapshot = async (stamp) => {
+  /**
+   * الاسترجاع الكامل: يُرى قبل أن يقع، وله رجعة بعد أن وقع.
+   *
+   * كان يُضغط على «كل ما صار بعدها ينمسح» — عبارةٌ صادقة لا توقف يدًا، لأن
+   * من يضغطها في لحظة فزعٍ ما يقرأها. فصار يُعدّ ما سيمضي ويُسمّى: «٢٤ مشتركًا
+   * و٣ أيام و١١ حركة مالية». الرقم يوقف حيث لا توقف العبارة.
+   *
+   * وبعده زرُّ رجعة: حالُك تُكتب في لقطةٍ قبل أن تُستبدل، فالفعل الذي لا رجعة
+   * له صار له رجعة.
+   */
+  const restoreSnapshot = async (stamp, check = true) => {
     setBackup((b) => ({ ...b, busy: true, msg: '' }));
-    const r = await api('snapshot_restore', { token: sess.current.token, stamp });
-    if (r.status === 200 && r.body?.data) {
+    const r = await api('snapshot_restore', { token: sess.current.token, stamp, ...(check ? { check: true } : {}) });
+    if (r.status !== 200) {
+      setBackup((b) => ({ ...b, busy: false, msg: 'ما قدرنا نرجّع اللقطة.' }));
+      return;
+    }
+    if (check) {
+      const lost = r.body?.lost || [];
+      const by = lost.reduce((m, x) => ({ ...m, [x.kind]: (m[x.kind] || 0) + 1 }), {});
+      const line = Object.entries(by).map(([k, n]) => `${n} ${k}`).join(' · ');
+      setBackup((b) => ({ ...b, busy: false, msg: '' }));
+      askConfirm(
+        lost.length
+          ? `ترجيع البيانات لحالة ${stamp}؟ بيمضي ${records(lost.length)} صارت بعدها.`
+          : `ترجيع البيانات لحالة ${stamp}؟ ما فيه شيءٌ جديد يمضي.`,
+        () => restoreSnapshot(stamp, false),
+        'نعم، رجّعها',
+        {
+          lines: [
+            ...(line ? [line] : []),
+            ...lost.slice(0, 8).map((x) => `${x.kind}: ${x.name || '—'}`),
+            ...(lost.length > 8 ? [`وغيرهم ${lost.length - 8}`] : []),
+            'وحالُك الآن تُحفظ قبلها، فتقدر ترجع عنها.',
+          ],
+        },
+      );
+      return;
+    }
+    if (r.body?.data) {
       revRef.current = r.body.rev;
       baseRef.current = clone(r.body.data);
       setData(migrate(clone(r.body.data)));
-      setBackup((b) => ({ ...b, busy: false, msg: `رجّعنا البيانات لحالة ${stamp}.` }));
-    } else {
-      setBackup((b) => ({ ...b, busy: false, msg: 'ما قدرنا نرجّع اللقطة.' }));
     }
+    setBackup((b) => ({ ...b, busy: false, undo: Boolean(r.body?.undo), msg: `رجّعنا البيانات لحالة ${stamp}.` }));
   };
+
+  /** الرجعة عن الاسترجاع: اللقطة المحفوظة قبله تُسترجع بلا سؤالٍ ثانٍ. */
+  const undoRestore = () => restoreSnapshot('undo', false);
 
   /**
    * استرجاع المفقودين وحدهم.
@@ -7568,11 +7619,7 @@ export default function App() {
                               </button>
                               <button disabled={backup.busy}
                                 className="text-xs text-red-600 border border-red-200 rounded-lg px-2.5 py-1.5 disabled:opacity-40"
-                                onClick={() => askConfirm(
-                                  `ترجيع البيانات لحالة ${stamp}؟ كل ما صار بعدها ينمسح.`,
-                                  () => restoreSnapshot(stamp),
-                                  'نعم، رجّعها',
-                                )}>
+                                onClick={() => restoreSnapshot(stamp)}>
                                 استرجاع كامل
                               </button>
                             </div>
@@ -7580,8 +7627,25 @@ export default function App() {
                         </div>
                         <div className="text-[11px] text-slate-400 mt-2 leading-relaxed">
                           «أرجع المفقودين» يقارن اللقطة بالحاضر ويُرجع ما اختفى بلا سجلِّ حذف وحده.
-                          و«استرجاع كامل» يستبدل كل شيء بحالته في ذاك اليوم — وما بعده ينمسح.
+                          و«استرجاع كامل» يستبدل كل شيء بحالته في ذاك اليوم — يقول لك كم يمضي قبل ما يمضي،
+                          ويحفظ حالك قبله فتقدر ترجع عنه.
                         </div>
+                        {/*
+                          الرجعة عن الاسترجاع.
+                          لا تظهر إلا بعد استرجاعٍ وقع في هذي الجلسة: زرٌّ دائمٌ
+                          يقول «ارجع» بلا شيءٍ يُرجَع منه يُربك أكثر مما يطمئن.
+                        */}
+                        {backup.undo && (
+                          <button disabled={backup.busy}
+                            className={btnGhostBox + ' w-full mt-3'}
+                            onClick={() => askConfirm(
+                              'نرجع عن الاسترجاع؟ بترجع بياناتك لحالتها قبله بالضبط.',
+                              undoRestore,
+                              'نعم، ارجع عنه',
+                            )}>
+                            <RotateCcw size={15} /> ارجع عن الاسترجاع
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
