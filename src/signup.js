@@ -540,6 +540,15 @@ export const RECEIPT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'applicat
 export const RECEIPT_MAX = 900 * 1024;
 
 /** إيصال سليم: نوع مسموح وحجم معقول، ومخزّن كنص data URL. */
+/**
+ * إشارةُ إيصالٍ محفوظٍ خارج البيانات.
+ *
+ * الصورة نفسها تُخزَّن في مخزن الصور ولا ينزل في الصف إلا معرّفها — وإلا كبر
+ * ملف البيانات حتى يقف الحفظ. فالصفّ يحمل أحد اثنين: صورةً كاملة (من نسخةٍ
+ * قديمة) أو إشارةً إليها.
+ */
+export const isReceiptRef = (r) => Boolean(r && typeof r.ref === 'string' && r.ref.length >= 6);
+
 export const isReceipt = (r) => {
   if (!r || typeof r.data !== 'string') return false;
   if (!RECEIPT_TYPES.includes(r.type)) return false;
@@ -661,7 +670,7 @@ export const applySubmission = (data, program, view, body, { newId, now = Date.n
       submittedAt: now,
       ...(view.usePackages && packageOf(view, kid) ? { packageName: packageOf(view, kid).name } : {}),
       // الإيصال يُحفظ مع أول ابن فقط — تحويل واحد للطلب كله
-      ...(i === 0 && isReceipt(body.receipt) ? { receipt: body.receipt } : {}),
+      ...(i === 0 && (isReceipt(body.receipt) || isReceiptRef(body.receipt)) ? { receipt: body.receipt } : {}),
       ...(Object.keys({ ...extras, ...kidExtras }).length ? { answers: { ...extras, ...kidExtras } } : {}),
       ...(grouped ? { days: kid.days || [] } : {}),
     };
@@ -671,6 +680,7 @@ export const applySubmission = (data, program, view, body, { newId, now = Date.n
   const shares = kids.map((kid) => weekShares(view, kid));
   // معرّفٌ واحد لاشتراك الابن يجمع صفوفه في كل الجمع، فيُعرف أنها اشتراكٌ واحد
   const subIds = kids.map(() => newId());
+  const landed = [];
   let programs;
   if (grouped) {
     programs = data.programs.map((p) => (p.id !== program.id ? p
@@ -701,6 +711,7 @@ export const applySubmission = (data, program, view, body, { newId, now = Date.n
               } : {}),
             };
           });
+          landed.push(...perWeek.map((x) => ({ ...x, weekId: w.id })));
           return { ...w, mode: 'named', participants: [...(w.participants || []), ...perWeek] };
         }),
       };
@@ -712,6 +723,11 @@ export const applySubmission = (data, program, view, body, { newId, now = Date.n
     guardian: res.guardian,
     count: newParts.length,
     refs: newParts.map((p) => p.ref),
+    /**
+     * الصفوف كما نزلت — لدفترٍ يُكتب فيه ما وصل من الناس.
+     * المجمّع صفٌّ لكل ابن، والمنفصل صفٌّ لكل يومٍ من أيامه.
+     */
+    rows: grouped ? newParts.map((p) => ({ ...p, weekId: '' })) : landed,
   };
 };
 

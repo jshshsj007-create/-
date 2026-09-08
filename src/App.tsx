@@ -43,7 +43,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v8.4';
+const APP_VERSION = 'v8.5';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -55,6 +55,14 @@ export const ORDINALS = ['الأول', 'الثاني', 'الثالث', 'الرا
   'التاسع عشر', 'العشرون'];
 
 const uid = () => Math.random().toString(36).slice(2, 9);
+/**
+ * مصدر صورة الإيصال.
+ *
+ * الإيصال الآن يعيش في مخزن الصور ولا ينزل في البيانات إلا معرّفه — فيُطلب
+ * بمساره الثابت، ويخزّنه المتصفح فلا يُنزَّل إلا مرة. والقديمة نزلت كاملةً
+ * داخل البيانات، فتُعرض كما هي حتى تُنقل.
+ */
+export const slipSrc = (r) => (r?.ref ? `/api/img/${r.ref}` : (r?.data || ''));
 /** «سجل» · «سجلان» · «٣ سجلات» · «١١ سجلًا» — العدد يُصرَّف كما يُنطق. */
 export const records = (n) => {
   const c = Math.max(0, Math.round(Number(n) || 0));
@@ -5335,7 +5343,7 @@ export default function App() {
                                   ) : part.receipt.type === 'application/pdf' ? (
                                     <FileText size={20} className="text-slate-400" />
                                   ) : (
-                                    <img src={part.receipt.data} alt="الإيصال" className="w-full h-full object-cover" />
+                                    <img src={slipSrc(part.receipt)} alt="الإيصال" className="w-full h-full object-cover" />
                                   )}
                                 </button>
                                 <div className="min-w-0 flex-1">
@@ -9054,12 +9062,12 @@ export default function App() {
             <div className="text-center py-6">
               <FileText size={36} className="mx-auto text-slate-300 mb-3" />
               <div className="text-sm text-slate-500 mb-4">{form.receipt.name}</div>
-              <a className={btnPrimary + ' w-full'} href={form.receipt.data} target="_blank" rel="noreferrer">فتح الملف</a>
+              <a className={btnPrimary + ' w-full'} href={slipSrc(form.receipt)} target="_blank" rel="noreferrer">فتح الملف</a>
             </div>
           ) : (
             <>
-              <img src={form.receipt.data} alt="الإيصال" className="w-full rounded-xl border border-slate-100" />
-              <a className={btnGhost + ' w-full mt-3 block text-center'} href={form.receipt.data} target="_blank" rel="noreferrer">
+              <img src={slipSrc(form.receipt)} alt="الإيصال" className="w-full rounded-xl border border-slate-100" />
+              <a className={btnGhost + ' w-full mt-3 block text-center'} href={slipSrc(form.receipt)} target="_blank" rel="noreferrer">
                 فتحها بحجم كامل
               </a>
             </>
@@ -9755,7 +9763,7 @@ function WaitingList({ items, accounts, canMoney, locked, onConfirm, onConfirmAl
                     ) : p.receipt.type === 'application/pdf' ? (
                       <FileText size={20} className="text-slate-400" />
                     ) : (
-                      <img src={p.receipt.data} alt="الإيصال" className="w-full h-full object-cover" />
+                      <img src={slipSrc(p.receipt)} alt="الإيصال" className="w-full h-full object-cover" />
                     )}
                   </button>
                 )}

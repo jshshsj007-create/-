@@ -10,7 +10,7 @@
 import { getStore } from '@netlify/blobs';
 import crypto from 'node:crypto';
 import { isAdmin, allowed, canWrite } from '../../src/perms.js';
-import { programFor, publicView, validateSubmission, applySubmission, normalizeSubmission, rateLimited, waIntl } from '../../src/signup.js';
+import { programFor, publicView, validateSubmission, applySubmission, normalizeSubmission, rateLimited, waIntl, isReceipt } from '../../src/signup.js';
 import { questionView, validateAnswer, applyAnswer, answersRateLimited, makeDraw, applyDraw } from '../../src/club.js';
 import { dedupeByPhone, remapParticipants } from '../../src/people.js';
 import { runBackup, backupStatus, readSnapshot } from '../lib/backup.mjs';
@@ -136,6 +136,43 @@ const commit = async (mutate, seed) => {
     if (landed(doc)) return { ...step, doc };
   }
   return { busy: true };
+};
+
+/* -------------------------------- الدفتر -------------------------------- */
+/**
+ * دفترٌ لا يُمحى.
+ *
+ * كل ما وصل من الناس — تسجيلُ وليّ أمرٍ وجوابُ ولد — يُكتب في مفتاحٍ خاصٍّ به،
+ * خارج ملف البيانات المشترك. لا يكتب فيه إلا البابُ الذي جاء منه، **ولا يحذف
+ * منه شيء**: لا حفظةُ جهاز، ولا استرجاعُ لقطةٍ كاملة، ولا عطبٌ لم يُتصوَّر.
+ *
+ * والفرق بينه وبين الحارس: الحارس يمنع الحذف، وقد وُجدت فيه ثغرتان في يومٍ
+ * واحد. والدفتر ما فيه ما يُثغَر — لا يوجد فيه سطرٌ يحذف. فما بُني على المنع
+ * يُخترق، وما بُني على انعدام الطريق لا يُخترق.
+ *
+ * وكل سطرٍ مفتاحٌ وحده: فما فيه قراءةٌ ثم كتابةٌ تتزاحم، ولا حدَّ لطوله.
+ */
+const LED = 'led:';
+const ledKey = (kind, id) => `${LED}${kind}:${id}`;
+
+/** يُكتب ولا يُقرأ في الطريق: لا يعطّل ما جاء لأجله لو تعثّر. */
+const ledWrite = async (kind, id, row) => {
+  try { await store().setJSON(ledKey(kind, id), row); return true; } catch { return false; }
+};
+
+/**
+ * قراءة الدفتر. `list` يعطي المفاتيح، ثم نقرأ ما يلزم — والقراءة للمدير وحده.
+ */
+const ledRead = async (kind, cap = 2000) => {
+  let keys = [];
+  try {
+    const r = await store().list({ prefix: `${LED}${kind}:` });
+    keys = (r?.blobs || []).map((b) => b.key).slice(0, cap);
+  } catch { return []; }
+  const rows = await Promise.all(keys.map(async (k) => {
+    try { return await store().get(k, { type: 'json' }); } catch { return null; }
+  }));
+  return rows.filter(Boolean).sort((a, b) => Number(b?.at || 0) - Number(a?.at || 0));
 };
 
 /* ------------------------------ عدّاد الفتحات ------------------------------ */
@@ -518,49 +555,91 @@ export default async (req) => {
       if (blocked) return { reject: json({ error: 'too_many' }, 429) };
 
       const q = d.data.questions.find((x) => x.id === view.id);
-      const next = applyAnswer(d.data, q, body, { id: crypto.randomUUID(), now });
+      const aid = crypto.randomUUID();
+      const next = applyAnswer(d.data, q, body, { id: aid, now });
       return {
         doc: { ...d, rev: d.rev + 1, updatedAt: new Date(now).toISOString(), data: next.data,
           answerLog: [...recent, { at: now }] },
-        out: { ok: true, student: next.student },
+        out: {
+          student: next.student,
+          row: { at: now, id: aid, questionId: q.id, question: String(q.text || ''),
+            student: next.student, text: String(body.text || '').trim(),
+            optionId: String(body.optionId || '') },
+        },
       };
     }, doc);
     if (r.reject) return r.reject;
     if (r.busy) return json({ error: 'busy' }, 503);
-    return json(r.out);
+    // وفي الدفتر كذلك: جوابُ الولد ما يعيش في السؤال وحده
+    if (r.out?.row) await ledWrite('ans', r.out.row.id, r.out.row);
+    return json({ ok: true, student: r.out.student });
   }
 
   if (op === 'signup_submit') {
     const now = Date.now();
+    /**
+     * الإيصال يُخزَّن خارج البيانات، مثل صور البرامج تمامًا.
+     *
+     * كان ينزل داخل الملف المشترك، فأربعون إيصالًا تجعله اثني عشر ميغا —
+     * ويُرفع مع كل حفظةٍ ويُنزَّل مع كل مزامنة، حتى يقف الحفظ عند حدّ الخادم.
+     * والمعرّف من محتواه، فالصورة الواحدة ما تُخزَّن مرتين.
+     */
+    let slip = null;
+    if (isReceipt(body.receipt)) {
+      const raw = String(body.receipt.data || '');
+      const id = crypto.createHash('sha256').update(raw).digest('base64url').slice(0, 32);
+      try {
+        await store().set(IMG_PREFIX + id, raw);
+        slip = { id, name: String(body.receipt.name || '').slice(0, 120), type: String(body.receipt.type || '') };
+      } catch { slip = null; }
+    }
+    const lean = slip ? { ...body, receipt: { ref: slip.id, name: slip.name, type: slip.type } } : body;
+
     const r = await commit((d) => {
-      const program = d && programFor(d.data, body.token);
+      const program = d && programFor(d.data, lean.token);
       if (!program) return { reject: json({ error: 'closed' }, 404) };
 
       const view = publicView(d.data, program);
       if (view.blocked) return { reject: json({ error: 'blocked' }, 409) };
       // أيامٌ لم تُعرض على ولي الأمر لا تُؤخذ منه: نكتبها نحن ونطرح ما أُرسل
-      const sub = normalizeSubmission(view, body);
+      const sub = normalizeSubmission(view, lean);
       // نتحقق هنا من جديد: ما يجي من الشبكة لا يُوثق به مهما فحصه المتصفح
       const { ok, errors } = validateSubmission(view, sub);
       if (!ok) return { reject: json({ error: 'invalid', errors }, 400) };
 
-      const { blocked, recent } = rateLimited(d.signupLog, body.answers?.gPhone, now);
+      const { blocked, recent } = rateLimited(d.signupLog, lean.answers?.gPhone, now);
       if (blocked) return { reject: json({ error: 'too_many' }, 429) };
 
       const next = applySubmission(d.data, program, view, sub, { newId: () => crypto.randomUUID(), now });
       return {
         doc: { ...d, rev: d.rev + 1, updatedAt: new Date(now).toISOString(),
           data: enforceOnePerPhone(next.data),
-          signupLog: [...recent, { at: now, phone: String(body.answers?.gPhone || '') }] },
+          signupLog: [...recent, { at: now, phone: String(lean.answers?.gPhone || '') }] },
         // الرقم صار مختومًا على التسجيل نفسه، فما يعود يُشتقّ من رقم النسخة:
         // ذاك كان يقفز مع كل تعديل ولا يبقى عند أحد، فما ينفع مرجعًا لإيصال
-        out: { ok: true, count: next.count, ref: next.refs.join(' · ') },
+        out: { ok: true, count: next.count, ref: next.refs.join(' · '), rows: next.rows || [] },
       };
     }, doc);
     if (r.reject) return r.reject;
     // ما نقول «تم» إلا وقد ثبت: الإيصال بيد ولي الأمر، فلا يخرج على فراغ
     if (r.busy) return json({ error: 'busy' }, 503);
-    return json(r.out);
+    /**
+     * وفي الدفتر يُكتب بعد ثبوته — كاملًا كما وصل.
+     * بعده لا قبله: لا نكتب في الدفتر ما لم يثبت في البيانات.
+     */
+    const program = programFor(r.doc.data, lean.token);
+    for (const row of r.out.rows || []) {
+      await ledWrite('sub', row.id, {
+        at: now, id: row.id, ref: row.ref, name: row.name, studentId: row.studentId,
+        guardian: String(lean.answers?.gName || ''), phone: String(lean.answers?.gPhone || ''),
+        amount: Number(row.amount || 0), accountId: row.accountId || '',
+        packageName: row.packageName || '', weekId: row.weekId || '',
+        programId: program?.id || '', programName: program?.name || '',
+        receipt: slip ? { ref: slip.id, name: slip.name, type: slip.type } : null,
+        answers: row.answers || null,
+      });
+    }
+    return json({ ok: true, count: r.out.count, ref: r.out.ref });
   }
 
   // أول مدير: يُسمح فيه مرة وحدة بس، وبعدها يُقفل الباب.
@@ -676,6 +755,62 @@ export default async (req) => {
     return json({ ok: true, rows });
   }
 
+  /**
+   * الدفتر: قراءةٌ ومطابقة.
+   *
+   * `read` يعرض ما فيه. و`match` يقارنه بالبيانات ويُرجع من نقص — بتفاصيله
+   * كما وصلت: مبلغه وباقته وحسابه وإيصاله. وهو الفرق بين هذا وبين «أرجع
+   * المسجّلين»: ذاك يبني من قاعدة الطلاب فيفقد المال، وهذا يبني من الدفتر
+   * فيرجع كما كان.
+   */
+  if (op === 'ledger') {
+    if (!isAdmin(me)) return json({ error: 'forbidden' }, 403);
+    const kind = body.kind === 'ans' ? 'ans' : 'sub';
+    const rows = await ledRead(kind);
+    if (body.mode !== 'match' || kind !== 'sub') return json({ ok: true, rows });
+
+    const here = new Set();
+    for (const p of doc.data?.programs || []) {
+      for (const x of p.participants || []) if (x?.id) here.add(x.id);
+      for (const w of p.weeks || []) for (const x of w.participants || []) if (x?.id) here.add(x.id);
+    }
+    const missing = rows.filter((r) => r?.id && !here.has(r.id));
+    if (body.check || !missing.length) return json({ ok: true, missing });
+
+    const put = await commit((d) => {
+      const byProg = new Map();
+      for (const m of missing) {
+        const k = m.programId || '';
+        byProg.set(k, [...(byProg.get(k) || []), m]);
+      }
+      const row = (m) => ({ id: m.id, ref: m.ref, name: m.name, studentId: m.studentId,
+        amount: Number(m.amount || 0), accountId: m.accountId || '', attendance: 'معلق',
+        source: 'link', submittedAt: m.at,
+        ...(m.packageName ? { packageName: m.packageName } : {}),
+        ...(m.receipt ? { receipt: m.receipt } : {}),
+        ...(m.answers ? { answers: m.answers } : {}) });
+      return {
+        doc: { ...d, rev: d.rev + 1, updatedAt: new Date().toISOString(),
+          data: { ...d.data, programs: (d.data.programs || []).map((p) => {
+            const mine = byProg.get(p.id) || [];
+            if (!mine.length) return p;
+            const inProg = mine.filter((m) => !m.weekId);
+            return {
+              ...p,
+              participants: [...(p.participants || []), ...inProg.map(row)],
+              weeks: (p.weeks || []).map((w) => {
+                const forWeek = mine.filter((m) => m.weekId === w.id);
+                return forWeek.length ? { ...w, mode: 'named',
+                  participants: [...(w.participants || []), ...forWeek.map(row)] } : w;
+              }),
+            };
+          }) } },
+      };
+    }, doc);
+    if (put.busy) return json({ error: 'busy' }, 503);
+    return json({ ok: true, missing, rev: put.doc.rev, data: strip(put.doc.data, me) });
+  }
+
   // رفع صورة برنامج: ترجع معرّفًا، وهو وحده اللي ينحفظ في البيانات
   if (op === 'img_put') {
     if (!allowed(me, 'البرامج') && !allowed(me, 'الإعداد (المسابقات)')) return json({ error: 'forbidden' }, 403);
@@ -722,8 +857,37 @@ export default async (req) => {
     return json({ ok: true, rev: doc.rev, data: strip(doc.data, me), visits });
   }
 
+  /**
+   * نقل الإيصالات القديمة إلى مخزن الصور — مرةً واحدة، بلا أن يعمل صاحبه شيئًا.
+   *
+   * ما نزل قبل اليوم نزل صورةً كاملة داخل البيانات، والصفُّ الواحد يتكرّر في
+   * كل جمعةٍ من جمع الاشتراك — فثلاثة إيصالاتٍ صارت تسعَ نسخٍ من ربع ميغا.
+   * فنُخرجها عند أول حفظةٍ تمرّ، ولا يبقى منها إلا معرّفها.
+   */
+  const liftSlips = async (data) => {
+    let moved = 0;
+    const lift = async (x) => {
+      const r = x?.receipt;
+      if (!r || typeof r.data !== 'string' || !r.data.startsWith('data:')) return x;
+      const id = crypto.createHash('sha256').update(r.data).digest('base64url').slice(0, 32);
+      try { await store().set(IMG_PREFIX + id, r.data); } catch { return x; }
+      moved += 1;
+      return { ...x, receipt: { ref: id, name: String(r.name || ''), type: String(r.type || '') } };
+    };
+    const rows = async (list) => (Array.isArray(list) ? Promise.all(list.map(lift)) : list);
+    const programs = await Promise.all((data?.programs || []).map(async (p) => ({
+      ...p,
+      participants: await rows(p.participants),
+      weeks: await Promise.all((p.weeks || []).map(async (w) => ({ ...w, participants: await rows(w.participants) }))),
+    })));
+    return moved ? { ...data, programs } : data;
+  };
+
   // حفظ: لازم يكون البانٍ على آخر نسخة، وإلا نرجّع 409 ومعه الحالي عشان الدمج.
   if (op === 'push') {
+    // النقل قبل الحارس: يُقرأ الوارد مرةً واحدة ويُخفَّف قبل أن يُحفظ
+    const lifted = await liftSlips(body.data);
+    if (lifted !== body.data) body = { ...body, data: lifted };
     const r = await commit((d) => {
       // يُعاد الفحص في كل محاولة: لو سبقنا غيرُنا صار البانٍ قديمًا، وردُّ
       // ٤٠٩ أصدق من كتابةٍ تمحوه — الجهاز يدمج ثم يعيد
