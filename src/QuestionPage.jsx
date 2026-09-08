@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from './cloud.js';
 import { qText, qError, Q_TEXTS } from './club.js';
 import { FaydhLogo, TEAM_NAME } from './logo.jsx';
@@ -110,7 +110,19 @@ export default function QuestionPage({ token }) {
    *
    * ولا تسأل وصاحبُها يكتب جوابه أو بعد أن أرسله: تبديلٌ تحت يده يمحو ما كتب.
    */
-  const busy = state === 'sending' || state === 'done';
+  /**
+   * و«هل هو مشغول؟» تُقرأ من مرجعٍ لا من قائمة الاعتماد.
+   *
+   * كانت في القائمة، فكلما تبدّلت الحال أُعيد بناءُ الأثر — وأولُ ما يفعله
+   * أن يسأل الخادم. فمن ضغط «أرسل» تبدّلت حالُه إلى «يُرسل»، فسأل الأثرُ
+   * من جديد، فردّ الخادمُ بالسؤال، فرجعت الصفحةُ إلى الخانات ومُحي جوابُه
+   * أمام عينيه. حارسٌ كُتب ليمنع هذا بعينه، فوقع فيه من باب الاعتماد.
+   *
+   * والمرجع يُقرأ عند الحاجة ولا يُعيد بناء شيء، فيبقى الأثر مبنيًّا على
+   * الرمز وحده — يُسأل عند الفتح وعند الرجوع، لا عند كل تبدّل.
+   */
+  const busyRef = useRef(false);
+  busyRef.current = state === 'sending' || state === 'done';
   useEffect(() => {
     let alive = true;
     const ask = async () => {
@@ -128,7 +140,7 @@ export default function QuestionPage({ token }) {
       // و`0` تعني «ما وصل»: شبكةٌ انقطعت، فنُبقي ما على الشاشة ولا نقول «مقفل»
     };
     ask();
-    const again = () => { if (!busy && document.visibilityState === 'visible') ask(); };
+    const again = () => { if (!busyRef.current && document.visibilityState === 'visible') ask(); };
     document.addEventListener('visibilitychange', again);
     window.addEventListener('pageshow', again);
     return () => {
@@ -136,7 +148,7 @@ export default function QuestionPage({ token }) {
       document.removeEventListener('visibilitychange', again);
       window.removeEventListener('pageshow', again);
     };
-  }, [token, busy]);
+  }, [token]);
 
   const submit = async () => {
     const errs = {};
