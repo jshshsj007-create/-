@@ -96,9 +96,24 @@ export default function QuestionPage({ token }) {
     return () => clearTimeout(t);
   }, [goToken]);
 
+  /**
+   * تسأل الخادمَ عند الفتح، **وكلما رجع إليها صاحبُها**.
+   *
+   * الرابط الثابت عنوانٌ واحد والسؤالُ تحته يتبدّل، وكانت الصفحة تسأل مرةً
+   * واحدة ثم لا تسأل أبدًا. والجوّال لا يُعيد بناء الصفحة إذا رجعتَ إليها —
+   * يُخرجها من ذاكرته كما تركتَها. فتبدّل السؤالَ في التطبيق، ثم تفتح الرابط
+   * فتراه كما كان، فتظنّ أن التبديل ما مشى.
+   *
+   * وليست علّةً في التبديل: الخادم بدّله ساعتها. العلّةُ أن الصفحة ما سألت
+   * ثانيةً. فصارت تسأل كلما ظهرت من جديد — وهذا يشمل السحب للتحديث، والرجوع
+   * من تبويبٍ آخر، وإيقاظ الجوّال.
+   *
+   * ولا تسأل وصاحبُها يكتب جوابه أو بعد أن أرسله: تبديلٌ تحت يده يمحو ما كتب.
+   */
+  const busy = state === 'sending' || state === 'done';
   useEffect(() => {
     let alive = true;
-    (async () => {
+    const ask = async () => {
       const r = await api('question_info', { token });
       if (!alive) return;
       if (r.status === 200 && r.body?.view) {
@@ -107,12 +122,21 @@ export default function QuestionPage({ token }) {
       } else if (r.status === 404) {
         // الرمز ما عاد يدلّ على سؤال: حُذف أو تجدّد. غير «انتهى وقت الجواب»
         setState('gone');
-      } else {
+      } else if (r.status !== 0) {
         setState('closed');
       }
-    })();
-    return () => { alive = false; };
-  }, [token]);
+      // و`0` تعني «ما وصل»: شبكةٌ انقطعت، فنُبقي ما على الشاشة ولا نقول «مقفل»
+    };
+    ask();
+    const again = () => { if (!busy && document.visibilityState === 'visible') ask(); };
+    document.addEventListener('visibilitychange', again);
+    window.addEventListener('pageshow', again);
+    return () => {
+      alive = false;
+      document.removeEventListener('visibilitychange', again);
+      window.removeEventListener('pageshow', again);
+    };
+  }, [token, busy]);
 
   const submit = async () => {
     const errs = {};
