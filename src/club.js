@@ -321,17 +321,58 @@ export const qError = (q, key) => {
   return raw || Q_ERRORS[key];
 };
 
+/**
+ * السؤال الذي يفتح عليه الرابط الثابت.
+ *
+ * رابطٌ واحد للفريق لا يتغيّر، والسؤالُ تحته يتبدّل — مثل رابط التسجيل تمامًا.
+ * فيُنشر مرةً في قروبات الأهالي، ثم تُبدّل السؤالَ كل أسبوعٍ بلا أن ترسل
+ * رابطًا جديدًا، وبلا أن يموت ما أرسلتَه أول مرة.
+ */
+export const publicQuestion = (data) => {
+  const id = data?.questionLink?.questionId;
+  if (!id) return null;
+  return (data?.questions || []).find((x) => x.id === id) || null;
+};
+
+/**
+ * هل انتهى وقتُه؟
+ *
+ * مؤقّتٌ يكتبه صاحب السؤال — «أربع وعشرون ساعة» غالبًا — فيُقفل من نفسه بلا
+ * أن يقوم أحدٌ ليقفله. وبلا مؤقّتٍ يبقى مفتوحًا حتى تقفله بيدك: الصمتُ ليس
+ * أمرًا بالإقفال.
+ */
+export const questionExpired = (q, now = Date.now()) =>
+  Boolean(q?.closesAt) && now >= Number(q.closesAt);
+
 /** ما تُرسله الصفحة العامة: السؤال بلا الجواب الصحيح وبلا أجوبة غيره. */
-export const questionView = (data, token) => {
-  const q = (data?.questions || []).find((x) => x.token && x.token === token);
+export const questionView = (data, token, now = Date.now()) => {
+  // بلا رمزٍ يُفتح الثابت، كما يفتح رابطُ التسجيل العام على وجهته
+  const q = token
+    ? (data?.questions || []).find((x) => x.token && x.token === token)
+    : publicQuestion(data);
   if (!q) return null;
+
+  /**
+   * وبعد الجواب: بابٌ إلى التسجيل.
+   *
+   * السؤال يجمع الأهالي، والتسجيل هو المقصود — فمن جاوب وجد الطريق أمامه
+   * بدل أن يُغلق الباب عليه بـ«شكرًا لك». والرابط يُبنى هنا لأن الصفحة عامة
+   * لا تعرف من البرامج شيئًا، ولا يُبنى إلا إن كان تسجيلُه مفتوحًا فعلًا —
+   * فلا نرسله إلى بابٍ مقفول.
+   */
+  const p = q.thenProgramId ? (data?.programs || []).find((x) => x.id === q.thenProgramId) : null;
+  const goToken = p?.signup?.enabled && p.signup.token ? p.signup.token : '';
+
   return {
     id: q.id,
-    open: q.open !== false,
+    open: q.open !== false && !questionExpired(q, now),
+    expired: questionExpired(q, now),
+    closesAt: Number(q.closesAt || 0),
     text: String(q.text || ''),
     mode: q.mode === 'choice' ? 'choice' : 'open',
     options: (q.options || []).map((o) => ({ id: o.id, text: o.text })),
     texts: q.texts || {},
+    ...(goToken ? { then: { token: goToken, name: p.name || '' } } : {}),
   };
 };
 
@@ -394,6 +435,87 @@ export const drawPool = (q, { pool = 'ok', exclude = [] } = {}) => {
 export const pastWinners = (q) => (q?.draws || []).flatMap((d) => d?.winners || []);
 
 /**
+ * قرعةٌ على أكثر من سؤال.
+ *
+ * سُئلت: «أقدر أختار السحب على كل الأسئلة أو مرة وحدة، وأيضًا يمديني أختار
+ * وش الأسئلة اللي تسوي سحب مع بعض». وثلاثتها شيءٌ واحد: قائمةُ أسئلةٍ يُجمع
+ * كيسُها. واحدةً كانت أو كلَّها أو ما اخترتَ.
+ *
+ * وحظّان يختار بينهما صاحبُها:
+ *
+ * - **مرةً لكل ولد** (`once`): من جاوب سؤالًا واحدًا ومن جاوب عشرةً سواءٌ في
+ *   الكيس. تُكافئ الحضورَ لا الكثرة.
+ * - **مرةً لكل جواب** (`each`): من جاوب عشرةً اسمُه عشرَ مرات، فحظُّه أوفر.
+ *   تُكافئ المواظبة.
+ *
+ * ولا أحدَ منهما أصحّ من الآخر — ولذلك يُختار، ولا يُفرض واحدٌ بصمت.
+ */
+export const drawPoolMany = (questions, { pool = 'ok', odds = 'once', exclude = [] } = {}) => {
+  const skip = new Set((exclude || []).map((n) => normalizeAnswer(n)).filter(Boolean));
+  const seen = new Map();
+  const bag = [];
+  for (const q of questions || []) {
+    for (const a of q?.answers || []) {
+      const name = String(a?.student || '').trim().replace(/\s+/g, ' ');
+      if (!name) continue;
+      const key = normalizeAnswer(name);
+      if (!key || skip.has(key)) continue;
+      if (pool !== 'all' && answerVerdict(q, a) !== 'ok') continue;
+      if (odds === 'each') { bag.push(name); continue; }
+      if (!seen.has(key)) seen.set(key, name);
+    }
+  }
+  return odds === 'each' ? bag : [...seen.values()];
+};
+
+/** من فاز في قرعاتِ هذي الأسئلة كلِّها. */
+export const pastWinnersMany = (questions) => (questions || []).flatMap(pastWinners);
+
+/**
+ * قرعةٌ على مجموعةٍ من الأسئلة. تُكتب في كلٍّ منها، فيراها من فتح أيًّا كان —
+ * ولا تُكتب في واحدٍ فتضيع من البقيّة.
+ */
+export const makeDrawMany = (questions, opts = {}, { id, now = Date.now(), by = '', rand = Math.random } = {}) => {
+  const skipPast = Boolean(opts.skipPast);
+  const odds = opts.odds === 'each' ? 'each' : 'once';
+  const names = drawPoolMany(questions, {
+    pool: opts.pool, odds,
+    exclude: skipPast ? pastWinnersMany(questions) : [],
+  });
+  if (!names.length) return null;
+  /**
+   * ومع «مرةً لكل جواب» يُشال الفائزُ من الكيس كلِّه لا من سطرٍ واحد: وإلا
+   * طلع اسمُه ثانيًا وثالثًا في القرعة نفسها لأن له عشرَ ورقات.
+   */
+  const winners = [];
+  let bag = [...names];
+  const want = Math.min(Math.max(1, Number(opts.count) || 1), new Set(bag.map(normalizeAnswer)).size);
+  for (let i = 0; i < want && bag.length; i++) {
+    const [w] = pickWinners(bag, 1, rand);
+    winners.push(w);
+    const key = normalizeAnswer(w);
+    bag = bag.filter((n) => normalizeAnswer(n) !== key);
+  }
+  return {
+    id, at: now, by,
+    pool: opts.pool === 'all' ? 'all' : 'ok',
+    odds, skipPast,
+    poolSize: names.length,
+    over: (questions || []).map((q) => q.id),
+    winners,
+  };
+};
+
+/** القرعة المشتركة تُكتب في كل سؤالٍ دخل فيها. */
+export const applyDrawMany = (data, ids, draw) => {
+  const set = new Set(ids || []);
+  return {
+    ...data,
+    questions: (data?.questions || []).map((x) => (set.has(x.id) ? { ...x, draws: [...(x.draws || []), draw] } : x)),
+  };
+};
+
+/**
  * سحب عددٍ من الأسماء بلا تكرار: من خرج من الكيس لا يعود إليه، فما يطلع
  * الواحد فائزًا أولَ وثانيًا في القرعة نفسها.
  *
@@ -412,26 +534,10 @@ export const pickWinners = (names, count, rand = Math.random) => {
  * قرعةٌ كاملة. تُحسب مرة واحدة ثم تُكتب في السجلّ فورًا — فما فيه إعادةُ سحبٍ
  * صامتة حتى يطلع اسمٌ بعينه: كل سحبةٍ تبقى مكتوبة يشوفها كل من يفتح السؤال.
  */
-export const makeDraw = (q, opts = {}, { id, now = Date.now(), by = '', rand = Math.random } = {}) => {
-  const skipPast = Boolean(opts.skipPast);
-  const names = drawPool(q, { pool: opts.pool, exclude: skipPast ? pastWinners(q) : [] });
-  if (!names.length) return null;
-  return {
-    id,
-    at: now,
-    by,
-    pool: opts.pool === 'all' ? 'all' : 'ok',
-    skipPast,
-    poolSize: names.length,
-    winners: pickWinners(names, opts.count, rand),
-  };
-};
+export const makeDraw = (q, opts = {}, ctx = {}) => makeDrawMany([q], opts, ctx);
 
 /** القرعة تُضاف للسجلّ ولا تمحو ما قبلها. */
-export const applyDraw = (data, q, draw) => ({
-  ...data,
-  questions: (data?.questions || []).map((x) => (x.id === q.id ? { ...x, draws: [...(x.draws || []), draw] } : x)),
-});
+export const applyDraw = (data, q, draw) => applyDrawMany(data, [q?.id], draw);
 
 /** إضافة الجواب للسؤال. يرجّع البيانات الجديدة واسم الطالب كما استقرّ. */
 export const applyAnswer = (data, q, body, { id, now = Date.now() } = {}) => {

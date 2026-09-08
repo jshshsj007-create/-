@@ -11,7 +11,7 @@ import { getStore } from '@netlify/blobs';
 import crypto from 'node:crypto';
 import { isAdmin, allowed, canWrite } from '../../src/perms.js';
 import { programFor, publicView, validateSubmission, applySubmission, normalizeSubmission, rateLimited, waIntl, isReceipt, closureOf, makeToken as makeSignupToken } from '../../src/signup.js';
-import { questionView, validateAnswer, applyAnswer, answersRateLimited, makeDraw, applyDraw } from '../../src/club.js';
+import { questionView, validateAnswer, applyAnswer, answersRateLimited, makeDrawMany, applyDrawMany } from '../../src/club.js';
 import { dedupeByPhone, remapParticipants } from '../../src/people.js';
 import { runBackup, backupStatus, readSnapshot } from '../lib/backup.mjs';
 import { hash, verify, isHashed } from '../lib/password.mjs';
@@ -543,10 +543,12 @@ const guard = (incoming, current, me) => {
   const wasQ = new Map((current?.questions || []).map((q) => [q.id, q]));
   out.questions = (out.questions || []).map((q) => {
     const was = wasQ.get(q.id);
-    return was ? { ...q, open: was.open, token: was.token } : q;
+    // والمؤقّت معهما: هو إقفالٌ مؤجَّل، فحفظةٌ قديمة تُقدّمه فتقفل قبل وقته
+    return was ? { ...q, open: was.open, token: was.token, closesAt: was.closesAt } : q;
   });
-  // ووجهةُ الرابط العام: باركودٌ مطبوعٌ موزَّع، لا يُبدَّل بحفظة
+  // ووجهتا الرابطين الثابتين: عنوانان منشوران، لا يُبدَّلان بحفظة
   if (current?.publicLink) out.publicLink = current.publicLink;
+  if (current?.questionLink) out.questionLink = current.questionLink;
 
   /**
    * الصندوق: الموظف ما يشوفه (حجبناه في `strip`)، فلو قبلنا قائمته كما هي
@@ -926,10 +928,22 @@ export default async (req) => {
           nq.open = Boolean(body.open);
           nq.switched = { at: now, by, on: nq.open };
         }
+        /**
+         * والمؤقّت من هنا كذلك: هو إقفالٌ مؤجَّل، فيمرّ بباب الإقفال.
+         * و`0` يشيله فيبقى مفتوحًا حتى تقفله بيدك.
+         */
+        if (body.closesAt !== undefined) {
+          nq.closesAt = Math.max(0, Number(body.closesAt) || 0);
+          nq.switched = { at: now, by, on: nq.open !== false };
+        }
         data = { ...data, questions: data.questions.map((x) => (x.id !== q.id ? x : nq)) };
       }
       if (body.publicProgramId !== undefined) {
         data = { ...data, publicLink: { programId: String(body.publicProgramId || '') } };
+      }
+      // ووجهةُ رابط السؤال الثابت: عنوانٌ واحد منشور، والسؤال تحته يتبدّل
+      if (body.publicQuestionId !== undefined) {
+        data = { ...data, questionLink: { questionId: String(body.publicQuestionId || '') } };
       }
       if (data === d.data) return { reject: json({ error: 'nothing' }, 400) };
       return { doc: { ...d, rev: d.rev + 1, updatedAt: new Date(now).toISOString(), data } };
@@ -1092,19 +1106,29 @@ export default async (req) => {
    * إلا التي أعجبته — وهذي قرعةٌ أمام الأولاد، فلا تحتمل ذلك. وهنا تُحسب
    * وتُكتب في نداءٍ واحد، فأول ضغطةٍ هي القرعة.
    */
+  /**
+   * القرعة — على سؤالٍ أو على ما اخترتَ.
+   *
+   * `questionIds` قائمةٌ يجمع كيسُها: واحدةً كانت أو الأسئلةَ كلَّها أو ما
+   * انتقيتَ منها. و`questionId` وحده يبقى مقبولًا فما ينكسر ما كان.
+   */
   if (op === 'question_draw') {
     if (!allowed(me, 'النادي')) return json({ error: 'forbidden' }, 403);
+    const wanted = Array.isArray(body.questionIds) && body.questionIds.length
+      ? body.questionIds.map(String)
+      : [String(body.questionId || '')];
     const r = await commit((d) => {
-      const q = (d.data?.questions || []).find((x) => x.id === body.questionId);
-      if (!q) return { reject: json({ error: 'not_found' }, 404) };
-      const draw = makeDraw(q, body.opts || {}, {
+      const all = d.data?.questions || [];
+      const qs = wanted.map((id) => all.find((x) => x.id === id)).filter(Boolean);
+      if (!qs.length) return { reject: json({ error: 'not_found' }, 404) };
+      const draw = makeDrawMany(qs, body.opts || {}, {
         id: crypto.randomUUID(),
         by: me.name || me.username || '',
         // عشوائية الخادم لا `Math.random`: القرعة يُحتجّ بها على الناس
         rand: () => crypto.randomInt(0, 2 ** 30) / 2 ** 30,
       });
       if (!draw) return { reject: json({ error: 'empty' }, 409) };
-      const data = applyDraw(d.data, q, draw);
+      const data = applyDrawMany(d.data, qs.map((q) => q.id), draw);
       return { doc: { ...d, rev: d.rev + 1, updatedAt: new Date().toISOString(), data }, out: { draw, data } };
     }, doc);
     if (r.reject) return r.reject;

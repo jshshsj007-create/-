@@ -14,6 +14,24 @@ import { FaydhLogo, TEAM_NAME } from './logo.jsx';
  * جديدٌ في نظر React، فتُهدم الشجرة وتُبنى مع كل حرف يُكتب — ويقفز المؤشّر
  * من الخانة عند أول حرف.
  */
+/**
+ * كم بقي.
+ *
+ * تقريبٌ لا ثانية: «باقي ساعتان» تكفي من يقرأها، والعدُّ بالثواني يستعجل
+ * بلا داعٍ ويجعل الصفحة ترتجف. وما تحت الدقيقة يُقال «دقائق» ولا يُقال صفرًا.
+ */
+const timeLeft = (closesAt, now = Date.now()) => {
+  const ms = Number(closesAt || 0) - now;
+  if (!closesAt || ms <= 0) return '';
+  const m = Math.round(ms / 60000);
+  if (m < 2) return 'باقي أقل من دقيقتين';
+  if (m < 60) return `باقي ${m} دقيقة`;
+  const h = Math.round(m / 60);
+  if (h < 24) return h === 1 ? 'باقية ساعة' : h === 2 ? 'باقيتان ساعتان' : `باقي ${h} ساعات`;
+  const d = Math.round(h / 24);
+  return d === 1 ? 'باقي يوم' : d === 2 ? 'باقيان يومان' : `باقي ${d} أيام`;
+};
+
 function Shell({ brand, children }) {
   return (
     <div dir="rtl" className="min-h-screen bg-slate-50" style={{ fontFamily: "'Tajawal', sans-serif" }}>
@@ -48,6 +66,18 @@ export default function QuestionPage({ token }) {
   const [optionId, setOptionId] = useState('');
   const [errors, setErrors] = useState({});
   const [saidName, setSaidName] = useState('');
+  /**
+   * ساعةُ الصفحة، تدقّ كل دقيقة.
+   *
+   * فمن فتح الصفحة قبل انتهاء الوقت بدقيقة، ما بقي أمام سؤالٍ يظنّه مفتوحًا
+   * وهو مقفول — تُقفل الصفحةُ عنده كما أُقفلت عند الخادم. ودقيقةٌ لا ثانية:
+   * لا شيء في الصفحة يستحقّ إعادة رسمٍ ستّين مرة في الدقيقة.
+   */
+  const [tick, setTick] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setTick(Date.now()), 30000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -92,9 +122,22 @@ export default function QuestionPage({ token }) {
 
   const card = 'bg-white rounded-3xl shadow-sm border border-slate-100 p-6 sm:p-8';
   const brand = view ? qText(view, 'brand') : '';
+  const left = timeLeft(view?.closesAt, tick);
 
   if (state === 'loading') {
     return <Shell brand={brand}><div className={card + ' text-center text-slate-400 text-sm'}>لحظة…</div></Shell>;
+  }
+
+  // ومضى وقتُه وأنت واقفٌ أمامه: تُقفل الصفحة كما أُقفل عند الخادم
+  if (state === 'ready' && view?.closesAt && tick >= Number(view.closesAt)) {
+    return (
+      <Shell brand={brand}>
+        <div className={card + ' text-center'}>
+          <h1 className="text-xl font-extrabold text-slate-800">{qText(view, 'closedTitle') || Q_TEXTS.closedTitle}</h1>
+          <p className="text-sm text-slate-500 mt-2 leading-relaxed">{qText(view, 'closedText')}</p>
+        </div>
+      </Shell>
+    );
   }
 
   if (state === 'closed') {
@@ -136,6 +179,18 @@ export default function QuestionPage({ token }) {
           <div className="w-14 h-14 rounded-full bg-green-100 text-green-700 flex items-center justify-center mx-auto mb-4 text-2xl font-bold">✓</div>
           <h1 className="text-xl font-extrabold text-slate-800">{qText(view, 'doneTitle')}</h1>
           <p className="text-sm text-slate-500 mt-2 leading-relaxed">{qText(view, 'doneText', { الطالب: saidName })}</p>
+          {/*
+            وبابٌ إلى التسجيل.
+            السؤال يجمع الأهالي، والتسجيل هو المقصود — فمن جاوب وجد الطريق
+            أمامه بدل أن يُغلق الباب عليه بـ«شكرًا لك». ولا يظهر إلا إن كان
+            تسجيلُه مفتوحًا فعلًا، فما نرسل أحدًا إلى بابٍ مقفول.
+          */}
+          {view?.then?.token && (
+            <a href={`/r/${view.then.token}`}
+              className="mt-6 block bg-brand-600 text-white font-bold rounded-xl py-3.5 text-sm">
+              سجّل ابنك في {view.then.name || 'البرنامج'}
+            </a>
+          )}
         </div>
       </Shell>
     );
@@ -147,7 +202,19 @@ export default function QuestionPage({ token }) {
   return (
     <Shell brand={brand}>
       <div className={card}>
-        <h1 className="text-2xl font-extrabold text-slate-800 leading-relaxed mb-6">{view.text}</h1>
+        <h1 className="text-2xl font-extrabold text-slate-800 leading-relaxed mb-4">{view.text}</h1>
+
+        {/*
+          المؤقّت.
+          يُرى قبل الجواب لا بعده: من عرف أن أمامه ساعتين جاوب، ومن ما عرف
+          أجّل إلى الغد فوجد البابَ مقفولًا. وهو تقريبٌ لا ثانية: «ساعتان»
+          تكفي، والعدّ بالثواني يستعجل بلا داعٍ.
+        */}
+        {left && (
+          <div className="mb-6 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-3 py-1.5">
+            ⏳ {left}
+          </div>
+        )}
 
         {view.mode === 'choice' ? (
           <div className="space-y-2 mb-2">

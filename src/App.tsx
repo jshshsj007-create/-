@@ -29,7 +29,7 @@ import {
   LEAGUE, CUP, leagueFixtures, leagueTable, cupBracket, champion,
   weekRuns, programRuns, clubCounts, usedIn,
   answerVerdict, questionTally, Q_TEXTS, Q_ERRORS,
-  drawPool, pastWinners, makeDraw, applyDraw,
+  drawPool, pastWinners, drawPoolMany, pastWinnersMany, makeDrawMany, applyDrawMany,
 } from './club.js';
 import { cashRows, cashTotals, cashPayers, handoverRows, validHandover, applyHandover } from './cash.js';
 import {
@@ -503,6 +503,8 @@ const defaultData = () => ({
    * وفراغه معناه «ما يفتح على شي»، فيشوف الزائر صفحة «التسجيل مقفل».
    */
   publicLink: { programId: '' },
+  /** ومثله لسؤال اليوم: عنوانٌ واحد يُنشر مرة، والسؤال تحته يتبدّل كل أسبوع. */
+  questionLink: { questionId: '' },
   users: [],
   // قاعدة العملاء: ولي الأمر ← أبناؤه. تعيش عبر المواسم كلها، مو داخل ترم واحد.
   guardians: [],
@@ -606,6 +608,11 @@ export function migrate(loaded) {
   // البرنامج المحذوف ما يبقى وجهةً معلّقة: الرابط يرجع مقفلًا بدل ما يشير لعدم
   if (d.publicLink.programId && !d.programs.some((p) => p.id === d.publicLink.programId)) {
     d.publicLink = { programId: '' };
+  }
+  // ورابط السؤال الثابت مثله: وجهةٌ على سؤالٍ ذهب لا تُترك معلّقة
+  d.questionLink = { questionId: '', ...(d.questionLink || {}) };
+  if (d.questionLink.questionId && !(d.questions || []).some((q) => q.id === d.questionLink.questionId)) {
+    d.questionLink = { questionId: '' };
   }
   d.trips = (d.trips || []).map((t) => {
     const trip = { incomeItems: [], expenseItems: [], ...t };
@@ -2726,15 +2733,17 @@ export default function App() {
    * وما رجع به الخادم نردّه على ما لم يُحفظ بعد، وإلا طمست حفظتُنا التالية
    * القرعةَ وهي مبنيّة على نسخةٍ ما فيها.
    */
-  const drawWinners = async (qid, opts) => {
+  /** القرعة على ما اخترتَ من الأسئلة: واحدًا أو كلَّها أو ما انتقيتَ. */
+  const drawWinners = async (qids, opts) => {
+    const ids = Array.isArray(qids) ? qids : [qids];
     if (!cloudOn) {
-      const q = data.questions.find((x) => x.id === qid);
-      const draw = q && makeDraw(q, opts, { id: uid(), by: currentUser?.name || '' });
+      const qs = ids.map((id) => data.questions.find((x) => x.id === id)).filter(Boolean);
+      const draw = qs.length && makeDrawMany(qs, opts, { id: uid(), by: currentUser?.name || '' });
       if (!draw) return null;
-      await save(applyDraw(data, q, draw));
+      await save(applyDrawMany(data, qs.map((q) => q.id), draw));
       return draw;
     }
-    const r = await api('question_draw', { token: sess.current.token, questionId: qid, opts });
+    const r = await api('question_draw', { token: sess.current.token, questionIds: ids, opts });
     if (r.status !== 200 || !r.body?.draw) return null;
     if (queueRef.current) queueRef.current = merge3(baseRef.current, queueRef.current, r.body.data);
     adopt(r.body.data, r.body.rev);
@@ -6174,28 +6183,55 @@ export default function App() {
                 </div>
                 {!data.questions.length ? (
                   <div className={emptyCls}>ما فيه أسئلة بعد.</div>
-                ) : (
-                  <div className="space-y-2.5">
+                ) : (() => {
+                  const fixedId = data.questionLink?.questionId || '';
+                  const allAnswers = data.questions.reduce((n, q) => n + (q.answers || []).length, 0);
+                  return (
+                  <>
+                    {/*
+                      قرعةٌ على أكثر من سؤال، من هنا.
+                      كانت لا تُفتح إلا من داخل سؤالٍ بعينه، وهي في حقيقتها
+                      على مجموعةٍ — فمكانُها فوق القائمة لا تحت واحدٍ منها.
+                    */}
+                    {data.questions.length > 1 && allAnswers > 0 && (
+                      <button className={btnGhostBox + ' w-full mb-3'}
+                        onClick={() => {
+                          setSelectedQId(data.questions[0].id);
+                          setForm({ pool: 'ok', count: 1, skipPast: false, scope: 'all', odds: 'once' });
+                          setModal('draw');
+                        }}>
+                        🎲 اسحب على أكثر من سؤال
+                      </button>
+                    )}
+                    <div className="space-y-2.5">
                     {data.questions.map((q) => {
                       const tally = questionTally(q);
+                      const timed = Number(q.closesAt || 0);
+                      const over = timed > 0 && timed <= Date.now();
                       return (
                         <button key={q.id} onClick={() => { setSelectedQId(q.id); goto('questionDetail'); }}
                           className="w-full bg-white rounded-2xl border border-slate-100 p-4 text-right hover:shadow-md transition-shadow">
                           <div className="flex items-start justify-between gap-3">
                             <div className="font-bold text-slate-800 min-w-0">{q.text}</div>
-                            <Badge tone={q.open === false ? 'slate' : 'green'}>{q.open === false ? 'مقفل' : 'مفتوح'}</Badge>
+                            <Badge tone={q.open === false || over ? 'slate' : 'green'}>
+                              {q.open === false ? 'مقفل' : over ? 'انتهى وقته' : 'مفتوح'}
+                            </Badge>
                           </div>
                           <div className="flex items-center flex-wrap gap-3 mt-3 text-[11px] text-slate-400">
                             <span>{q.mode === 'choice' ? 'اختيارات' : 'مفتوح'}</span>
-                            <span>{tally.total} جاوبوا</span>
+                            <span><b className="text-slate-700">{tally.total}</b> جاوبوا</span>
                             {tally.ok > 0 && <span className="text-green-700 font-semibold">{tally.ok} صح</span>}
                             {tally.check > 0 && <span className="text-amber-700 font-semibold">{tally.check} تنتظر مراجعتك</span>}
+                            {q.id === fixedId && <span className="text-brand-700 font-semibold">الرابط الثابت يفتح عليه</span>}
+                            {timed > 0 && !over && <span className="text-amber-700">مؤقّت</span>}
                           </div>
                         </button>
                       );
                     })}
-                  </div>
-                )}
+                    </div>
+                  </>
+                  );
+                })()}
               </div>
             )}
           </div>
@@ -6416,6 +6452,11 @@ export default function App() {
           const optText = (id) => (question.options || []).find((o) => o.id === id)?.text || '';
           const inDraw = drawPool(question, { pool: 'ok' }).length;
           const draws = [...(question.draws || [])].sort((a, b) => (b.at || 0) - (a.at || 0));
+          const fixedQ = data.questions.find((x) => x.id === data.questionLink?.questionId) || null;
+          const onFixed = fixedQ?.id === question.id;
+          /** تعديلٌ على السؤال نفسه — لا على رمزه ولا حالته، فتلك لها بابها. */
+          const saveQuestion = (patch) =>
+            save({ ...data, questions: data.questions.map((x) => (x.id === question.id ? { ...x, ...patch } : x)) });
           return (
             <div>
               <Breadcrumb items={[{ label: 'النادي', onClick: () => { setClubTab('question'); goto('competitions'); } }, { label: 'سؤال' }]} />
@@ -6467,6 +6508,85 @@ export default function App() {
                   نصوص الصفحة
                 </button>
                 {question.open === false && <div className="text-[11px] text-amber-700 mt-2">مقفل — اللي يفتحه يشوف «انتهى وقت الجواب».</div>}
+
+                {/*
+                  الرابط الثابت.
+                  عنوانٌ واحد للفريق يُنشر مرةً في القروب، والسؤال تحته يتبدّل
+                  كل أسبوع — فلا تموت الرسالة التي أرسلتَها أول مرة، ولا تحتاج
+                  أن ترسل رابطًا جديدًا كلما جدّ سؤال. ومثله رابط التسجيل تمامًا.
+                */}
+                <div className="mt-4 pt-3 border-t border-slate-100">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-[13px] font-semibold text-slate-700">الرابط الثابت</div>
+                      <div className="text-[11px] text-slate-400 mt-0.5" dir="ltr">{location.origin}/q</div>
+                    </div>
+                    <button
+                      onClick={() => linkSet({ publicQuestionId: onFixed ? '' : question.id })}
+                      className={`shrink-0 text-xs font-bold rounded-lg px-3 py-2 ${onFixed ? 'bg-brand-50 text-brand-700 border border-brand-200' : 'bg-slate-100 text-slate-600'}`}>
+                      {onFixed ? 'يفتح على هذا ✓' : 'خلّه يفتح على هذا'}
+                    </button>
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-2 leading-relaxed">
+                    {onFixed
+                      ? 'انشر هذا العنوان مرة وحدة، وكل أسبوع بدّل السؤال اللي يفتح عليه — بلا رابط جديد.'
+                      : fixedQ
+                        ? `يفتح الآن على «${fixedQ.text || 'سؤال بلا نص'}».`
+                        : 'ما يفتح على شيء حاليًا.'}
+                  </div>
+                </div>
+
+                {/*
+                  المؤقّت.
+                  «أربع وعشرون ساعة» كما طُلبت، ومعها ساعةٌ وستٌّ واثنتا عشرة —
+                  فالسؤال الذي يُرسل قبل اللقاء بساعة ليس كالذي يُترك ليومين.
+                  والإقفال يقع عند الخادم لا في الصفحة وحدها.
+                */}
+                <div className="mt-4 pt-3 border-t border-slate-100">
+                  <div className="text-[13px] font-semibold text-slate-700 mb-2">المؤقّت</div>
+                  <div className="flex flex-wrap gap-2">
+                    {[[1, 'ساعة'], [6, '٦ ساعات'], [12, '١٢ ساعة'], [24, '٢٤ ساعة'], [48, 'يومين']].map(([h, lb]) => (
+                      <button key={h} type="button"
+                        onClick={() => linkSet({ questionId: question.id, closesAt: Date.now() + h * 3600000 })}
+                        className="text-xs font-semibold border border-slate-200 text-slate-600 rounded-lg px-3 py-2">
+                        {lb}
+                      </button>
+                    ))}
+                    {question.closesAt > 0 && (
+                      <button type="button"
+                        onClick={() => linkSet({ questionId: question.id, closesAt: 0 })}
+                        className="text-xs font-semibold border border-red-200 text-red-600 rounded-lg px-3 py-2">
+                        شِل المؤقّت
+                      </button>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-2">
+                    {!question.closesAt ? 'بلا مؤقّت — يبقى مفتوحًا حتى تقفله بيدك.'
+                      : question.closesAt <= Date.now() ? 'انتهى وقته.'
+                        : `يقفل ${new Date(question.closesAt).toLocaleString('ar-SA', { dateStyle: 'medium', timeStyle: 'short' })}.`}
+                  </div>
+                </div>
+
+                {/*
+                  وبعد الجواب: بابٌ إلى التسجيل.
+                  السؤال يجمع الأهالي، والتسجيل هو المقصود — فمن جاوب وجد
+                  الطريق أمامه بدل «شكرًا لك» وباب مغلق.
+                */}
+                <div className="mt-4 pt-3 border-t border-slate-100">
+                  <div className="text-[13px] font-semibold text-slate-700 mb-2">بعد الجواب</div>
+                  <select className={inputCls} value={question.thenProgramId || ''}
+                    onChange={(e) => saveQuestion({ thenProgramId: e.target.value })}>
+                    <option value="">ما فيه — يشوف «شكرًا لك» وخلاص</option>
+                    {data.programs.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        سجّله في «{p.name}»{p.signup?.enabled ? '' : ' (تسجيله مقفل)'}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="text-[11px] text-slate-400 mt-2">
+                    الزر ما يطلع إلا إذا كان تسجيل البرنامج مفتوحًا فعلًا — فما نرسل أحدًا لباب مقفول.
+                  </div>
+                </div>
               </div>
 
               <div className="grid grid-cols-4 gap-2 mb-3">
@@ -8665,13 +8785,28 @@ export default function App() {
       {/* القرعة: إعدادٌ قصير، ثم تقليبٌ، ثم فائز */}
       {modal === 'draw' && question && (() => {
         const pool = form.pool === 'all' ? 'all' : 'ok';
-        const past = pastWinners(question);
-        const names = drawPool(question, { pool, exclude: form.skipPast ? past : [] });
-        const count = Math.min(Number(form.count) || 1, Math.max(1, names.length));
+        const odds = form.odds === 'each' ? 'each' : 'once';
+        /**
+         * على أيّ الأسئلة؟
+         *
+         * `one` هذا السؤال وحده، و`all` الأسئلة كلها، و`some` ما تختاره منها.
+         * وثلاثتها شيءٌ واحد عند الحساب: قائمةُ معرّفات.
+         */
+        const scope = ['all', 'some'].includes(form.scope) ? form.scope : 'one';
+        const picked = new Set(form.qids || [question.id]);
+        const qs = scope === 'one' ? [question]
+          : scope === 'all' ? data.questions
+            : data.questions.filter((x) => picked.has(x.id));
+        const ids = qs.map((x) => x.id);
+        const past = pastWinnersMany(qs);
+        const names = drawPoolMany(qs, { pool, odds, exclude: form.skipPast ? past : [] });
+        // ومع «مرةً لكل جواب» يتكرّر الاسم في الكيس، والفائزون لا يتكرّرون
+        const heads = new Set(names.map((n) => n.trim().replace(/\s+/g, ' '))).size;
+        const count = Math.min(Number(form.count) || 1, Math.max(1, heads));
         const start = async () => {
           setForm((f) => ({ ...f, step: 'spin', reel: names, error: '' }));
           const [drawn] = await Promise.all([
-            drawWinners(question.id, { pool, count, skipPast: Boolean(form.skipPast) }),
+            drawWinners(ids, { pool, odds, count, skipPast: Boolean(form.skipPast) }),
             // التقليب يكمل مشهده حتى لو رجع الخادم في لحظة
             new Promise((done) => setTimeout(done, 2600)),
           ]);
@@ -8715,7 +8850,35 @@ export default function App() {
 
         return (
           <Modal title="القرعة" onClose={closeModal}>
-            <Field label="من يدخل؟" hint="الاسم المكرّر له فرصة واحدة.">
+            <Field label="على أي سؤال؟" hint="تقدر تجمع أسئلة الشهر في قرعة وحدة.">
+              <div className="flex gap-2">
+                {[['one', 'هذا السؤال'], ['all', 'كل الأسئلة'], ['some', 'أسئلة أختارها']].map(([id, lb]) => (
+                  <button key={id} type="button"
+                    onClick={() => setForm({ ...form, scope: id, qids: id === 'some' ? [question.id] : undefined, error: '' })}
+                    className={`${pick} ${scope === id ? on : off}`}>{lb}</button>
+                ))}
+              </div>
+            </Field>
+            {scope === 'some' && (
+              <div className="-mt-2 mb-4 space-y-1.5 max-h-52 overflow-y-auto">
+                {data.questions.map((x) => {
+                  const chosen = picked.has(x.id);
+                  return (
+                    <button key={x.id} type="button"
+                      onClick={() => {
+                        const next = new Set(picked);
+                        if (chosen) next.delete(x.id); else next.add(x.id);
+                        setForm({ ...form, qids: [...next], error: '' });
+                      }}
+                      className={`w-full text-right rounded-lg px-3 py-2 text-[13px] border ${chosen ? 'border-brand-600 bg-brand-50 text-brand-800 font-semibold' : 'border-slate-200 text-slate-600'}`}>
+                      <span className="truncate block">{x.text || 'سؤال بلا نص'}</span>
+                      <span className="text-[11px] text-slate-400">{(x.answers || []).length} جوابًا</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <Field label="من يدخل؟">
               <div className="flex gap-2">
                 {[['ok', 'اللي جاوبوا صح'], ['all', 'كل من جاوب']].map(([id, lb]) => (
                   <button key={id} type="button" onClick={() => setForm({ ...form, pool: id, error: '' })}
@@ -8723,11 +8886,27 @@ export default function App() {
                 ))}
               </div>
             </Field>
+            {/*
+              الحظّ. ولا واحدٌ منهما أصحّ من الآخر — ولذلك يُختار، ولا يُفرض
+              واحدٌ بصمت: الأول يكافئ الحضور، والثاني يكافئ المواظبة.
+            */}
+            {qs.length > 1 && (
+              <Field label="الحظّ" hint={odds === 'each'
+                ? 'من جاوب عشرة أسئلة اسمه عشر مرات في الكيس — تكافئ المواظبة.'
+                : 'من جاوب سؤالًا ومن جاوب عشرة سواء — تكافئ الحضور.'}>
+                <div className="flex gap-2">
+                  {[['once', 'مرة لكل ولد'], ['each', 'مرة لكل جواب']].map(([id, lb]) => (
+                    <button key={id} type="button" onClick={() => setForm({ ...form, odds: id, error: '' })}
+                      className={`${pick} ${odds === id ? on : off}`}>{lb}</button>
+                  ))}
+                </div>
+              </Field>
+            )}
             <Field label="كم فائزًا؟">
               <div className="flex gap-2">
                 {[1, 2, 3, 5].map((n) => (
                   <button key={n} type="button" onClick={() => setForm({ ...form, count: n, error: '' })}
-                    className={`${pick} ${count === n ? on : off}`} disabled={n > names.length}>{n}</button>
+                    className={`${pick} ${count === n ? on : off}`} disabled={n > heads}>{n}</button>
                 ))}
               </div>
             </Field>
@@ -8736,7 +8915,10 @@ export default function App() {
                 on={Boolean(form.skipPast)} onChange={(v) => setForm({ ...form, skipPast: v })} />
             )}
             <div className="text-[11px] text-slate-400 mt-2">
-              {names.length ? `${names.length} اسمًا داخل القرعة.` : 'ما بقي أحد في القرعة.'}
+              {!names.length ? 'ما بقي أحد في القرعة.'
+                : odds === 'each'
+                  ? `${heads} ولدًا، و${names.length} ورقة في الكيس${qs.length > 1 ? ` من ${qs.length} أسئلة` : ''}.`
+                  : `${heads} اسمًا داخل القرعة${qs.length > 1 ? ` من ${qs.length} أسئلة` : ''}.`}
             </div>
             {form.error && <div className="text-red-500 text-xs mt-2">{form.error}</div>}
             <button className={btnPrimary + ' w-full mt-5'} disabled={!names.length} onClick={start}>اسحب</button>

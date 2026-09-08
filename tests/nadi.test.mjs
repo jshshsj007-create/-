@@ -6,6 +6,7 @@ import {
   weekRuns, programRuns, clubCounts, usedIn,
   qText, qError, questionView, validateAnswer, applyAnswer, LEAGUE, CUP,
   drawPool, pastWinners, pickWinners, makeDraw, applyDraw,
+  publicQuestion, questionExpired, drawPoolMany, pastWinnersMany, makeDrawMany, applyDrawMany,
 } from '../src/club.js';
 
 let passed = 0;
@@ -466,5 +467,122 @@ test('القرعة تُضاف للسجلّ ولا تمحو ما قبلها', () 
   assert.equal(data.questions[0].draws.length, 1); // ما تغيّر الأصل
 });
 
+
+/* ------------------ الرابط الثابت والمؤقّت وبابُ التسجيل ------------------ */
+
+const q1 = { id: 'q1', token: 'aaa', text: 'كم؟', mode: 'open', answer: '٥', answers: [], options: [] };
+const q2 = { id: 'q2', token: 'bbb', text: 'متى؟', mode: 'open', answer: 'الجمعة', answers: [], options: [] };
+
+test('الرابط الثابت يفتح على ما اخترتَ، بلا رمز', () => {
+  const d = { questions: [q1, q2], questionLink: { questionId: 'q2' } };
+  assert.equal(questionView(d, '')?.id, 'q2');
+  assert.equal(publicQuestion(d)?.id, 'q2');
+});
+
+test('وبلا وجهةٍ ما يفتح على شيء — ولا يفتح على أول سؤالٍ بالصدفة', () => {
+  assert.equal(questionView({ questions: [q1, q2], questionLink: { questionId: '' } }, ''), null);
+});
+
+test('وبدّلتَ السؤال تحته فتبدّل، والعنوان هو هو', () => {
+  const d = { questions: [q1, q2], questionLink: { questionId: 'q1' } };
+  assert.equal(questionView(d, '')?.text, 'كم؟');
+  const after = { ...d, questionLink: { questionId: 'q2' } };
+  assert.equal(questionView(after, '')?.text, 'متى؟');
+});
+
+test('ورمزُ السؤال الخاص يبقى يعمل مع الثابت', () => {
+  const d = { questions: [q1, q2], questionLink: { questionId: 'q2' } };
+  assert.equal(questionView(d, 'aaa')?.id, 'q1');
+});
+
+test('المؤقّت يقفله في وقته بلا أن يقوم أحد', () => {
+  const timed = { ...q1, closesAt: 1000 };
+  assert.equal(questionView({ questions: [timed] }, 'aaa', 999).open, true);
+  assert.equal(questionView({ questions: [timed] }, 'aaa', 1000).open, false);
+  assert.equal(questionView({ questions: [timed] }, 'aaa', 1000).expired, true);
+});
+
+test('وبلا مؤقّتٍ يبقى مفتوحًا — الصمتُ ليس أمرًا بالإقفال', () => {
+  assert.equal(questionExpired(q1), false);
+  assert.equal(questionExpired({ ...q1, closesAt: 0 }, 9e12), false);
+  assert.equal(questionView({ questions: [q1] }, 'aaa', 9e12).open, true);
+});
+
+test('وما أقفلتَه بيدك يبقى مقفولًا ولو ما مضى وقتُه', () => {
+  assert.equal(questionView({ questions: [{ ...q1, open: false, closesAt: 9e12 }] }, 'aaa', 1).open, false);
+});
+
+test('وبابُ التسجيل بعد الجواب: يُبنى إن كان مفتوحًا', () => {
+  const d = { questions: [{ ...q1, thenProgramId: 'p1' }],
+    programs: [{ id: 'p1', name: 'خريف', signup: { enabled: true, token: 'kh1' } }] };
+  assert.deepEqual(questionView(d, 'aaa').then, { token: 'kh1', name: 'خريف' });
+});
+
+test('ولا نرسل أحدًا إلى بابٍ مقفول', () => {
+  const shut = { questions: [{ ...q1, thenProgramId: 'p1' }],
+    programs: [{ id: 'p1', name: 'خريف', signup: { enabled: false, token: 'kh1' } }] };
+  assert.equal(questionView(shut, 'aaa').then, undefined);
+  const gone = { questions: [{ ...q1, thenProgramId: 'p9' }], programs: [] };
+  assert.equal(questionView(gone, 'aaa').then, undefined);
+});
+
+test('ولا يخرج الجوابُ الصحيح ولا أجوبةُ غيره مع كل هذا', () => {
+  const d = { questions: [{ ...q1, closesAt: 9e12, thenProgramId: 'p1',
+    answers: [{ id: 'a1', student: 'سعد', text: '٥' }] }],
+  programs: [{ id: 'p1', name: 'خريف', signup: { enabled: true, token: 'kh1' } }] };
+  const v = questionView(d, 'aaa');
+  assert.equal(v.answer, undefined);
+  assert.equal(v.answers, undefined);
+  assert.equal(JSON.stringify(v).includes('سعد'), false);
+});
+
+/* ------------------ القرعة على أكثر من سؤال ------------------ */
+
+const ans = (student, text) => ({ id: student + text, student, text });
+const qA = { id: 'qa', text: 'أ', mode: 'open', answer: 'صح', alsoOk: [], options: [],
+  answers: [ans('سعد', 'صح'), ans('فهد', 'صح'), ans('خالد', 'غلط')] };
+const qB = { id: 'qb', text: 'ب', mode: 'open', answer: 'صح', alsoOk: [], options: [],
+  answers: [ans('سعد', 'صح'), ans('ماجد', 'صح')] };
+
+test('القرعة على سؤالين تجمع كيسيهما', () => {
+  assert.deepEqual(drawPoolMany([qA, qB], { pool: 'ok' }).sort(), ['سعد', 'فهد', 'ماجد']);
+});
+
+test('و«مرة لكل ولد»: من جاوب سؤالين اسمُه مرةً واحدة', () => {
+  const bag = drawPoolMany([qA, qB], { pool: 'ok', odds: 'once' });
+  assert.equal(bag.filter((n) => n === 'سعد').length, 1);
+});
+
+test('و«مرة لكل جواب»: من جاوب سؤالين اسمُه مرتين — حظُّه أوفر', () => {
+  const bag = drawPoolMany([qA, qB], { pool: 'ok', odds: 'each' });
+  assert.equal(bag.filter((n) => n === 'سعد').length, 2);
+  assert.equal(bag.length, 4);
+});
+
+test('ومع ذلك لا يفوز الواحدُ مرتين في القرعة الواحدة', () => {
+  // سعدٌ له ورقتان، وأول سحبةٍ تقع عليه — ثم لا يعود إلى الكيس
+  const d = makeDrawMany([qA, qB], { pool: 'ok', odds: 'each', count: 3 }, { id: 'd', rand: () => 0 });
+  assert.equal(new Set(d.winners).size, d.winners.length);
+});
+
+test('والقرعة تُكتب في كل سؤالٍ دخل فيها، فما تضيع من بقيّتها', () => {
+  const data = { questions: [qA, qB, { id: 'qc' }] };
+  const next = applyDrawMany(data, ['qa', 'qb'], { id: 'd1', winners: ['سعد'] });
+  assert.equal(next.questions[0].draws.length, 1);
+  assert.equal(next.questions[1].draws.length, 1);
+  assert.equal(next.questions[2].draws, undefined);
+});
+
+test('و«استثنِ من فاز» يقرأ فائزي الأسئلة كلها لا سؤالًا واحدًا', () => {
+  const won = [{ ...qA, draws: [{ id: 'd0', winners: ['سعد'] }] }, qB];
+  assert.deepEqual(pastWinnersMany(won), ['سعد']);
+  assert.equal(drawPoolMany(won, { pool: 'ok', exclude: pastWinnersMany(won) }).includes('سعد'), false);
+});
+
+test('والسؤال يحمل أسماءَ من دخلوا معه، فتُعرف القرعةُ بعد شهر', () => {
+  const d = makeDrawMany([qA, qB], { pool: 'ok', count: 1 }, { id: 'd', rand: () => 0 });
+  assert.deepEqual(d.over, ['qa', 'qb']);
+  assert.equal(d.odds, 'once');
+});
 
 console.log(`\n✅ ${passed} اختبارًا للنادي — التصحيح والدوري والبطولة وسؤال اليوم والقرعة\n`);
