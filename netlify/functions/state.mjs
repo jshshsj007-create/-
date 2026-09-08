@@ -161,18 +161,33 @@ const ledWrite = async (kind, id, row) => {
 };
 
 /**
- * قراءة الدفتر. `list` يعطي المفاتيح، ثم نقرأ ما يلزم — والقراءة للمدير وحده.
+ * قراءة الدفتر — للمدير وحده.
+ *
+ * وتُقرأ على دفعات: الدفتر لا يُقلَّم أبدًا، فبعد ثلاثة مواسم يصير فيه ألوف
+ * السطور. ولو قرأناها كلها في نداءٍ واحد، بلغ النداءُ حدَّ الوقت في الخادم
+ * ووقف الزرُّ الذي بُني للإنقاذ — يومَ يُحتاج إليه لا قبله.
+ *
+ * فنقرأ ما يلزم: للعرض آخرُ مئتين، وللمطابقة أكثرُ لأنها تبحث عن غائب.
  */
-const ledRead = async (kind, cap = 2000) => {
+const LED_STEP = 60;
+const ledRead = async (kind, cap = 400) => {
   let keys = [];
   try {
     const r = await store().list({ prefix: `${LED}${kind}:` });
-    keys = (r?.blobs || []).map((b) => b.key).slice(0, cap);
-  } catch { return []; }
-  const rows = await Promise.all(keys.map(async (k) => {
-    try { return await store().get(k, { type: 'json' }); } catch { return null; }
-  }));
-  return rows.filter(Boolean).sort((a, b) => Number(b?.at || 0) - Number(a?.at || 0));
+    keys = (r?.blobs || []).map((b) => b.key);
+  } catch { return { rows: [], total: 0, more: false }; }
+  const total = keys.length;
+  const take = keys.slice(0, cap);
+  const rows = [];
+  // على دفعات: ألفُ نداءٍ متوازٍ يخنق الدالة، وستون تمرّ
+  for (let i = 0; i < take.length; i += LED_STEP) {
+    const part = await Promise.all(take.slice(i, i + LED_STEP).map(async (k) => {
+      try { return await store().get(k, { type: 'json' }); } catch { return null; }
+    }));
+    rows.push(...part.filter(Boolean));
+  }
+  rows.sort((a, b) => Number(b?.at || 0) - Number(a?.at || 0));
+  return { rows, total, more: total > take.length };
 };
 
 /* ------------------------------ عدّاد الفتحات ------------------------------ */
@@ -766,16 +781,27 @@ export default async (req) => {
   if (op === 'ledger') {
     if (!isAdmin(me)) return json({ error: 'forbidden' }, 403);
     const kind = body.kind === 'ans' ? 'ans' : 'sub';
-    const rows = await ledRead(kind);
-    if (body.mode !== 'match' || kind !== 'sub') return json({ ok: true, rows });
+    const match = body.mode === 'match' && kind === 'sub';
+    // المطابقة تبحث عن غائب فتحتاج مدًى أوسع؛ والعرض يكفيه آخرُ ما وصل
+    const led = await ledRead(kind, match ? 3000 : 200);
+    const rows = led.rows;
+    if (!match) return json({ ok: true, rows, total: led.total, more: led.more });
 
     const here = new Set();
     for (const p of doc.data?.programs || []) {
       for (const x of p.participants || []) if (x?.id) here.add(x.id);
       for (const w of p.weeks || []) for (const x of w.participants || []) if (x?.id) here.add(x.id);
     }
-    const missing = rows.filter((r) => r?.id && !here.has(r.id));
-    if (body.check || !missing.length) return json({ ok: true, missing });
+    /**
+     * ومن حذفتَه بيدك لا يعود.
+     *
+     * الدفتر يحفظ ما وصل، لا ما قبِلتَه. فمن ضغطتَ عليه «ما وصل» — عابثٌ أو
+     * تسجيلٌ مكذوب — يبقى في الدفتر ولا يجوز أن تُرجعه المطابقة عليك. وسجلُّ
+     * حذفه في الصندوق هو الفرق بين ما ضاع وما رفضتَه.
+     */
+    const dropped = deepIds(doc.data?.trash || []);
+    const missing = rows.filter((r) => r?.id && !here.has(r.id) && !dropped.has(r.id));
+    if (body.check || !missing.length) return json({ ok: true, missing, total: led.total });
 
     const put = await commit((d) => {
       const byProg = new Map();
