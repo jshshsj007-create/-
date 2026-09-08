@@ -297,24 +297,48 @@ const visitsFor = async (doc, at = Date.now()) => {
 const sign = (secret, username) =>
   crypto.createHmac('sha256', secret).update(String(username).toLowerCase()).digest('base64url');
 
-const makeToken = (secret, username) => `${Buffer.from(String(username)).toString('base64url')}.${sign(secret, username)}`;
+/**
+ * التوكن وعصرُه.
+ *
+ * كان يُوقَّع على الاسم وحده، فيبقى صالحًا إلى الأبد: جوالٌ ضاع، أو جهازٌ
+ * تُرك مفتوحًا عند من ترك الفريق، أو كلمةٌ بُدّلت لأنها انكشفت — ثلاثتها
+ * والباب مفتوح كما كان. وتبديلُ كلمةِ المرور لا يُخرج أحدًا، وهذا أسوأُ
+ * ما فيه: تظنّ أنك أقفلتَ وما أقفلت.
+ *
+ * فصار للمستخدم **عصر**، رقمٌ يُوقَّع معه. وتبديلُ الكلمة يرفعه، فتموت
+ * توكناتُه كلها في لحظة، وله أن يرفعه بنفسه («أخرج أجهزتي كلها»).
+ *
+ * ومن عصرُه صفرٌ يُقبل توكنُه القديم كما هو، فلا يُخرَج الفريق كلُّه يومَ
+ * يُنشر هذا. وأولُ رفعٍ يقتل القديم، وهو المقصود.
+ */
+const epochOf = (u) => String(Math.max(0, Number(u?.tokenEpoch || 0)));
 
-/** يرجّع المستخدم لو التوكن سليم وحسابه لا يزال نشطًا، وإلا null. */
+const makeToken = (secret, u) => {
+  const name = typeof u === 'string' ? u : u?.username;
+  const e = typeof u === 'string' ? '0' : epochOf(u);
+  return `${Buffer.from(String(name)).toString('base64url')}.${e}.${sign(secret, `${name}|${e}`)}`;
+};
+
+/** يرجّع المستخدم لو التوكن سليم وحسابه لا يزال نشطًا وعصرُه لم يمضِ، وإلا null. */
 const userFromToken = (doc, token) => {
   if (!doc?.secret || typeof token !== 'string' || !token.includes('.')) return null;
-  const [rawName, mac] = token.split('.');
+  const parts = token.split('.');
+  // القديم جزآن (بلا عصر)، والجديد ثلاثة
+  const [rawName, era, mac] = parts.length === 3 ? parts : [parts[0], null, parts[1]];
   let username;
   try {
     username = Buffer.from(rawName, 'base64url').toString('utf8');
   } catch {
     return null;
   }
-  const expected = sign(doc.secret, username);
-  const a = Buffer.from(mac);
+  const expected = era === null ? sign(doc.secret, username) : sign(doc.secret, `${username}|${era}`);
+  const a = Buffer.from(String(mac || ''));
   const b = Buffer.from(expected);
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
   const u = (doc.data?.users || []).find((x) => (x.username || '').toLowerCase() === username.toLowerCase());
   if (!u || u.status === 'غير نشط') return null;
+  // ومن رُفع عصرُه ما عاد توكنُ ما قبله يفتح — ولا التوكنُ القديم بلا عصر
+  if (epochOf(u) !== String(era === null ? 0 : era)) return null;
   return u;
 };
 
@@ -531,11 +555,30 @@ const guard = (incoming, current, me) => {
   if (allowed(me, 'المستخدمون والصلاحيات')) {
     // المتصفح ما عنده كلمات المرور، فأي مستخدم رجع بدونها يحتفظ بالقديمة
     out.users = (incoming?.users || []).map((u) => {
-      // كلمةٌ جديدة كتبها المدير: تُعمّى هنا، فما تُكتب صريحةً في المخزن أبدًا
-      if (u.password) return isHashed(u.password) ? u : { ...u, password: hash(u.password) };
-      // والمتصفح ما عنده الكلمات، فمن رجع بلا كلمةٍ يحتفظ بالقديمة
       const old = (current?.users || []).find((x) => x.id === u.id);
+      // كلمةٌ جديدة كتبها المدير: تُعمّى هنا، فما تُكتب صريحةً في المخزن أبدًا
+      if (u.password && !isHashed(u.password)) {
+        /**
+         * وتبديلُ الكلمة يُخرج أجهزتَه.
+         *
+         * وإلا صار البابُ مفتوحًا بعد أن أقفلتَه: تُبدّل الكلمة لأنها انكشفت،
+         * ومن عنده جلسةٌ قائمة يدخل بها كما كان. تظنّ أنك أقفلتَ وما أقفلت.
+         *
+         * ومن لم تكن له كلمةٌ قبلُ فليست هذي تبديلًا: مستخدمٌ جديد، أو أولُ
+         * حفظةٍ بعد إنشاء المخزن. وما له جلساتٌ تُقتل أصلًا.
+         */
+        const fresh = Boolean(old?.password);
+        return { ...u, password: hash(u.password), ...(fresh ? { tokenEpoch: Number(old.tokenEpoch || 0) + 1 } : {}) };
+      }
+      if (u.password) return u;
+      // والمتصفح ما عنده الكلمات، فمن رجع بلا كلمةٍ يحتفظ بالقديمة
       return old?.password ? { ...u, password: old.password } : u;
+    });
+    // والعصر لا يُخفَّض بحفظة: من رُفع عصرُه لا يُعاد أحدٌ إلى جلسته بنسخةٍ قديمة
+    const wasU = new Map((current?.users || []).map((x) => [x.id, x]));
+    out.users = out.users.map((u) => {
+      const was = Number(wasU.get(u.id)?.tokenEpoch || 0);
+      return Number(u.tokenEpoch || 0) < was ? { ...u, tokenEpoch: was } : u;
     });
   } else {
     out.users = current?.users || [];
@@ -838,7 +881,7 @@ export default async (req) => {
       : { doc: { rev: 1, updatedAt: new Date().toISOString(), secret, data } }), doc);
     if (r.reject) return r.reject;
     if (r.busy) return json({ error: 'busy' }, 503);
-    return json({ ok: true, rev: 1, token: makeToken(secret, u.username), data: strip(data, u) });
+    return json({ ok: true, rev: 1, token: makeToken(secret, u), data: strip(data, u) });
   }
 
   if (op === 'login') {
@@ -880,7 +923,7 @@ export default async (req) => {
       return { doc: { ...d, data, loginLog: cleared } };
     }, doc);
     const fresh = r.doc || doc;
-    return json({ ok: true, rev: fresh.rev, token: makeToken(fresh.secret, u.username),
+    return json({ ok: true, rev: fresh.rev, token: makeToken(fresh.secret, (fresh.data.users || []).find((x) => x.id === u.id) || u),
       data: strip(fresh.data, u), visits: await visitsFor(fresh) });
   }
 
@@ -1019,6 +1062,32 @@ export default async (req) => {
     if (r.reject) return r.reject;
     if (r.busy) return json({ error: 'busy' }, 503);
     return json({ ok: true, rev: r.doc.rev, data: strip(r.doc.data, me) });
+  }
+
+  /**
+   * إخراج الأجهزة.
+   *
+   * جوالٌ ضاع، أو جهازٌ تُرك مفتوحًا عند من ترك الفريق: يُرفع عصرُه فتموت
+   * توكناتُه كلها في لحظة، ويُطلب منه الدخول من جديد.
+   *
+   * وكلٌّ يُخرج أجهزتَه، والمديرُ يُخرج أجهزة غيره — فمن نسي جهازَه في مكانٍ
+   * ما يُعقل أن ينتظر المدير ليُخرجه.
+   */
+  if (op === 'sessions_revoke') {
+    const who = String(body.userId || me.id);
+    if (who !== me.id && !allowed(me, 'المستخدمون والصلاحيات')) return json({ error: 'forbidden' }, 403);
+    const r = await commit((d) => {
+      const u = (d.data?.users || []).find((x) => x.id === who);
+      if (!u) return { reject: json({ error: 'not_found' }, 404) };
+      const data = { ...d.data, users: d.data.users.map((x) => (x.id !== who ? x : { ...x, tokenEpoch: Number(x.tokenEpoch || 0) + 1 })) };
+      return { doc: { ...d, rev: d.rev + 1, updatedAt: new Date().toISOString(), data } };
+    }, doc);
+    if (r.reject) return r.reject;
+    if (r.busy) return json({ error: 'busy' }, 503);
+    // ومن أخرج أجهزتَه أخرج هذا معها، فيُعطى توكنًا جديدًا بدل أن يُطرد وهو الفاعل
+    const u = (r.doc.data.users || []).find((x) => x.id === who);
+    const mine = who === me.id ? { token: makeToken(r.doc.secret, u) } : {};
+    return json({ ok: true, rev: r.doc.rev, data: strip(r.doc.data, me), ...mine });
   }
 
   /**
@@ -1260,8 +1329,18 @@ export default async (req) => {
     if (r.busy) return json({ error: 'busy' }, 503);
     // المال يُكتب بعد أن يستقرّ الحفظ: ما جدّ أو تبدّل يصير سطرًا لا يُمحى
     await moneyLog(r.out?.was, r.doc.data, me?.name || '');
-    // نخبر الجهاز بما أُرجع، فيسحبه ويعرضه لصاحبه — لا يُرجَع في صمت
-    return json({ ok: true, rev: r.doc.rev, visits: await visitsFor(r.doc), back: r.out?.back || [] });
+    /**
+     * ومن بدّل كلمته بيده يُعطى توكنًا جديدًا.
+     *
+     * تبديلُ الكلمة يُخرج الأجهزة كلها، وجهازُه منها — فلولا هذا لطُرد وهو
+     * الفاعل، ونصفُ حفظته على الشاشة. الأجهزة الأخرى تموت، وهو يكمل.
+     */
+    const now = (r.doc.data.users || []).find((x) => x.id === me.id);
+    const moved = now && epochOf(now) !== epochOf((r.out?.was?.users || []).find((x) => x.id === me.id));
+    return json({
+      ok: true, rev: r.doc.rev, visits: await visitsFor(r.doc), back: r.out?.back || [],
+      ...(moved ? { token: makeToken(r.doc.secret, now) } : {}),
+    });
   }
 
   return json({ error: 'unknown_op' }, 400);

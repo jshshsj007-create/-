@@ -1572,6 +1572,15 @@ export default function App() {
         const r = await api('push', { token: sess.current.token, baseRev: revRef.current, data: payload });
         if (r.status === 200) {
           if (r.body?.visits) setVisits(r.body.visits);
+          /**
+           * توكنٌ جديد مع الحفظة: بدّلتَ كلمتك بيدك، فماتت جلساتُك كلها —
+           * وجهازُك منها. فيُعطى بدلًا منه هنا، فتكمل ما بدأتَ بدل أن تُطرد
+           * ونصفُ حفظتك على الشاشة.
+           */
+          if (r.body?.token) {
+            sess.current = { ...sess.current, token: r.body.token };
+            writeSession({ ...readSession(), token: r.body.token });
+          }
           revRef.current = r.body.rev;
           baseRef.current = clone(payload);
           /**
@@ -4063,6 +4072,22 @@ export default function App() {
       setData(defaultData()); // ما نخلي بيانات الفريق في الجهاز بعد الخروج
     }
     setCurrentUser(null); setStage('year'); goto('home');
+  };
+
+  /**
+   * إخراج الأجهزة كلها.
+   *
+   * الخروج من هنا يمحو جلسةَ هذا الجهاز وحده. وجوالٌ ضاع، أو جهازٌ تُرك
+   * مفتوحًا في مكان — ذاك يبقى داخلًا إلى الأبد. فهذا يُميت جلساتِه كلها
+   * عند الخادم، ثم يُخرج صاحبه ليدخل من جديد.
+   */
+  const revokeSessions = async (userId) => {
+    if (!cloudOn) return;
+    const r = await api('sessions_revoke', { token: sess.current.token, ...(userId ? { userId } : {}) });
+    if (r.status !== 200) { setForm((f) => ({ ...f, msg: 'ما قدرنا نخرجها.' })); return; }
+    if (!userId || userId === currentUser?.id) { doLogout(); return; }
+    if (r.body?.data) { revRef.current = r.body.rev; baseRef.current = clone(r.body.data); setData(migrate(clone(r.body.data))); }
+    setForm((f) => ({ ...f, msg: 'أخرجنا أجهزته كلها.' }));
   };
 
   /* ------------------------------ الشاشة الأولى ------------------------------ */
@@ -9933,6 +9958,20 @@ export default function App() {
               : (currentUser.permissions || []).map((p) => <Badge key={p} tone="slate">{p}</Badge>)}
           </div>
           <button className={btnDanger + ' w-full'} onClick={() => { closeModal(); doLogout(); }}><LogOut size={16} /> تسجيل خروج</button>
+          {/*
+            الخروج فوق يمحو جلسة هذا الجهاز وحده. وجوالٌ ضاع أو جهازٌ تُرك
+            مفتوحًا في مكانٍ يبقى داخلًا إلى الأبد — فهذا لذاك.
+          */}
+          {cloudOn && (
+            <button className={btnGhost + ' w-full mt-2 border border-slate-200'}
+              onClick={() => askConfirm(
+                'نُخرج أجهزتك كلها؟ أي جهازٍ داخلٍ بحسابك — هذا وغيره — بيحتاج يدخل من جديد.',
+                () => { closeModal(); revokeSessions(); },
+                'نعم، أخرجها',
+              )}>
+              <LogOut size={15} /> أخرج أجهزتي كلها
+            </button>
+          )}
           <button className={btnGhost + ' w-full mt-2 border border-slate-200'} onClick={hardReload}>
             <RotateCcw size={15} /> تحديث التطبيق لآخر نسخة
           </button>
