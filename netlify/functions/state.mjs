@@ -619,9 +619,16 @@ const guard = (incoming, current, me) => {
     // والمؤقّت معهما: هو إقفالٌ مؤجَّل، فحفظةٌ قديمة تُقدّمه فتقفل قبل وقته
     return was ? { ...q, open: was.open, token: was.token, closesAt: was.closesAt } : q;
   });
-  // ووجهتا الرابطين الثابتين: عنوانان منشوران، لا يُبدَّلان بحفظة
-  if (current?.publicLink) out.publicLink = current.publicLink;
-  if (current?.questionLink) out.questionLink = current.questionLink;
+  /**
+   * ووجهتا الرابطين الثابتين: عنوانان منشوران، لا يُبدَّلان بحفظة.
+   *
+   * والغيابُ يُعامَل كالفراغ لا كالإذن: كان الشرط «إن كان عند الخادم وجهة»،
+   * فمن لم تكن عنده وجهةٌ بعدُ صار بابُه مفتوحًا لأي حفظةٍ تكتب فيه — لا
+   * تُقفل رابطًا، لكنها تُوجّهه إلى برنامجٍ لم تختره. والباب الذي يُبدّلهما
+   * واحدٌ مقصود، فما يُترك ثانٍ إلى جنبه.
+   */
+  out.publicLink = current?.publicLink || { programId: '' };
+  out.questionLink = current?.questionLink || { questionId: '' };
 
   /**
    * الصندوق: الموظف ما يشوفه (حجبناه في `strip`)، فلو قبلنا قائمته كما هي
