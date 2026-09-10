@@ -581,7 +581,18 @@ export const validateSubmission = (view, body) => {
   const acc = view.accounts.find((a) => a.id === body?.accountId);
   if (view.accounts.length && !acc) {
     errors.accountId = need;
-  } else if (acc?.needsReceipt && !isReceipt(body?.receipt)) {
+  /**
+   * والإيصال يُقبل صورةً كاملة **أو إشارةً إليها**.
+   *
+   * الخادم ينقل الصورة إلى مخزنها قبل أن يتحقّق، ويستبدلها في الحمولة بإشارةٍ
+   * إلى موضعها — فلو سألنا هنا عن صورةٍ كاملة، لم نجدها، وقلنا لوليّ الأمر
+   * «أرفق الإيصال» وقد أرفقه، والخادمُ هو الذي شاله بيده. فيقف عند بابٍ
+   * أغلقناه عليه ولا يدري لِمَ.
+   *
+   * ووقع هذا: أرفق ملفًا فقيل له أرفق. والعلّة أن `applySubmission` كانت
+   * تعرف الإشارة وهذي لا تعرفها — قاعدةٌ واحدة في موضعين، افترقا.
+   */
+  } else if (acc?.needsReceipt && !isReceipt(body?.receipt) && !isReceiptRef(body?.receipt)) {
     errors.receipt = 'أرفق صورة الإيصال أو المستند';
   }
   return { ok: Object.keys(errors).length === 0, errors };
