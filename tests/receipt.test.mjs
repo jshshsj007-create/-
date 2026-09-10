@@ -6,7 +6,7 @@
  * الترقيم: أنه يُحفظ، ولا يتكرّر، ولا يبني على تكرارٍ وقع.
  */
 import assert from 'node:assert/strict';
-import { nextRef, refPrefix, yearOf, receiptRows, recOn, defaultReceipt, REC_FIELDS } from '../src/receipt.js';
+import { nextRef, refPrefix, yearOf, receiptRows, recOn, defaultReceipt, REC_FIELDS, dataUrlBlob } from '../src/receipt.js';
 import { waGroupLink, contactUrl, parseChip, chipsOf, factsOf, publicView, applySubmission, normalizeSubmission } from '../src/signup.js';
 
 let passed = 0;
@@ -344,6 +344,34 @@ test('والمبلغ يُحسب على الأيام المكتوبة لا على
   const rows = r.data.programs[0].weeks.flatMap((w) => w.participants || []);
   assert.equal(rows.length, 2, 'نزل في الأسبوعين بلا ما يضغط شيئًا');
   assert.ok(rows.every((x) => x.amount === 70));
+});
+
+
+/* ------------------------- معاينة الورقة المرفقة ------------------------- */
+
+/**
+ * المتصفّح يرفض فتح `data:` صفحةً، وما يعرض PDF إلا من عنوان. فتُحوّل إلى
+ * Blob ليصير لها عنوانٌ في الجهاز — وهذا ما يخلّي وليّ الأمر يشوف ما أرفق.
+ */
+test('يحوّل data: إلى ملفٍ بنوعه وحجمه', async () => {
+  const b = dataUrlBlob('data:application/pdf;base64,' + Buffer.from('%PDF-1.4 x').toString('base64'));
+  assert.ok(b, 'رجع ملفًا');
+  assert.equal(b.type, 'application/pdf');
+  assert.equal(b.size, 10);
+});
+
+test('والصورة كذلك', () => {
+  const b = dataUrlBlob('data:image/jpeg;base64,' + Buffer.from('abc').toString('base64'));
+  assert.equal(b.type, 'image/jpeg');
+  assert.equal(b.size, 3);
+});
+
+test('وما ليس data: بترميزٍ معروف يرجع فارغًا لا يرمي', () => {
+  assert.equal(dataUrlBlob(''), null);
+  assert.equal(dataUrlBlob(null), null);
+  assert.equal(dataUrlBlob('https://x/y.pdf'), null);
+  assert.equal(dataUrlBlob('data:text/plain,hello'), null, 'بلا base64');
+  assert.equal(dataUrlBlob('data:image/png;base64,!!!not base64!!!'), null, 'ترميزٌ فاسد');
 });
 
 console.log(`\n✅ ${passed} اختبارًا للإيصال ووجهة التواصل وصفحة التسجيل\n`);

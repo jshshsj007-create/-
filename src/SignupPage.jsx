@@ -3,10 +3,12 @@
  * وما تعرف شيئًا عن بقية البيانات — تستقبل فقط.
  */
 import React, { useState, useEffect } from 'react';
-import { Check, AlertTriangle, Plus, X, Copy, Upload, MessageCircle, Share2, MapPin, ChevronLeft, CalendarDays, Clock, Users } from 'lucide-react';
+import { Check, AlertTriangle, Plus, X, Copy, Upload, MessageCircle, Share2, MapPin, ChevronLeft, CalendarDays, Clock, Users, FileText } from 'lucide-react';
 import { api } from './cloud.js';
 import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 import { isValidPhone } from './people.js';
+import { dataUrlBlob } from './receipt.js';
+import PdfFirstPage from './pdfview.jsx';
 import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, coversAll, daysOf, RECEIPT_TYPES, RECEIPT_MAX, txt, TEXTS, CLOSED, CLOSED_WHY, waLink, fillTemplate, signupVars } from './signup.js';
 
 const input = 'w-full border border-slate-200 rounded-xl px-3.5 py-3 text-[15px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent';
@@ -460,6 +462,62 @@ const readReceipt = (file) => new Promise((resolve, reject) => {
   };
   fr.readAsDataURL(file);
 });
+
+/**
+ * الورقة المرفقة كما هي، لا اسمُها فقط.
+ *
+ * من يرفع إيصالًا يبي يتأكّد أنه أرفق الصحيح — واسم الملف وحده ما يكفي:
+ * الجوّال يسمّي صور الشاشة أرقامًا متشابهة. فتظهر الصورة كما هي، ويُرسم
+ * الـPDF صفحةً أولى (فعارض المتصفّح المدمج ما يُعوّل عليه في الجوّالات)،
+ * وتبقى تحته وصلةٌ تفتحه كاملًا لمن أراد التدقيق.
+ */
+function ReceiptPreview({ receipt, onClear }) {
+  const [href, setHref] = useState('');
+  const [drawn, setDrawn] = useState(true);   // رُسمت صفحةُ الـPDF؟ حتى يُعرف متى نرجع للبطاقة
+  const pdf = receipt?.type === 'application/pdf';
+
+  useEffect(() => {
+    setDrawn(true);
+    const blob = dataUrlBlob(receipt?.data);
+    if (!blob) { setHref(''); return undefined; }
+    const url = URL.createObjectURL(blob);
+    setHref(url);
+    return () => URL.revokeObjectURL(url);
+  }, [receipt?.data]);
+
+  return (
+    <div className="bg-green-50 border border-green-200 rounded-xl p-3">
+      <div className="flex items-center gap-2 mb-2">
+        <Check size={16} className="text-green-700 shrink-0" />
+        <div className="text-sm font-semibold text-green-800 shrink-0">تم إرفاق الإيصال</div>
+        <div className="text-[11px] text-slate-500 truncate flex-1" dir="auto">{receipt.name}</div>
+        <button type="button" className="text-slate-400 p-1 shrink-0" onClick={onClear} aria-label="احذف الإيصال"><X size={18} /></button>
+      </div>
+
+      <div className="rounded-lg bg-white border border-green-200 overflow-hidden p-1">
+        {pdf ? (
+          drawn ? (
+            <PdfFirstPage src={receipt.data} maxHeight={300} onFail={() => setDrawn(false)} />
+          ) : (
+            <div className="py-8 text-center">
+              <FileText size={30} className="mx-auto text-slate-300 mb-2" />
+              <div className="text-xs text-slate-500">{href ? 'افتحه بالوصلة تحت عشان تشوفه' : 'ملف PDF'}</div>
+            </div>
+          )
+        ) : (
+          <img src={receipt.data} alt="الإيصال المرفق" className="w-full block object-contain bg-white" style={{ maxHeight: 300 }} />
+        )}
+      </div>
+
+      {href && (
+        <a className="mt-2 flex items-center justify-center gap-1.5 text-xs font-semibold text-brand-700 py-1"
+          href={href} target="_blank" rel="noreferrer">
+          <FileText size={14} /> افتحه في صفحة كاملة
+        </a>
+      )}
+    </div>
+  );
+}
 
 export default function SignupPage({ token }) {
   const [view, setView] = useState(null);
@@ -980,16 +1038,7 @@ export default function SignupPage({ token }) {
                 {/* العنوان ونجمتُه يقولان المطلوب، والصندوق تحته يقول كيف */}
                 <div className="font-semibold text-slate-700 text-sm mb-3">صورة الإيصال <span className="text-red-500">*</span></div>
                 {receipt ? (
-                  <div className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-xl p-3">
-                    {receipt.type === 'application/pdf'
-                      ? <div className="w-14 h-14 rounded-lg bg-white border border-green-200 flex items-center justify-center text-xs text-slate-500 shrink-0">PDF</div>
-                      : <img src={receipt.data} alt="الإيصال" className="w-14 h-14 rounded-lg object-cover shrink-0" />}
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold text-green-800">تم إرفاق الإيصال</div>
-                      <div className="text-[11px] text-slate-500 truncate">{receipt.name}</div>
-                    </div>
-                    <button type="button" className="text-slate-400 p-1 shrink-0" onClick={() => setReceipt(null)}><X size={18} /></button>
-                  </div>
+                  <ReceiptPreview receipt={receipt} onClear={() => setReceipt(null)} />
                 ) : (
                   <label className={`block text-center border border-dashed rounded-xl py-6 cursor-pointer ${errors.receipt ? 'border-red-300 bg-red-50' : 'border-slate-300'}`}>
                     <Upload size={22} className="mx-auto text-slate-400 mb-2" />

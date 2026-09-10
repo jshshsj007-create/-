@@ -2,3 +2,4 @@ node_modules/
 dist/
 tests/build/
 tests/.stubs/
+public/pdf.worker.min.mjs

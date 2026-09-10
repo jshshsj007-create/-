@@ -40,6 +40,7 @@ import {
   reviewCycles, cycleTarget, cycleDrift, stopsOf, stopText, pagesBetween, pagesOf,
 } from './khayr.js';
 import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
+import PdfFirstPage from './pdfview.jsx';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
@@ -64,6 +65,30 @@ const uid = () => Math.random().toString(36).slice(2, 9);
  * داخل البيانات، فتُعرض كما هي حتى تُنقل.
  */
 export const slipSrc = (r) => (r?.ref ? `/api/img/${r.ref}` : (r?.data || ''));
+/**
+ * الإيصالُ الورقة (PDF) داخل النافذة.
+ *
+ * كان يُترك لعارض المتصفّح، وهو يخذل حيث يُحتاج: في الجوّال ما يعرض شيئًا،
+ * وفي الحاسوب يجي بصندوقٍ أسود. فنرسم أولى صفحاته صورةً، وإن تعثّر الرسم
+ * بقيت بطاقةُ الملف والزرُّ تحتها كما كانا.
+ */
+function ReceiptPdf({ src, name }) {
+  const [drawn, setDrawn] = React.useState(true);
+  React.useEffect(() => { setDrawn(true); }, [src]);
+  if (!drawn) {
+    return (
+      <div className="text-center py-6 rounded-xl border border-slate-100">
+        <FileText size={36} className="mx-auto text-slate-300 mb-3" />
+        <div className="text-sm text-slate-500">{name || 'إيصال'}</div>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-xl border border-slate-100 p-1 flex justify-center">
+      <PdfFirstPage src={src} maxHeight={520} onFail={() => setDrawn(false)} />
+    </div>
+  );
+}
 /** «سجل» · «سجلان» · «٣ سجلات» · «١١ سجلًا» — العدد يُصرَّف كما يُنطق. */
 export const records = (n) => {
   const c = Math.max(0, Math.round(Number(n) || 0));
@@ -9758,13 +9783,8 @@ export default function App() {
         return (
           <Modal title={`إيصال ${form.who || ''}`} onClose={closeModal} wide>
             {pdf ? (
-              // يُعرض داخل الصفحة، ومن منعه متصفّحه فتحه بالزر
-              <object data={src} type="application/pdf" className="w-full rounded-xl border border-slate-100" style={{ height: '60vh' }}>
-                <div className="text-center py-6">
-                  <FileText size={36} className="mx-auto text-slate-300 mb-3" />
-                  <div className="text-sm text-slate-500">{form.receipt.name || 'إيصال'}</div>
-                </div>
-              </object>
+              // تُرسم أولى صفحاته صورةً، ومن تعثّر عنده الرسم فتحه بالزر
+              <ReceiptPdf src={src} name={form.receipt.name} />
             ) : (
               <img src={src} alt="الإيصال" className="w-full rounded-xl border border-slate-100"
                 onError={(e) => { e.currentTarget.style.display = 'none'; }} />

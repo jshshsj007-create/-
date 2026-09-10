@@ -264,6 +264,32 @@ export const receiptPngBlob = async (rec, info, { logo = '', scale = 2 } = {}) =
 export const receiptFileName = (ref) => `faydh-${clean(ref) || 'receipt'}.png`;
 
 /**
+ * يحوّل `data:` إلى Blob.
+ *
+ * ليه؟ لأن المتصفّحات ترفض فتح `data:` في صفحةٍ جديدة (كروم يمنعها منعًا)،
+ * وما تعرض PDF داخل الصفحة إلا من عنوانٍ حقيقي. فنصنع له عنوانًا مؤقتًا في
+ * الجهاز — بلا شبكة ولا خادم — عشان من أرفق ورقةً يقدر يشوفها قبل ما يرسلها.
+ *
+ * ترجّع null لو ما كان `data:` بترميز base64، فيرجع النداءُ لصورته كما هي.
+ */
+export const dataUrlBlob = (raw) => {
+  const s = String(raw || '');
+  const i = s.indexOf(',');
+  if (i < 0 || !s.startsWith('data:')) return null;
+  const head = s.slice(0, i);
+  if (!head.endsWith(';base64')) return null;
+  const type = head.slice(5, head.length - 7) || 'application/octet-stream';
+  try {
+    const bin = atob(s.slice(i + 1));
+    const bytes = new Uint8Array(bin.length);
+    for (let n = 0; n < bin.length; n++) bytes[n] = bin.charCodeAt(n);
+    return new Blob([bytes], { type });
+  } catch {
+    return null;
+  }
+};
+
+/**
  * يعطي الملفَّ لصاحب الجهاز.
  *
  * على الجوال لوحة المشاركة: منها يحفظه في الصور أو يرسله في واتساب مباشرة،
