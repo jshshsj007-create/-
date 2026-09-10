@@ -66,10 +66,24 @@ const IMG_CAP = 1_500_000; // حد أعلى للـ data URI بعد الضغط ف
 const IMG_MIME = { jpeg: 'image/jpeg', jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
 
 /** يفكّ `data:image/jpeg;base64,...` إلى نوع وبايتات، أو null لو مو صورة. */
+/**
+ * ويعرف الـPDF كما يعرف الصور.
+ *
+ * كان يعرف الصور وحدها، والإيصالُ يُقبل صورةً **أو PDF**. فالبنكُ يُصدر
+ * إيصاله PDF، فيُرفقه وليّ الأمر، ويُخزّنه الخادمُ عنده، ثم يُطلب فيقول
+ * «غير موجود» — محفوظٌ ومُنكَر معًا. وصاحبُ الفريق يرى أيقونةَ ملفٍ لا
+ * تفتح على شيء، فلا يدري أضاع الإيصال أم لم يُرسل أصلًا.
+ *
+ * ونُصرّح بالأنواع ولا نثق بما كُتب في النصّ: من كتب `data:text/html` في
+ * مخزن الصور، لا يخرج منه إلا بنوعٍ نعرفه — فلا يُقدَّم على أنه صفحة تُنفَّذ.
+ */
 const parseDataUrl = (raw) => {
-  const m = /^data:image\/(jpeg|jpg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(raw || ''));
-  if (!m) return null;
-  return { type: IMG_MIME[m[1]], bytes: Buffer.from(m[2], 'base64') };
+  const s = String(raw || '');
+  const m = /^data:image\/(jpeg|jpg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(s);
+  if (m) return { type: IMG_MIME[m[1]], bytes: Buffer.from(m[2], 'base64') };
+  const p = /^data:application\/pdf;base64,([A-Za-z0-9+/=]+)$/.exec(s);
+  if (p) return { type: 'application/pdf', bytes: Buffer.from(p[1], 'base64') };
+  return null;
 };
 
 const json = (body, status = 200) =>
