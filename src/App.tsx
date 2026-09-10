@@ -9744,24 +9744,39 @@ export default function App() {
         );
       })()}
 
-      {modal === 'viewReceipt' && form.receipt && (
-        <Modal title={`إيصال ${form.who || ''}`} onClose={closeModal} wide>
-          {form.receipt.type === 'application/pdf' ? (
-            <div className="text-center py-6">
-              <FileText size={36} className="mx-auto text-slate-300 mb-3" />
-              <div className="text-sm text-slate-500 mb-4">{form.receipt.name}</div>
-              <a className={btnPrimary + ' w-full'} href={slipSrc(form.receipt)} target="_blank" rel="noreferrer">فتح الملف</a>
-            </div>
-          ) : (
-            <>
-              <img src={slipSrc(form.receipt)} alt="الإيصال" className="w-full rounded-xl border border-slate-100" />
-              <a className={btnGhost + ' w-full mt-3 block text-center'} href={slipSrc(form.receipt)} target="_blank" rel="noreferrer">
-                فتحها بحجم كامل
-              </a>
-            </>
-          )}
-        </Modal>
-      )}
+      {/*
+        عرضُ الإيصال لا يتفرّع على نصِّ النوع وحده.
+        كان يقرأ `type` فيرسم صورةً لكل ما ليس PDF — ولو جاء النوع فاضيًا أو
+        غير متوقَّع (وهو يجي من جهاز ولي الأمر، ولا يُوثق به) رسم صورةً على
+        ملفٍ ليس صورة، فيطلع فراغٌ لا يقول شيئًا. فصار الرابط ظاهرًا دائمًا،
+        والصورةُ تُجرَّب فإن تعثّرت انزاحت وبقي الرابط مكانها.
+      */}
+      {modal === 'viewReceipt' && form.receipt && (() => {
+        const src = slipSrc(form.receipt);
+        const type = String(form.receipt.type || '');
+        const pdf = type === 'application/pdf' || /\.pdf$/i.test(String(form.receipt.name || ''));
+        return (
+          <Modal title={`إيصال ${form.who || ''}`} onClose={closeModal} wide>
+            {pdf ? (
+              // يُعرض داخل الصفحة، ومن منعه متصفّحه فتحه بالزر
+              <object data={src} type="application/pdf" className="w-full rounded-xl border border-slate-100" style={{ height: '60vh' }}>
+                <div className="text-center py-6">
+                  <FileText size={36} className="mx-auto text-slate-300 mb-3" />
+                  <div className="text-sm text-slate-500">{form.receipt.name || 'إيصال'}</div>
+                </div>
+              </object>
+            ) : (
+              <img src={src} alt="الإيصال" className="w-full rounded-xl border border-slate-100"
+                onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+            )}
+            {/* الرابط لا يختفي أبدًا: هو آخرُ ما يبقى إن تعثّر كل ما فوقه */}
+            <a className={btnPrimary + ' w-full mt-3'} href={src} target="_blank" rel="noreferrer">
+              <FileText size={16} /> افتح الإيصال في صفحة
+            </a>
+            <div className="text-[11px] text-slate-400 mt-2 text-center break-all" dir="ltr">{src}</div>
+          </Modal>
+        );
+      })()}
 
       {modal === 'addPackage' && (() => {
         const unit = isGrouped ? 'يوم' : 'جمعة';
