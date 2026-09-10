@@ -7,6 +7,7 @@
  *
  * فالأثر يُكتب مرة عند الإضافة، ويُحدَّث عند كل تعديل، ولا يُمحى أبدًا.
  */
+import { say } from './adad.js';
 
 /** ختم الإضافة — يُكتب مرة واحدة ولا يتغيّر بعدها. */
 export const stampNew = (user) => ({
@@ -36,15 +37,14 @@ export const agoText = (ms, now = Date.now()) => {
   const s = Math.max(0, Math.round((now - ms) / 1000));
   if (s < 90) return 'الآن';
   const m = Math.round(s / 60);
-  if (m < 60) return `قبل ${m} دقيقة`;
+  if (m < 60) return `قبل ${say(m, 'minute')}`;
   const h = Math.round(m / 60);
-  if (h < 24) return h === 1 ? 'قبل ساعة' : h === 2 ? 'قبل ساعتين' : `قبل ${h} ساعات`;
+  if (h < 24) return `قبل ${say(h, 'hour')}`;
   const d = Math.round(h / 24);
-  if (d < 7) return d === 1 ? 'أمس' : d === 2 ? 'قبل يومين' : `قبل ${d} أيام`;
+  if (d < 7) return d === 1 ? 'أمس' : `قبل ${say(d, 'day')}`;
   const w = Math.floor(d / 7);
-  if (w < 5) return w === 1 ? 'قبل أسبوع' : w === 2 ? 'قبل أسبوعين' : `قبل ${w} أسابيع`;
-  const mo = Math.round(d / 30);
-  return mo === 1 ? 'قبل شهر' : mo === 2 ? 'قبل شهرين' : `قبل ${mo} أشهر`;
+  if (w < 5) return `قبل ${say(w, 'week')}`;
+  return `قبل ${say(Math.round(d / 30), 'month')}`;
 };
 
 /**

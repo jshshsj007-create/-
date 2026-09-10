@@ -41,6 +41,7 @@ import {
 } from './khayr.js';
 import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 import PdfFirstPage from './pdfview.jsx';
+import { say } from './adad.js';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
@@ -2851,7 +2852,7 @@ export default function App() {
       ...prev,
       photos: [...(prev.photos || []), ...added],
       imgBusy: false,
-      imgError: failed ? `ما قدرنا نرفع ${failed} صورة. جرّب مرة ثانية.` : '',
+      imgError: failed ? `ما قدرنا نرفع ${say(failed, 'photo')}. جرّب مرة ثانية.` : '',
     }));
   };
 
@@ -3427,9 +3428,9 @@ export default function App() {
   const arrearsText = (rows) => {
     const sum = arrearsTotal(rows);
     const blind = rows.filter((r) => !r.known).length;
-    if (sum && blind) return `${fmt(sum)} ر.س و${blind === 1 ? 'تسجيل' : `${blind} تسجيلات`} بلا مبلغ مسجّل`;
+    if (sum && blind) return `${fmt(sum)} ر.س و${say(blind, 'signup')} بلا مبلغ مسجّل`;
     if (sum) return `${fmt(sum)} ر.س`;
-    return `${rows.length === 1 ? 'تسجيل' : `${rows.length} تسجيلات`} بلا مبلغ مسجّل`;
+    return `${say(rows.length, 'signup')} بلا مبلغ مسجّل`;
   };
 
   /**
@@ -3481,7 +3482,7 @@ export default function App() {
   const confirmMany = (list) => {
     const ids = new Set(list.map((p) => p.id));
     askConfirm(
-      `تأكيد وصول مبالغ ${list.length} تسجيل؟ بينتقلون لقائمة الحضور، ومبالغهم تدخل الإيراد.`,
+      `تأكيد وصول مبالغ ${say(list.length, 'signup')}؟ بينتقلون لقائمة الحضور، ومبالغهم تدخل الإيراد.`,
       () => clearPendingFlag((part) => ids.has(part.id)),
       'نعم، وصلت',
     );
@@ -3819,7 +3820,7 @@ export default function App() {
     }
     const gone = r.body?.missing || [];
     if (!gone.length) {
-      setBackup((b) => ({ ...b, busy: false, who: 'subs', msg: `دفتر التسجيلات مطابق — ${fmt(r.body?.total || 0)} تسجيلًا، ما ينقص منها أحد.` }));
+      setBackup((b) => ({ ...b, busy: false, who: 'subs', msg: `دفتر التسجيلات مطابق — ${say(r.body?.total || 0, 'signup')}، ما ينقص منها أحد.` }));
       return;
     }
     if (check) {
@@ -4149,7 +4150,7 @@ export default function App() {
      */
     if (r.status === 429) {
       const m = Math.max(1, Math.ceil(Number(r.body?.retryIn || 900) / 60));
-      setLoginError(`محاولات كثيرة. جرّب بعد ${m} دقيقة.`);
+      setLoginError(`محاولات كثيرة. جرّب بعد ${say(m, 'minute')}.`);
       return;
     }
     if (r.status !== 200 || !r.body?.data) { setLoginError('ما قدرت أوصل للخادم. تأكد من الإنترنت وجرّب مرة ثانية.'); return; }
@@ -4576,7 +4577,7 @@ export default function App() {
                         <span className="w-11 h-11 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0"><Send size={20} /></span>
                         <span className="flex-1 min-w-0">
                           <span className="block font-bold text-slate-800">{p.name}</span>
-                          <span className="block text-xs text-amber-700 mt-0.5">{n} تسجيل من الرابط</span>
+                          <span className="block text-xs text-amber-700 mt-0.5">{say(n, 'signup')} من الرابط</span>
                         </span>
                         <ChevronLeft size={18} className="text-amber-300 shrink-0" />
                       </button>
@@ -4823,7 +4824,7 @@ export default function App() {
                         ? (roster.length ? `${present} حاضر من ${roster.length} مسجّل` : 'ما فيه مسجّلين في هذا اليوم')
                         // الجدول اللي فوق محروس بـ`canMoney`، وهذا السطر كان منسيًّا
                         : (st === 'لم يبدأ' ? 'لم يبدأ بعد'
-                          : `${headcount(w)} طالب${canMoney ? ` · ${fmt(L.revenue(w))} ر.س` : ''}`))
+                          : `${say(headcount(w), 'student')}${canMoney ? ` · ${fmt(L.revenue(w))} ر.س` : ''}`))
                         + (waitingHere ? ` · ${waitingHere} بالانتظار` : '');
                       return (
                         <button key={w.id} onClick={() => { setSelectedWeekId(w.id); setWeekTab(isGrouped ? 'attendance' : 'overview'); goto('weekDetail'); }}
@@ -5760,7 +5761,7 @@ export default function App() {
                         })}
                       </div>
                       <button className={btnPrimary + ' w-full mt-3'}
-                        onClick={() => askConfirm(`تأكيد وصول مبالغ ${pending.length} تسجيل؟ بتدخل الإيراد.`, confirmAllPending, 'نعم، وصلت')}>
+                        onClick={() => askConfirm(`تأكيد وصول مبالغ ${say(pending.length, 'signup')}؟ بتدخل الإيراد.`, confirmAllPending, 'نعم، وصلت')}>
                         <Check size={16} /> تأكيد الكل
                       </button>
                     </div>
@@ -5887,7 +5888,7 @@ export default function App() {
                       <span className="text-sm text-slate-500">حالة اليوم</span>
                       <Badge tone={STATE_TONE[weekState(week)] || 'slate'}>{weekState(week)}</Badge>
                     </div>
-                    <InfoRow icon={UsersIcon} label={isQuick(week) ? 'الطلاب المسجلين' : 'الطلاب'} value={`${headcount(week)} طالب`} />
+                    <InfoRow icon={UsersIcon} label={isQuick(week) ? 'الطلاب المسجلين' : 'الطلاب'} value={say(headcount(week), 'student')} />
                     {canMoney && <InfoRow icon={TrendingUp} label="إجمالي الإيراد" value={`${fmt(L.revenue(week))} ر.س`} />}
                     <InfoRow icon={Calendar} label="التاريخ" value={week.date || 'ما تحدد'} />
 
@@ -5967,7 +5968,7 @@ export default function App() {
                           });
                           setModal('putBack');
                         }}>
-                        فيه {recoverable(7).length} طالبًا مسجّلين حديثًا وما هم في هذا اليوم — أرجعهم ←
+                        مسجّلون حديثًا وما هم في هذا اليوم: {say(recoverable(7).length, 'student')} — أرجعهم ←
                       </button>
                     )}
                     {roster.length > 0 && canMoney && (
@@ -5976,7 +5977,7 @@ export default function App() {
                     {ledgerLocked && <div className="text-xs text-amber-600 mb-3">اليوم مقفل — افتحه من الأعلى عشان تعدّل.</div>}
                     {isQuick(week) && canMoney && (
                       <div className="bg-brand-50 border border-brand-100 rounded-xl px-4 py-3 text-sm text-brand-900 mb-3">
-                        هذا اليوم مسجّل بالعدد والمبلغ ({week.quickCount} طالب · {fmt(week.quickRevenue)} ر.س).
+                        هذا اليوم مسجّل بالعدد والمبلغ ({say(week.quickCount, 'student')} · {fmt(week.quickRevenue)} ر.س).
                         أول ما تسجّل طالبًا باسمه يتحوّل للأسماء، والمبلغ ينتقل لبند «تحصيل إضافي».
                       </div>
                     )}
@@ -6352,9 +6353,9 @@ export default function App() {
                             </div>
                             <div className="flex items-center flex-wrap gap-3 mt-3 text-[11px] text-slate-400">
                               {(c.tools || []).length > 0 && <span>🧰 {c.tools.length} أداة</span>}
-                              {(c.photos || []).length > 0 && <span>📷 {c.photos.length} صورة</span>}
+                              {(c.photos || []).length > 0 && <span>📷 {say(c.photos.length, 'photo')}</span>}
                               <span className={runs.length ? 'text-brand-700 font-semibold' : ''}>
-                                {runs.length ? `سُوّيت ${runs.length} مرة` : 'ما سُوّيت بعد'}
+                                {runs.length ? `سُوّيت ${say(runs.length, 'time')}` : 'ما سُوّيت بعد'}
                               </span>
                             </div>
                           </button>
@@ -6924,7 +6925,7 @@ export default function App() {
           <div>
             <h2 className="text-xl font-extrabold text-slate-800">خيركم</h2>
             <div className="text-sm text-slate-400 mb-5 mt-1">
-              التسميع والمتابعة — {khayr.students.length} طالب
+              التسميع والمتابعة — {say(khayr.students.length, 'student')}
             </div>
             <Tabs
               tabs={[{ id: 'report', label: 'التقرير' }, { id: 'sessions', label: 'الجلسات' }, { id: 'students', label: 'الطلاب' }]}
@@ -7459,7 +7460,7 @@ export default function App() {
               return (
                 <div>
                   <div className="text-[11px] text-slate-400 mb-3 leading-relaxed">
-                    كل محذوف يقعد هنا {TRASH_DAYS} يومًا ثم يمضي من نفسه. ترجّعه بضغطة، أو تمسحه الآن.
+                    كل محذوف يقعد هنا {say(TRASH_DAYS, 'day')} ثم يمضي من نفسه. ترجّعه بضغطة، أو تمسحه الآن.
                   </div>
                   {!list.length ? (
                     <div className={emptyCls}>الصندوق فاضي.</div>
@@ -7467,7 +7468,7 @@ export default function App() {
                     <>
                       <div className="flex justify-end mb-3">
                         <button className={btnDanger}
-                          onClick={() => askConfirm(`مسح ${list.length} سجلًا من الصندوق نهائيًا؟ ما لها رجعة بعدها.`, emptyTrash, 'نعم، امسح الكل')}>
+                          onClick={() => askConfirm(`مسح ${say(list.length, 'record')} من الصندوق نهائيًا؟ ما لها رجعة بعدها.`, emptyTrash, 'نعم، امسح الكل')}>
                           <Trash2 size={15} /> امسح الصندوق
                         </button>
                       </div>
@@ -7919,7 +7920,7 @@ export default function App() {
                   {form.restore && (
                     <div className="bg-brand-50 rounded-xl px-4 py-3 text-sm text-brand-900 mt-3">
                       <div className="font-semibold mb-1">النسخة سليمة، وفيها:</div>
-                      <div className="text-xs">{form.restore.programs} برنامج · {form.restore.weeks} يوم · {form.restore.users} مستخدم · {form.restore.txns} عملية فيض</div>
+                      <div className="text-xs">{form.restore.programs} برنامج · {say(form.restore.weeks, 'day')} · {form.restore.users} مستخدم · {form.restore.txns} عملية فيض</div>
                       <button className={btnDanger + ' w-full mt-3'}
                         onClick={() => askConfirm('استبدال كل البيانات الحالية بهذه النسخة؟ ما فيه تراجع.', applyRestore, 'نعم، استرجع')}>
                         <RotateCcw size={15} /> استرجاع هذه النسخة
@@ -8043,7 +8044,7 @@ export default function App() {
                         </button>
                         <div className="shrink-0 text-left flex flex-col items-end gap-1">
                           <Badge tone={TONES[state]}>{state}</Badge>
-                          {regs.length > 0 && <span className="text-[10px] text-slate-400">{regs.length} تسجيل</span>}
+                          {regs.length > 0 && <span className="text-[10px] text-slate-400">{say(regs.length, 'signup')}</span>}
                         </div>
                         {/* المطالبة والسؤال عن الغائب يحتاجان طريقًا له، لا رقمًا يُقرأ */}
                         {wa && (
@@ -8377,7 +8378,7 @@ export default function App() {
             ) : (
               <>
                 <div className="flex items-center justify-between mt-4 mb-2">
-                  <span className="text-xs font-bold text-slate-600">{list.length} طالبًا · المختار {picked.size}</span>
+                  <span className="text-xs font-bold text-slate-600">{say(list.length, 'student')} · المختار {picked.size}</span>
                   <button className="text-xs text-brand-700 font-bold"
                     onClick={() => setForm({ ...form, picked: picked.size === list.length ? [] : list.map((x) => x.id) })}>
                     {picked.size === list.length ? 'إلغاء الكل' : 'اختر الكل'}
@@ -8523,7 +8524,7 @@ export default function App() {
                   );
                 })}
               </div>
-              <div className="text-xs text-slate-500 mt-2">مسجّل في <b>{(form.days || []).length}</b> من {(program?.weeks || []).length} يوم</div>
+              <div className="text-xs text-slate-500 mt-2">مسجّل في <b>{(form.days || []).length}</b> من {say((program?.weeks || []).length, 'day')}</div>
             </Field>
           )}
           {/* الاشتراك في التسجيل اليدوي: نفس خيارَي الرابط، لمن يدفع عندك */}
@@ -8540,7 +8541,7 @@ export default function App() {
                     onClick={() => setForm({ ...form, packId: pk.id, amount: pk.total, amountTouched: false, error: '' })}>
                     <span className="min-w-0">
                       <span className="block text-sm font-semibold text-slate-800">{pk.name}</span>
-                      <span className="block text-[11px] text-slate-400">{pk.span} جمع</span>
+                      <span className="block text-[11px] text-slate-400">{say(pk.span, 'friday')}</span>
                     </span>
                     <span className="shrink-0 font-bold text-brand-700">{fmt(pk.total)}</span>
                   </button>
@@ -8580,7 +8581,7 @@ export default function App() {
               label={isGrouped ? 'مبلغ الاشتراك (ر.س)' : 'المبلغ (ر.س)'}
               hint={isGrouped
                 ? (Number(program?.dayPrice || 0) > 0
-                  ? `مقترح من سعر اليوم (${fmt(program.dayPrice)} ر.س × ${(form.days || []).length} يوم). تقدر تعدّله.`
+                  ? `مقترح من سعر اليوم (${fmt(program.dayPrice)} ر.س × ${say((form.days || []).length, 'day')}). تقدر تعدّله.`
                   : 'المبلغ المدفوع فعليًا عن الأيام المسجّل فيها، يُحتسب مرة وحدة.')
                 : undefined}>
               <input type="number" className={inputCls} value={form.amount ?? ''}
@@ -10092,7 +10093,7 @@ export default function App() {
                               <div className="text-[11px] text-slate-400 mt-0.5">
                                 {[x.age && `${x.age} سنة`, x.grade, x.school].filter(Boolean).join(' · ') || 'بلا تفاصيل'}
                               </div>
-                              <div className="text-[11px] text-slate-500 mt-1">{historyOf(x.id).length} تسجيل</div>
+                              <div className="text-[11px] text-slate-500 mt-1">{say(historyOf(x.id).length, 'signup')}</div>
                             </>
                           ) : (
                             <>
@@ -10225,7 +10226,7 @@ function LedgerFinance({ ledger, accounts, locked, canTransfer, onAdd, onRemove,
       )}
       {isQuick(ledger) && (
         <div className="bg-brand-50 border border-brand-100 rounded-xl px-4 py-3 text-sm text-brand-900">
-          الإيراد الأساسي ({fmt(ledger.quickRevenue)} ر.س من {ledger.quickCount} طالب) مسجّل من تبويب «نظرة عامة».
+          الإيراد الأساسي ({fmt(ledger.quickRevenue)} ر.س من {say(ledger.quickCount, 'student')}) مسجّل من تبويب «نظرة عامة».
           اللي تضيفه هنا مصروفات وتحصيل إضافي وتوزيع.
         </div>
       )}
@@ -10395,7 +10396,7 @@ function AttendanceTable({ participants, statusOf, onSet, locked, subscriptionOf
               <span className="font-semibold text-slate-800 text-sm truncate block">{p.name}</span>
               {subDays != null && (
                 <span className="text-[11px] text-slate-400 flex items-center gap-1.5">
-                  {subDays === 1 ? 'مشترك يوم واحد' : subDays === totalDays ? `مشترك كل الأيام (${subDays})` : `مشترك ${subDays} من ${totalDays} أيام`}
+                  {subDays === 1 ? 'مشترك يوم واحد' : subDays === totalDays ? `مشترك كل الأيام (${subDays})` : `مشترك ${subDays} من ${say(totalDays, 'day')}`}
                   {onEdit && !locked && (
                     <button onClick={() => onEdit(p)} className="text-slate-300 hover:text-brand-600"><Pencil size={11} /></button>
                   )}
@@ -10730,7 +10731,7 @@ function SeparateReport({ program, accounts, canMoney }) {
               <tr key={w.id} className="border-t border-slate-50">
                 <td className="px-4 py-3 font-semibold text-slate-800">{w.name}</td>
                 <td className="px-4 py-3 text-slate-600">
-                  {isQuick(w) ? `${headcount(w)} طالب` : `${w.participants.filter((x) => x.attendance === 'حاضر').length} / ${w.participants.length}`}
+                  {isQuick(w) ? say(headcount(w), 'student') : `${w.participants.filter((x) => x.attendance === 'حاضر').length} / ${w.participants.length}`}
                 </td>
                 {canMoney && <>
                   <td className="px-4 py-3 text-green-600">{fmt(L.revenue(w))}</td>
@@ -11151,7 +11152,7 @@ function WeekReport({ week, accounts, canMoney, programName }) {
 
   return (
     <div className="space-y-3">
-      <InfoRow icon={UsersIcon} label="الطلاب المسجلين" value={`${headcount(week)} طالب`} />
+      <InfoRow icon={UsersIcon} label="الطلاب المسجلين" value={say(headcount(week), 'student')} />
       {!isQuick(week) && (
         <InfoRow icon={Check} label="الحاضرون" value={`${(week.participants || []).filter((p) => p.attendance === 'حاضر').length} من ${(week.participants || []).length}`} />
       )}

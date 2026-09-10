@@ -8,6 +8,7 @@ import { api } from './cloud.js';
 import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 import { isValidPhone } from './people.js';
 import { dataUrlBlob } from './receipt.js';
+import { say } from './adad.js';
 import PdfFirstPage from './pdfview.jsx';
 import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, coversAll, daysOf, RECEIPT_TYPES, RECEIPT_MAX, txt, TEXTS, CLOSED, CLOSED_WHY, waLink, fillTemplate, signupVars } from './signup.js';
 
@@ -915,9 +916,9 @@ export default function SignupPage({ token }) {
                             ما كتبتَه تحت اليومي — تاريخُه غالبًا. فالعين تقرأ
                             الاسم أولًا ثم تنزل للتفصيل، ولا يزاحمه في سطره.
                           */}
-                          {(pk.perDay ? pk.note : pk.days > 0 && `${pk.days} ${pk.days === 1 ? 'يوم' : 'أيام'}`) && (
+                          {(pk.perDay ? pk.note : pk.days > 0 && say(pk.days, 'day')) && (
                             <span className="block text-[11px] text-slate-400">
-                              {pk.perDay ? pk.note : `${pk.days} ${pk.days === 1 ? 'يوم' : 'أيام'}`}
+                              {pk.perDay ? pk.note : say(pk.days, 'day')}
                             </span>
                           )}
                         </span>
@@ -985,7 +986,7 @@ export default function SignupPage({ token }) {
                   )}
                   {dueFor(view, kid) > 0 && (
                     <div className="text-sm text-brand-800 bg-brand-50 rounded-xl px-3 py-2 mt-3 font-semibold">
-                      {view.usePackages && !pkg?.perDay ? pkg.name : `${picked} يوم`} · {fmt(dueFor(view, kid))} {SAR}
+                      {view.usePackages && !pkg?.perDay ? pkg.name : say(picked, 'day')} · {fmt(dueFor(view, kid))} {SAR}
                     </div>
                   )}
                 </Row>

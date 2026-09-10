@@ -5,6 +5,11 @@
  * والدرايف نسخة يملكها هو خارج الاستضافة كلها — لو ضاع الحساب نفسه.
  */
 
+import { say } from '../../src/adad.js';
+
+/** الحرف: «حرف» · «حرفين» · «٥ أحرف» · «١٦ حرفًا». */
+const LETTER = ['حرف', 'حرفين', 'أحرف', 'حرفًا'];
+
 export const SNAP = 'snap:';
 export const SNAP_INDEX = 'snapshots';
 export const STATUS = 'backup:last';
@@ -52,7 +57,7 @@ const toDrive = async (name, body, env) => {
      * تطابق اللي في السكربت. نقول أيهما بعدد الحروف — بلا كشف الكلمة نفسها.
      */
     if (!secret) return 'رفض: الكلمة ما وصلت الخادم (راجع DRIVE_HOOK_SECRET)';
-    return `رفض: الكلمة عندنا ${secret.length} حرفًا وما طابقت السكربت`;
+    return `رفض: الكلمة عندنا ${say(secret.length, LETTER)} وما طابقت السكربت`;
   } catch {
     return 'ما وصل — تأكد من الرابط';
   }

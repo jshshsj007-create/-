@@ -13,6 +13,8 @@
  * الذي يُصلَّح بلا علمك خللٌ ثانٍ.
  */
 
+import { say } from './adad.js';
+
 const num = (v) => Number(v || 0) || 0;
 const ledgersOf = (p) => [p, ...(p?.weeks || [])];
 
@@ -73,7 +75,7 @@ export const checkAll = (data, extra = {}) => {
   }
   const dupes = [...refs.entries()].filter(([, who]) => who.length > 1);
   if (dupes.length) {
-    add('refs', 'warn', `${dupes.length} رقم إيصال مكرّر.`, dupes.length,
+    add('refs', 'warn', `${say(dupes.length, 'number')} إيصالٍ مكرّر.`, dupes.length,
       dupes.slice(0, 4).map(([r, who]) => `${r}: ${who.join(' و')}`));
   }
 
@@ -91,7 +93,7 @@ export const checkAll = (data, extra = {}) => {
       if (out2 - net > 1) over.push(`${p.name || 'برنامج'}${l === p ? '' : ` · ${l.name || 'يوم'}`}: وُزّع ${Math.round(out2)} والصافي ${Math.round(net)}`);
     }
   }
-  if (over.length) add('over', 'bad', `${over.length} دفترًا وُزّع فيه أكثر من صافيه.`, over.length, over.slice(0, 4));
+  if (over.length) add('over', 'bad', `${say(over.length, 'ledger')} وُزّع فيه أكثر من صافيه.`, over.length, over.slice(0, 4));
 
   /* ------------------------- مبلغٌ سالب: خطأُ كتابةٍ غالبًا ------------------------- */
   const neg = [];
@@ -106,7 +108,7 @@ export const checkAll = (data, extra = {}) => {
       eye(w, l.schoolPayouts || []); eye(w, l.faidPayouts || []); eye(w, l.participants || []);
     }
   }
-  if (neg.length) add('neg', 'bad', `${neg.length} مبلغًا سالبًا.`, neg.length, neg.slice(0, 4));
+  if (neg.length) add('neg', 'bad', `${say(neg.length, 'amount')} سالبًا.`, neg.length, neg.slice(0, 4));
 
   /* -------- مشتركٌ بلا يوم: يختفي من كل قوائم الحضور وهو مسجّل ودافع -------- */
   const lost = [];
@@ -119,7 +121,7 @@ export const checkAll = (data, extra = {}) => {
       lost.push(`${p.name || 'برنامج'}: ${x.name || '—'}`);
     }
   }
-  if (lost.length) add('lost', 'bad', `${lost.length} مشتركًا ما له يومٌ قائم — ما يظهر في أي حضور.`, lost.length, lost.slice(0, 4));
+  if (lost.length) add('lost', 'bad', `${say(lost.length, 'member')} ما له يومٌ قائم — ما يظهر في أي حضور.`, lost.length, lost.slice(0, 4));
 
   /* ------------- سجلٌّ يشير إلى ما ذهب: طالبٌ حُذف ومشتركُه باقٍ ------------- */
   const students = new Set((data?.students || []).map((s) => s.id));
@@ -132,7 +134,7 @@ export const checkAll = (data, extra = {}) => {
     }
   }
   if (orphans.length) {
-    add('orphans', 'warn', `${orphans.length} مشتركًا مربوطًا بطالبٍ ما عاد موجودًا.`, orphans.length,
+    add('orphans', 'warn', `${say(orphans.length, 'member')} مربوطًا بطالبٍ ما عاد موجودًا.`, orphans.length,
       [...orphans.slice(0, 4), 'يشتغل عاديًّا، لكن تاريخه عبر المواسم ما يتجمّع.']);
   }
 
@@ -146,21 +148,21 @@ export const checkAll = (data, extra = {}) => {
     const perDay = p.signup.allowPerDay !== false && num(p.signup.price) > 0 && open > 0;
     if (!perDay && !(packDays && packs)) dead.push(p.name || 'برنامج');
   }
-  if (dead.length) add('dead', 'warn', `${dead.length} رابط تسجيل مفتوح وما يقبل أحدًا.`, dead.length, dead);
+  if (dead.length) add('dead', 'warn', `${say(dead.length, 'link')} تسجيلٍ مفتوح وما يقبل أحدًا.`, dead.length, dead);
 
   /* ---------------------- النسخة الاحتياطية: متى آخرها ---------------------- */
   const at = Number(extra?.backupAt || 0);
   const days = at ? Math.floor((Date.now() - at) / 86400000) : -1;
   if (days < 0) add('backup', 'warn', 'ما صارت نسخة احتياطية بعد.', 1, ['من شاشة النسخ الاحتياطي.']);
-  else if (days >= 3) add('backup', 'warn', `آخر نسخة احتياطية قبل ${days} يومًا.`, 1, []);
+  else if (days >= 3) add('backup', 'warn', `آخر نسخة احتياطية قبل ${say(days, 'day')}.`, 1, []);
 
   /* --------------------------- ومطابقة الدفترين --------------------------- */
   if (num(extra?.missingMoney) > 0) {
-    add('mal', 'bad', `دفتر المال يقول: ${extra.missingMoney} حركة ما لها أثر عندك.`, extra.missingMoney,
+    add('mal', 'bad', `دفتر المال يقول: ${say(extra.missingMoney, 'move')} ما لها أثر عندك.`, extra.missingMoney,
       [`مجموعها ${extra.missingMoneySum || 0} ر.س — من «طابق دفتر المال».`]);
   }
   if (num(extra?.missingSubs) > 0) {
-    add('sub', 'bad', `دفتر التسجيلات يقول: ${extra.missingSubs} تسجيلًا ما له أثر عندك.`, extra.missingSubs, []);
+    add('sub', 'bad', `دفتر التسجيلات يقول: ${say(extra.missingSubs, 'signup')} ما له أثر عندك.`, extra.missingSubs, []);
   }
 
   return out;

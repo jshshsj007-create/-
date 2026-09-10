@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from './cloud.js';
 import { qText, qError, Q_TEXTS } from './club.js';
+import { say } from './adad.js';
 import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 
 /**
@@ -17,7 +18,7 @@ import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 /**
  * كم بقي.
  *
- * تقريبٌ لا ثانية: «باقي ساعتان» تكفي من يقرأها، والعدُّ بالثواني يستعجل
+ * تقريبٌ لا ثانية: «باقي ساعتين» تكفي من يقرأها، والعدُّ بالثواني يستعجل
  * بلا داعٍ ويجعل الصفحة ترتجف. وما تحت الدقيقة يُقال «دقائق» ولا يُقال صفرًا.
  */
 const timeLeft = (closesAt, now = Date.now()) => {
@@ -25,11 +26,10 @@ const timeLeft = (closesAt, now = Date.now()) => {
   if (!closesAt || ms <= 0) return '';
   const m = Math.round(ms / 60000);
   if (m < 2) return 'باقي أقل من دقيقتين';
-  if (m < 60) return `باقي ${m} دقيقة`;
+  if (m < 60) return `باقي ${say(m, 'minute')}`;
   const h = Math.round(m / 60);
-  if (h < 24) return h === 1 ? 'باقية ساعة' : h === 2 ? 'باقيتان ساعتان' : `باقي ${h} ساعات`;
-  const d = Math.round(h / 24);
-  return d === 1 ? 'باقي يوم' : d === 2 ? 'باقيان يومان' : `باقي ${d} أيام`;
+  if (h < 24) return `باقي ${say(h, 'hour')}`;
+  return `باقي ${say(Math.round(h / 24), 'day')}`;
 };
 
 function Shell({ brand, children }) {
