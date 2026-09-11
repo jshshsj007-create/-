@@ -3,8 +3,7 @@ import {
   Home, BookOpen, Wallet, Settings, Plus, X, Check, ChevronLeft, Trash2, Pencil,
   Users as UsersIcon, Calendar, TrendingUp, TrendingDown, Layers, ShieldCheck,
   Lock, Unlock, Trophy, LogOut, KeyRound, Plane, Search, AlertTriangle, Send,
-  RotateCcw, Wand2, CalendarDays, FileText, Copy, Clock, BookMarked, Eye, EyeOff, Link2, MapPin,
-} from 'lucide-react';
+  RotateCcw, Wand2, CalendarDays, FileText, Copy, Clock, BookMarked, Eye, EyeOff, Link2, MapPin, Paperclip } from 'lucide-react';
 import { api, clone, merge3, readSession, writeSession, clearSession, readPending, writePending, clearPending } from './cloud.js';
 import {
   normalizePhone, isValidPhone, formatPhone, normalizeName, sameName,
@@ -4375,19 +4374,59 @@ export default function App() {
       || view === 'competitionDetail' || view === 'guardians' || view === 'guardianDetail' || view === 'lostStudent'
       || view === 'khayr' || view === 'khayrSession' || view === 'khayrMe'));
 
-  /** فلترة حسب طريقة الدفع: حساب معيّن، أو «ما دفع»، أو الكل. */
-  const byPay = (p) => payFilter === 'all' || p.accountId === payFilter;
+  /**
+   * الباقة التي اشترى بها هذا المشترك — اسمُها كما كان يوم سجّل.
+   *
+   * والاسم هو المفرِّق لا رقمُ الباقة: من اشترى «الموسم كامل» قبل شهرٍ يُفرز
+   * مع من اشتراه اليوم، ولو أُعيدت كتابة الباقة بينهما.
+   */
+  const PACK = 'pack:';
+  const packOf = (p) => String(p?.packageName || '').trim();
+
+  /** فلترة حسب طريقة الدفع: حساب معيّن، أو «ما دفع»، أو باقةٌ بعينها، أو الكل. */
+  const byPay = (p) => {
+    if (payFilter === 'all') return true;
+    if (payFilter.startsWith(PACK)) return packOf(p) === payFilter.slice(PACK.length);
+    return p.accountId === payFilter;
+  };
   const matches = (p) => (!search || p.name.includes(search)) && byPay(p);
 
-  /** خيارات الفلترة مع عدّاد كل خيار، مبنية من القائمة المعروضة. */
-  const payOptions = (list) => [
-    { id: 'all', label: 'الكل', count: list.length },
-    ...data.faidAccounts
-      .map((a) => ({ id: a.id, label: a.name, count: list.filter((p) => p.accountId === a.id).length }))
-      .filter((o) => o.count > 0),
-    ...(list.some((p) => p.accountId === 'unpaid')
-      ? [{ id: 'unpaid', label: 'ما دفع', count: list.filter((p) => p.accountId === 'unpaid').length }] : []),
-  ];
+  /**
+   * خيارات الفلترة مع عدّاد كل خيار، مبنية من القائمة المعروضة.
+   *
+   * والباقات بأسمائها شاراتٌ مستقلة: «مَن اشترك بالموسم كله؟» سؤالٌ يُسأل قبل
+   * كل يومٍ تقريبًا — من دفع مقدّمًا لا يُنتظر منه شيءٌ اليوم، ومن اشترى يومه
+   * يُسأل عنه. وكان الجواب يُلتقط بالعين من عمود المبلغ.
+   */
+  const payOptions = (list) => {
+    const packs = [...new Set(list.map(packOf).filter(Boolean))];
+    return [
+      { id: 'all', label: 'الكل', count: list.length },
+      ...packs.map((name) => ({ id: PACK + name, label: name, count: list.filter((p) => packOf(p) === name).length })),
+      ...data.faidAccounts
+        .map((a) => ({ id: a.id, label: a.name, count: list.filter((p) => p.accountId === a.id).length }))
+        .filter((o) => o.count > 0),
+      ...(list.some((p) => p.accountId === 'unpaid')
+        ? [{ id: 'unpaid', label: 'ما دفع', count: list.filter((p) => p.accountId === 'unpaid').length }] : []),
+    ];
+  };
+
+  /**
+   * ورقة التحويل التي أرفقها وليّ الأمر — تبقى مفتوحةً بعد التأكيد.
+   *
+   * كانت تُرى مرةً واحدة: في بطاقة الانتظار قبل أن تضغط «وصل»، ثم تختفي. وهي
+   * أوّلُ ما يُطلب بعد شهر — «فلانٌ يقول دفعت»، فتبي ترجع للورقة نفسها.
+   *
+   * ونبحث عنها برقم التسجيل لا في الصفّ وحده: مشترك الموسم ينزل صفًّا في كل
+   * يوم، والورقة في أولها — فمن فتح الجمعة الخامسة يجدها كما يجدها في الأولى.
+   */
+  const slipOf = (p) => {
+    if (p?.receipt) return p.receipt;
+    const ref = p?.ref;
+    if (!ref || !program) return null;
+    const eye = (rows) => (rows || []).find((x) => x?.ref === ref && x?.receipt)?.receipt || null;
+    return eye(program.participants) || (program.weeks || []).reduce((found, w) => found || eye(w.participants), null);
+  };
 
   /** مشاركو الدفتر بعد البحث والفلترة. */
   const allParticipants = activeLedger?.participants || [];
@@ -4879,6 +4918,8 @@ export default function App() {
                     locked={ledgerLocked}
                     onEdit={canMoney ? (p) => { setForm(participantForm(p, program.weeks)); setModal('editParticipant'); } : null}
                     onReceipt={canMoney ? sendReceipt : null} recBusy={recBusy}
+                    slipFor={canMoney ? slipOf : null}
+                    onSlip={canMoney ? (x) => { setForm({ receipt: slipOf(x), who: x.name }); setModal('viewReceipt'); } : null}
                     onRemove={isAdmin ? (p) => askConfirm(`حذف المشترك «${p.name}»؟`, () => removeParticipant(p.id)) : null}
                   />
                 )}
@@ -5854,6 +5895,8 @@ export default function App() {
                     onSet={(p, s) => setAttendance(p.id, s, week.id)}
                     onEdit={canMoney ? (p) => { setForm(participantForm(p, program.weeks)); setModal('editParticipant'); } : null}
                     onReceipt={canMoney ? sendReceipt : null} recBusy={recBusy}
+                    slipFor={canMoney ? slipOf : null}
+                    onSlip={canMoney ? (x) => { setForm({ receipt: slipOf(x), who: x.name }); setModal('viewReceipt'); } : null}
                   />
                 )}
                 <div className="mt-3 text-sm text-slate-500 px-1 flex flex-wrap gap-x-4 gap-y-1">
@@ -6009,6 +6052,8 @@ export default function App() {
                         locked={ledgerLocked}
                         onEdit={canMoney ? (p) => { setForm(participantForm(p)); setModal('editParticipant'); } : null}
                         onReceipt={canMoney ? sendReceipt : null} recBusy={recBusy}
+                        slipFor={canMoney ? slipOf : null}
+                        onSlip={canMoney ? (x) => { setForm({ receipt: slipOf(x), who: x.name }); setModal('viewReceipt'); } : null}
                         onRemove={isAdmin ? (p) => askConfirm(`حذف «${p.name}»؟`, () => removeParticipant(p.id)) : null}
                       />
                     )}
@@ -10265,7 +10310,7 @@ function LedgerFinance({ ledger, accounts, locked, canTransfer, onAdd, onRemove,
   );
 }
 
-function ParticipantsTable({ participants, accounts, showAttendance, statusOf, onSetAttendance, onEdit, onRemove, locked, weeks, showMoney = true, onConfirmWaiting, onReceipt, recBusy }) {
+function ParticipantsTable({ participants, accounts, showAttendance, statusOf, onSetAttendance, onEdit, onRemove, locked, weeks, showMoney = true, onConfirmWaiting, onReceipt, recBusy, onSlip, slipFor }) {
   if (!participants.length) {
     return <div className={emptyCls}>ما فيه نتائج.</div>;
   }
@@ -10285,6 +10330,17 @@ function ParticipantsTable({ participants, accounts, showAttendance, statusOf, o
             <tr key={p.id} className={`border-t border-slate-50 ${p._waiting ? 'bg-amber-50/60' : ''}`}>
               <td className="px-4 py-3 font-semibold text-slate-800">
                 {p.name}
+                {/*
+                  ورقةُ تحويله بجنب اسمه: عمود الأزرار في يسار الجدول، وفي
+                  الجوّال يُسحب إليه سحبًا — والورقة تُطلب فجأةً، فمكانُها
+                  حيث تقع العين.
+                */}
+                {onSlip && slipFor && slipFor(p) && (
+                  <button type="button" onClick={() => onSlip(p)} title="ورقة التحويل"
+                    className="mr-1.5 align-middle text-slate-300 hover:text-brand-600">
+                    <Paperclip size={13} />
+                  </button>
+                )}
                 {/* سجّل نفسه من الرابط ولسه ما تأكّد وصول مبلغه */}
                 {p.pending && (
                   <span className="mr-2 align-middle">
@@ -10363,7 +10419,7 @@ function ParticipantsTable({ participants, accounts, showAttendance, statusOf, o
 }
 
 /** جدول حضور يوم واحد في البرنامج المجمّع. */
-function AttendanceTable({ participants, statusOf, onSet, locked, subscriptionOf, totalDays, onEdit, onConfirmWaiting }) {
+function AttendanceTable({ participants, statusOf, onSet, locked, subscriptionOf, totalDays, onEdit, onConfirmWaiting, onSlip, slipFor }) {
   if (!participants.length) return <div className={emptyCls}>ما فيه نتائج.</div>;
   return (
     <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden divide-y divide-slate-50">
@@ -10399,6 +10455,11 @@ function AttendanceTable({ participants, statusOf, onSet, locked, subscriptionOf
                   {subDays === 1 ? 'مشترك يوم واحد' : subDays === totalDays ? `مشترك كل الأيام (${subDays})` : `مشترك ${subDays} من ${say(totalDays, 'day')}`}
                   {onEdit && !locked && (
                     <button onClick={() => onEdit(p)} className="text-slate-300 hover:text-brand-600"><Pencil size={11} /></button>
+                  )}
+                  {/* وورقةُ تحويله معها — تبقى مفتوحةً بعد التأكيد لا قبله وحده */}
+                  {onSlip && slipFor && slipFor(p) && (
+                    <button type="button" onClick={() => onSlip(p)} title="ورقة التحويل"
+                      className="text-slate-300 hover:text-brand-600"><Paperclip size={11} /></button>
                   )}
                 </span>
               )}
