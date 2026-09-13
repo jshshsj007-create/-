@@ -74,4 +74,5 @@ node tests/money.test.mjs
 node tests/watch.test.mjs
 node tests/adad.test.mjs
 node tests/report.test.mjs
+node tests/sheet.test.mjs
 rm -rf "$STUB" tests/build

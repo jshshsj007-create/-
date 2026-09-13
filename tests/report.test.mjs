@@ -74,7 +74,7 @@ test('وبلا نادٍ لا يظهر عنوانه', () => {
 
 test('واليوم السريع بلا حضور: عددٌ وحده', () => {
   const t = weekReport({ week: 'الأول', students: 40 });
-  assert.ok(t.includes('الطلاب المسجَّلون: 40'));
+  assert.ok(t.includes('الطلاب المسجلون: 40'));
   assert.ok(!t.includes('الحاضرون'));
 });
 

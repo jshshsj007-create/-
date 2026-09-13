@@ -42,6 +42,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 import PdfFirstPage from './pdfview.jsx';
 import { say } from './adad.js';
 import { weekReport } from './report.js';
+import { reportSheet, sheetFileName } from './sheet.js';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
@@ -11240,6 +11241,41 @@ function weekReportText(week, programName, canMoney, { term = '', club = [] } = 
 
 function WeekReport({ week, accounts, canMoney, programName, term, club }) {
   const [shared, setShared] = useState('');
+  const [busy, setBusy] = useState(false);
+  /**
+   * ورقةٌ تُرسَل لمن يُرفع إليه.
+   *
+   * الرسالة في القروب تكفي المتابع، ولا تكفي رئيس المجلس — فهذي ورقةٌ واحدة
+   * بترويسةٍ وشعار، تُفتح في كل جهازٍ وتُطبع كما تُرى.
+   */
+  const sheet = async () => {
+    if (busy) return;
+    setBusy(true);
+    setShared('');
+    try {
+      const rows = week.participants || [];
+      const blob = await reportSheet({
+        week: week.name, program: programName, term, date: week.date,
+        students: headcount(week),
+        ...(isQuick(week) ? {} : {
+          present: rows.filter((p) => p.attendance === 'حاضر').length,
+          enrolled: rows.length,
+        }),
+        money: canMoney ? {
+          revenue: L.revenue(week), expenses: L.expenses(week), net: L.net(week),
+          school: L.school(week), faid: L.faid(week),
+        } : null,
+        club,
+      }, { logo: LOGO_MARK_WHITE, team: TEAM_NAME, stamp: hijri(Date.now()) });
+      const how = await shareFile(blob, sheetFileName(week.date), `تقرير ${week.name}`);
+      setShared(how === 'downloaded' ? 'نزلت الورقة' : '');
+    } catch {
+      setShared('ما قدرنا نجهّز الورقة. جرّب مرة ثانية.');
+    } finally {
+      setBusy(false);
+      setTimeout(() => setShared(''), 4000);
+    }
+  };
   const share = async () => {
     const text = weekReportText(week, programName, canMoney, { term, club });
     try {
@@ -11254,7 +11290,7 @@ function WeekReport({ week, accounts, canMoney, programName, term, club }) {
 
   return (
     <div className="space-y-3">
-      <InfoRow icon={UsersIcon} label="الطلاب المسجَّلون" value={say(headcount(week), 'student')} />
+      <InfoRow icon={UsersIcon} label="الطلاب المسجلون" value={say(headcount(week), 'student')} />
       {!isQuick(week) && (
         <InfoRow icon={Check} label="الحاضرون" value={`${(week.participants || []).filter((p) => p.attendance === 'حاضر').length} من ${(week.participants || []).length}`} />
       )}
@@ -11275,6 +11311,10 @@ function WeekReport({ week, accounts, canMoney, programName, term, club }) {
       )}
 
       <button className={btnPrimary + ' w-full'} onClick={share}><Send size={16} /> مشاركة التقرير</button>
+      {/* ورقةٌ رسمية تُرسَل لمن فوقك — غير الرسالة التي تُلصق في القروب */}
+      <button className={btnGhostBox + ' w-full'} onClick={sheet} disabled={busy}>
+        <FileText size={16} /> {busy ? 'نجهّز الورقة…' : 'ورقة التقرير PDF'}
+      </button>
       {shared && <div className="text-xs text-center text-slate-500">{shared}</div>}
     </div>
   );

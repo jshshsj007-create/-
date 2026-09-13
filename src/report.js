@@ -45,7 +45,7 @@ export const weekReport = ({
   ].filter(Boolean).join('\n');
 
   const who = section('الحضور', [
-    row('الطلاب المسجَّلون', students == null ? '' : students),
+    row('الطلاب المسجلون', students == null ? '' : students),
     present == null || enrolled == null ? '' : (() => {
       // النسبة تُقال مع العدد: «٥٦ من ٥٨» يُقرأ رقمين، و«٩٧٪» يُقرأ حكمًا
       const p = enrolled > 0 ? Math.round((present / enrolled) * 100) : null;
