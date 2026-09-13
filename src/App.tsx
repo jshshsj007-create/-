@@ -9186,7 +9186,25 @@ export default function App() {
             new Promise((done) => setTimeout(done, 2600)),
           ]);
           if (!drawn) { setForm((f) => ({ ...f, step: '', error: 'ما تمت القرعة. تأكد من النت وجرّب.' })); return; }
-          setForm((f) => ({ ...f, step: 'done', drawn }));
+          // يُكشف واحدًا واحدًا: أول اسمٍ الآن، وما بعده بضغطةٍ منك
+          setForm((f) => ({ ...f, step: 'done', drawn, at: 1 }));
+        };
+        /**
+         * الفائز التالي: تقليبٌ ثانٍ ثم اسم.
+         *
+         * القرعة كلُّها حُسمت في الخادم من أول ضغطة — وهذا شرطُ نزاهتها، فلا
+         * يُعاد السحب ولا يُنتقى منه. لكن **عرضَها** دفعةً واحدة يُفسد المشهد:
+         * أربعةُ أسماء تهبط على الشاشة معًا فلا ينتظر أحد. فتُكشف واحدًا
+         * واحدًا، بينها تقليبٌ أقصر، والأسماءُ المكشوفة تبقى فوق.
+         *
+         * ولا يُقلَّب على من فاز: بقاؤه في الكيس يوهم أنه قد يعود.
+         */
+        const reveal = async () => {
+          const won = (form.drawn?.winners || []).slice(0, form.at || 1);
+          const left = names.filter((n) => !won.includes(n));
+          setForm((f) => ({ ...f, step: 'spin', reel: left.length ? left : names }));
+          await new Promise((done) => setTimeout(done, 1800));
+          setForm((f) => ({ ...f, step: 'done', at: (f.at || 1) + 1 }));
         };
         const pick = 'flex-1 text-center border rounded-lg py-2 text-sm font-semibold';
         const on = 'bg-brand-700 text-white border-brand-700';
@@ -9203,22 +9221,40 @@ export default function App() {
 
         if (form.step === 'done' && form.drawn) {
           const win = form.drawn.winners || [];
+          const at = Math.min(Math.max(1, form.at || 1), win.length);
+          const shown = win.slice(0, at);
+          const all = at >= win.length;
           const share = `${question.text}\n\n🎉 ${win.join(' · ')}\nمن بين ${form.drawn.poolSize} ${form.drawn.pool === 'all' ? 'جاوبوا' : 'جاوبوا صح'}`;
           return (
-            <Modal title={win.length > 1 ? 'الفائزون' : 'الفائز'} onClose={closeModal}>
+            <Modal title={win.length > 1 ? `الفائزون (${at} من ${win.length})` : 'الفائز'} onClose={all ? closeModal : () => {}}>
               <div className="bg-brand-700 rounded-2xl py-6 px-4 text-center text-white">
                 <div className="text-3xl">🎉</div>
-                {win.map((n) => <div key={n} className="text-[21px] font-extrabold mt-1.5 leading-8">{n}</div>)}
+                {/* المكشوفون يبقون فوق، وآخرُهم أبرزُهم — هو الذي خرج الآن */}
+                {shown.map((n, i) => (
+                  <div key={n} className={i === shown.length - 1
+                    ? 'text-[21px] font-extrabold mt-1.5 leading-8'
+                    : 'text-[15px] font-bold mt-1 leading-6 text-brand-100'}>
+                    {win.length > 1 && <span className="text-brand-300 text-[13px] ml-1.5">{i + 1}.</span>}{n}
+                  </div>
+                ))}
                 <div className="text-[11px] text-brand-200 mt-2">
                   من بين {form.drawn.poolSize} {form.drawn.pool === 'all' ? 'جاوبوا' : 'جاوبوا صح'}
                 </div>
               </div>
-              <a className={btnGhostBox + ' w-full mt-3'} target="_blank" rel="noreferrer"
-                href={`https://wa.me/?text=${encodeURIComponent(share)}`}>
-                <Send size={16} /> شارك في القروب
-              </a>
-              <div className="text-[11px] text-slate-400 text-center mt-3">انكتبت في سجلّ القرعة.</div>
-              <button className={btnPrimary + ' w-full mt-4'} onClick={closeModal}>تمام</button>
+              {!all ? (
+                <button className={btnPrimary + ' w-full mt-4'} onClick={reveal}>
+                  اسحب التالي ({at + 1} من {win.length})
+                </button>
+              ) : (
+                <>
+                  <a className={btnGhostBox + ' w-full mt-3'} target="_blank" rel="noreferrer"
+                    href={`https://wa.me/?text=${encodeURIComponent(share)}`}>
+                    <Send size={16} /> شارك في القروب
+                  </a>
+                  <div className="text-[11px] text-slate-400 text-center mt-3">انكتبت في سجلّ القرعة.</div>
+                  <button className={btnPrimary + ' w-full mt-4'} onClick={closeModal}>تمام</button>
+                </>
+              )}
             </Modal>
           );
         }
