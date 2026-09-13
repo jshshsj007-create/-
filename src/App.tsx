@@ -41,6 +41,7 @@ import {
 import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 import PdfFirstPage from './pdfview.jsx';
 import { say } from './adad.js';
+import { weekReport } from './report.js';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
@@ -6075,13 +6076,24 @@ export default function App() {
                   </div>
                 )}
 
-                {activeWeekTab === 'report' && (
+                {activeWeekTab === 'report' && (() => {
+                  /*
+                    ما سُوّي من النادي يدخل نصّ المشاركة كما يدخل الشاشة —
+                    ومن لا صلاحية له في النادي لا يراه في الاثنين.
+                  */
+                  const seesClub = can('النادي');
+                  const runs = seesClub ? weekRuns(data, program.id, week.id) : null;
+                  const clubLines = runs
+                    ? clubRows(data, program, runs, week).map((r) => [r.name, r.kind].filter(Boolean).join(' — '))
+                    : [];
+                  return (
                   <>
-                    {/* ما سُوّي في هذا اليوم من النادي — لمن له صلاحيته */}
-                    {can('النادي') && <ClubReport data={data} program={program} week={week} />}
-                    <WeekReport week={week} accounts={data.faidAccounts} canMoney={canMoney} programName={program.name} />
+                    {seesClub && <ClubReport data={data} program={program} week={week} />}
+                    <WeekReport week={week} accounts={data.faidAccounts} canMoney={canMoney} programName={program.name}
+                      term={termText(program.termKey)} club={clubLines} />
                   </>
-                )}
+                  );
+                })()}
               </>
             )}
           </div>
@@ -10643,13 +10655,17 @@ function ProgramTotals({ program }) {
  *
  * وفي اليوم لا يُكتب اسمه في كل سطر — الشاشة كلها عنه.
  */
-function ClubReport({ data, program, week }) {
-  const runs = week ? weekRuns(data, program.id, week.id) : programRuns(data, program.id);
-  const c = clubCounts(runs);
-  if (!c.competitions && !c.leagues && !c.cups && !c.questions) return null;
+/**
+ * ما نُفِّذ من النادي، صفًّا صفًّا.
+ *
+ * تُبنى هنا لا في الرسم، لأن تقرير المشاركة يحتاجها كما تحتاجها الشاشة —
+ * وكان يكتبها صاحبُ التطبيق بيده تحت الرسالة، فتجي مرةً «أقيمت مسابقة»
+ * ومرةً «بطولتين»، وتُنسى مرة.
+ */
+function clubRows(data, program, runs, week) {
   const weekOf = (id) => (week ? '' : (program.weeks || []).find((w) => w.id === id)?.name || '');
   const compName = (id) => (data.competitions || []).find((x) => x.id === id)?.name || 'مسابقة محذوفة';
-  const rows = [
+  return [
     ...runs.competitions.map((r) => ({ id: r.id, name: compName(r.compId), kind: 'مسابقة', week: weekOf(r.weekId) })),
     ...runs.tournaments.map((t) => {
       const ch = champion(t);
@@ -10659,9 +10675,16 @@ function ClubReport({ data, program, week }) {
       };
     }),
     ...runs.questions.map((q) => ({
-      id: q.id, name: q.text, kind: `سؤال · ${questionTally(q).total} جاوبوا`, week: weekOf(q.weekId),
+      id: q.id, name: q.text, kind: `سؤال · ${say(questionTally(q).total, 'answer')} `.trim(), week: weekOf(q.weekId),
     })),
   ];
+}
+
+function ClubReport({ data, program, week }) {
+  const runs = week ? weekRuns(data, program.id, week.id) : programRuns(data, program.id);
+  const c = clubCounts(runs);
+  if (!c.competitions && !c.leagues && !c.cups && !c.questions) return null;
+  const rows = clubRows(data, program, runs, week);
   const tiles = [
     ['المسابقات', c.competitions], ['الدوريات', c.leagues],
     ['الكؤوس', c.cups], ['أسئلة اليوم', c.questions],
@@ -11179,28 +11202,46 @@ function SeasonsReport({ programs, terms, onBack, onOpenSeason, onOpenProgram })
   );
 }
 
+/**
+ * الترم كما يُقرأ: «1448-الأول» ← «الترم الأول 1448 هـ».
+ *
+ * والمفتاح يحمل الاسم مجرّدًا («الأول») كما يكتبه صاحبُ التطبيق، فنلبسه كلمةَ
+ * «الترم» إلا أن يكون كتبها بنفسه — فلا تتكرّر.
+ */
+const termText = (key) => {
+  const s = String(key || '').trim();
+  const i = s.indexOf('-');
+  if (i < 0) return s;
+  const name = s.slice(i + 1).trim();
+  if (!name) return '';
+  return `${name.startsWith('الترم') ? name : `الترم ${name}`} ${s.slice(0, i)} هـ`;
+};
+
 /** نص التقرير للمشاركة عبر واتساب أو أي تطبيق. */
-function weekReportText(week, programName, canMoney) {
-  const lines = [`تقرير ${week.name} - ${programName}`];
-  if (week.date) lines.push(`التاريخ: ${week.date}`);
-  lines.push(`الطلاب المسجلين: ${headcount(week)}`);
-  if (!isQuick(week)) {
-    lines.push(`الحاضرون: ${(week.participants || []).filter((p) => p.attendance === 'حاضر').length} من ${(week.participants || []).length}`);
-  }
-  if (canMoney) {
-    lines.push(`إجمالي الإيراد: ${fmt(L.revenue(week))} ر.س`);
-    lines.push(`المصروفات: ${fmt(L.expenses(week))} ر.س`);
-    lines.push(`الصافي: ${fmt(L.net(week))} ر.س`);
-    lines.push(`نصيب مدارس الرواد: ${fmt(L.school(week))} ر.س`);
-    lines.push(`نصيب فريق فيض: ${fmt(L.faid(week))} ر.س`);
-  }
-  return lines.join('\n');
+function weekReportText(week, programName, canMoney, { term = '', club = [] } = {}) {
+  const rows = week.participants || [];
+  return weekReport({
+    week: week.name,
+    program: programName,
+    term,
+    date: week.date,
+    students: headcount(week),
+    ...(isQuick(week) ? {} : {
+      present: rows.filter((p) => p.attendance === 'حاضر').length,
+      enrolled: rows.length,
+    }),
+    money: canMoney ? {
+      revenue: L.revenue(week), expenses: L.expenses(week), net: L.net(week),
+      school: L.school(week), faid: L.faid(week),
+    } : null,
+    club,
+  });
 }
 
-function WeekReport({ week, accounts, canMoney, programName }) {
+function WeekReport({ week, accounts, canMoney, programName, term, club }) {
   const [shared, setShared] = useState('');
   const share = async () => {
-    const text = weekReportText(week, programName, canMoney);
+    const text = weekReportText(week, programName, canMoney, { term, club });
     try {
       if (navigator.share) { await navigator.share({ title: `تقرير ${week.name}`, text }); return; }
       await navigator.clipboard.writeText(text);
@@ -11213,7 +11254,7 @@ function WeekReport({ week, accounts, canMoney, programName }) {
 
   return (
     <div className="space-y-3">
-      <InfoRow icon={UsersIcon} label="الطلاب المسجلين" value={say(headcount(week), 'student')} />
+      <InfoRow icon={UsersIcon} label="الطلاب المسجَّلون" value={say(headcount(week), 'student')} />
       {!isQuick(week) && (
         <InfoRow icon={Check} label="الحاضرون" value={`${(week.participants || []).filter((p) => p.attendance === 'حاضر').length} من ${(week.participants || []).length}`} />
       )}
