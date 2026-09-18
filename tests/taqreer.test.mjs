@@ -104,11 +104,29 @@ test('تاريخ اليوم يُكتب كما تُكتب تواريخ الأسا
   assert.match(key, /^\d{4}\/\d{2}\/\d{2}$/);
 });
 
-test('والمقارنة لا تنكسر على صفرٍ زائد ولا مسافة', () => {
+test('والمقارنة لا تنكسر على صفرٍ زائد ولا مسافة ولا «هـ»', () => {
   assert.equal(sameDate('1448/03/09', '1448/3/9'), true);
   assert.equal(sameDate(' 1448/03/09 ', '1448/03/09'), true);
+  // وقعت عند صاحب التطبيق: يومٌ تاريخُه «1448/04/07هـ» ما طُلب عنه تقرير
+  assert.equal(sameDate('1448/04/07هـ', '1448/04/07'), true);
+  assert.equal(sameDate('1448/04/07 هـ', '1448/04/07'), true);
+  assert.equal(sameDate('١٤٤٨/٠٤/٠٧', '1448/04/07'), true);
   assert.equal(sameDate('', '1448/03/09'), false);
   assert.equal(sameDate('1448/03/09', '1448/03/10'), false);
+});
+
+test('والترتيب كذلك: «هـ» في آخر التاريخ لا تُسقط اليوم', () => {
+  assert.equal(dateRank('1448/04/07هـ'), dateRank('1448/04/07'));
+  assert.equal(dateRank('١٤٤٨/٠٤/٠٧'), dateRank('1448/04/07'));
+  assert.ok(dateRank('1448/04/07هـ') > 0);
+});
+
+test('واليوم المكتوب بـ«هـ» يُطالَب بتقريره', () => {
+  const [y, m, d] = hijriKey(Date.now()).split('/');
+  const programs = [{ id: 'p1', weeks: [{ id: 'w1', name: 'الأسبوع الثاني', date: `${y}/${m}/${d}هـ` }] }];
+  const got = owedDays(programs, null, Date.now());
+  assert.equal(got.length, 1);
+  assert.equal(got[0].late, false);
 });
 
 test('يوم اليوم هو الأسبوع الذي تاريخه اليوم', () => {

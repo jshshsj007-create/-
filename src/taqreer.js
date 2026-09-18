@@ -33,10 +33,25 @@ export const hijriKey = (ms) => {
   }
 };
 
-/** التاريخ كما كُتب قد يجي «1448/3/9» أو بمسافات — فنوحّده قبل المقارنة. */
+/**
+ * أجزاء التاريخ كما كُتب بيد صاحبه.
+ *
+ * ويُكتب بأشكال: «1448/3/9» و«1448/03/09» و**«1448/04/07هـ»** — وهذي
+ * الأخيرة أسقطت اليوم كلَّه عند صاحب التطبيق: قرأتُ «07هـ» رقمًا فلم يكن
+ * رقمًا، فما طلب التطبيق تقريرًا من أحد وإعداداتُه صحيحة.
+ *
+ * فما ليس رقمًا يُشال من كل جزء — «هـ» وما شابهها — والأرقام العربية تُردّ
+ * إلى صورتها، فالتاريخ يُقرأ كما قُصد لا كما كُتب.
+ */
+const AR_NUM = '٠١٢٣٤٥٦٧٨٩';
+const parts = (s) => String(s || '')
+  .replace(/[٠-٩]/g, (d) => String(AR_NUM.indexOf(d)))
+  .split('/')
+  .map((x) => Number(String(x).replace(/\D+/g, '')));
+
+/** التاريخ كما كُتب قد يجي «1448/3/9» أو بمسافات أو بـ«هـ» — فنوحّده قبل المقارنة. */
 export const sameDate = (a, b) => {
-  const norm = (s) => String(s || '').trim().replace(/\s+/g, '')
-    .split('/').map((x) => String(Number(x) || x)).join('/');
+  const norm = (s) => { const [y, m, d] = parts(s); return y && m && d ? `${y}/${m}/${d}` : ''; };
   const A = norm(a), B = norm(b);
   return !!A && A === B;
 };
@@ -62,7 +77,7 @@ export const dayNow = (programs, sees, ms) => {
 
 /** رقمٌ للترتيب من تاريخٍ هجريٍّ مكتوب — للمقارنة لا للحساب. */
 export const dateRank = (s) => {
-  const [y, m, d] = String(s || '').trim().split('/').map((x) => Number(x));
+  const [y, m, d] = parts(s);
   if (!y || !m || !d) return 0;
   return y * 10000 + m * 100 + d;
 };
