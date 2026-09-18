@@ -10,7 +10,7 @@
 src/App.tsx             التطبيق (مكوّن واحد كبير + دوال الحساب المصدَّرة للاختبار)
 src/SignupPage.jsx      صفحة وليّ الأمر — خارج التطبيق، بلا تسجيل دخول
 src/QuestionPage.jsx    سؤال اليوم — كذلك
-src/*.js                منطقٌ خالصٌ يُختبر بلا متصفّح (signup, club, money, watch, adad …)
+src/*.js                منطقٌ خالصٌ يُختبر بلا متصفّح (signup, club, money, watch, adad, taqreer …)
 netlify/functions/      الخادم: state.mjs وحده، وكل العمليات تمرّ به
 netlify/lib/            النسخ الاحتياطي وكلمات المرور
 tests/run.sh            كل الاختبارات

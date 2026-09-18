@@ -106,6 +106,30 @@ test('ولا يقسم على صفرٍ مسجَّل', () => {
   assert.equal(s[0].rows[0][1], '0 من 0');
 });
 
+test('صناديق الورقة الثلاثة الجديدة، بترتيبها بعد النادي', () => {
+  const s = sheetSections({
+    students: 10, club: ['الكنز المفقود — مسابقة'],
+    qiyami: [{ title: 'برّ الوالدين', by: 'ماجد الدوسري' }],
+    notes: ['سعد العتيبي', 'فهد الزهراني'],
+    reports: '5 من 5',
+  });
+  assert.deepEqual(s.map((x) => x.title), ['الحضور', 'النادي', 'القيمي', 'ملاحظات سلوكية', 'تقارير الموظفين']);
+  assert.deepEqual(s[2].rows[0], ['برّ الوالدين', 'ماجد الدوسري']);
+  assert.equal(s[3].rows[0][1], '2');
+  assert.ok(s[3].lines[0].includes('سعد العتيبي · فهد الزهراني'));
+  assert.equal(s[4].rows[0][1], '5 من 5');
+});
+
+test('وقيميٌّ بلا ملقٍ يُكتب عنوانه ولا يُترك فارغًا', () => {
+  const s = sheetSections({ qiyami: [{ title: 'برّ الوالدين', by: '' }] });
+  assert.equal(s[0].rows[0][1], '—');
+});
+
+test('وما حُجب لا يُطبع له صندوق', () => {
+  const s = sheetSections({ students: 3, qiyami: [], notes: [], reports: '' });
+  assert.deepEqual(s.map((x) => x.title), ['الحضور']);
+});
+
 test('واسم الملف لاتينيّ فما يُتجاهَل عند التنزيل', () => {
   assert.equal(sheetFileName('1448/03/05'), 'faydh-report-1448-03-05.pdf');
   assert.equal(sheetFileName(''), 'faydh-report-week.pdf');

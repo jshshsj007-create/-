@@ -36,12 +36,17 @@ const section = (title, lines) => {
 export const weekReport = ({
   week = '', program = '', term = '', date = '',
   students = null, present = null, enrolled = null,
-  money: m = null, club = [],
+  money: m = null, club = [], summary = [],
 } = {}) => {
   const head = [
     `تقرير ${clean(week) || 'اليوم'}`,
     [clean(program), clean(term)].filter(Boolean).join(' · '),
     row('التاريخ', clean(date)),
+    /**
+     * ملخّصُ اليوم في رأسه: كم مسابقةً أُقيمت، وهل كان قيمي، ومن كُتبت عليه
+     * ملاحظة. يُقرأ في سطرين قبل أن يُقرأ التفصيل.
+     */
+    ...(summary || []).map((s) => clean(s)).filter(Boolean),
   ].filter(Boolean).join('\n');
 
   const who = section('الحضور', [

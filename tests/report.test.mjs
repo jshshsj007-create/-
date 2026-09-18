@@ -93,6 +93,23 @@ test('ولا ينكسر على فراغٍ كامل', () => {
   assert.equal(weekReport({}).split('\n').length, 1);
 });
 
+test('ملخّص اليوم يعلو التقرير، تحت التاريخ', () => {
+  const t = weekReport({
+    week: 'الأسبوع الأول', program: 'خريف الرواد', date: '1448/03/05', students: 3,
+    summary: ['أُقيمت اليوم 3 مسابقات', 'القيمي: «برّ الوالدين» — ألقاه ماجد'],
+  }).split('\n');
+  assert.equal(t[2], 'التاريخ: 1448/03/05');
+  assert.equal(t[3], 'أُقيمت اليوم 3 مسابقات');
+  assert.ok(t[4].includes('برّ الوالدين'));
+  assert.ok(t.indexOf('— الحضور —') > 4, 'والملخّص فوق الأقسام لا بينها');
+});
+
+test('وبلا ملخّصٍ لا يتغيّر رأسُ التقرير', () => {
+  assert.equal(weekReport({ week: 'الأول', students: 3 }).split('\n')[0], 'تقرير الأول');
+  assert.equal(weekReport({ week: 'الأول', students: 3, summary: ['', '  '] }).split('\n').length,
+    weekReport({ week: 'الأول', students: 3 }).split('\n').length);
+});
+
 test('والصفر مبلغٌ يُقال، لا يُطوى', () => {
   const t = weekReport({ week: 'الأول', money: { revenue: 0, expenses: 0, net: 0, school: 0, faid: 0 } });
   assert.ok(t.includes('الإيراد: 0 ر.س'));

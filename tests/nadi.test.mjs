@@ -7,6 +7,7 @@ import {
   qText, qError, questionView, validateAnswer, applyAnswer, LEAGUE, CUP,
   drawPool, pastWinners, pickWinners, makeDraw, applyDraw,
   publicQuestion, questionExpired, drawPoolMany, pastWinnersMany, makeDrawMany, applyDrawMany,
+  leagueRounds, matchOf, addRound, canDropRound, dropRound, LEAGUE_ROUNDS_MAX,
 } from '../src/club.js';
 
 let passed = 0;
@@ -200,6 +201,74 @@ test('بطل الدوري لا يُتوَّج قبل أن تكتمل مباري�
     ],
   };
   assert.equal(leagueChampion(full).name, 'الصقور');
+});
+
+/* ------------------------------- الجولات ------------------------------- */
+
+test('الدوري يبدأ بجولة، والقديم بلا رقمٍ جولةٌ أولى', () => {
+  assert.equal(leagueRounds({}), 1);
+  assert.equal(leagueRounds({ rounds: 3 }), 3);
+  assert.equal(leagueRounds({ rounds: 99 }), LEAGUE_ROUNDS_MAX);
+  assert.equal(leagueRounds({ rounds: 0 }), 1);
+});
+
+test('وكل جولة تعيد المواجهات كاملة', () => {
+  assert.equal(leagueFixtures(three.teams).length, 3);
+  assert.equal(leagueFixtures(three.teams, 2).length, 6);
+  assert.deepEqual(leagueFixtures(three.teams, 2).map((f) => f.leg), [0, 0, 0, 1, 1, 1]);
+});
+
+test('ونتائج الدوريات المسجَّلة ما تضيع بالزيادة', () => {
+  const old = { ...three, matches: [{ aId: 'a', bId: 'b', aScore: 2, bScore: 0 }] };
+  const fx = leagueFixtures(old.teams, 2)[0];
+  assert.equal(matchOf(old, fx)?.aScore, 2, 'المباراة القديمة بلا leg تُقرأ جولةً أولى');
+  assert.equal(leagueTable(old)[0].points, 3);
+});
+
+test('ومباراة الجولة الثانية غير مباراة الأولى ولو تقابل الفريقان', () => {
+  const t = { ...three, rounds: 2, matches: [
+    { aId: 'a', bId: 'b', aScore: 2, bScore: 0 },
+    { aId: 'a', bId: 'b', leg: 1, aScore: 0, bScore: 1 },
+  ] };
+  assert.equal(matchOf(t, { aId: 'a', bId: 'b', leg: 0 }).aScore, 2);
+  assert.equal(matchOf(t, { aId: 'a', bId: 'b', leg: 1 }).bScore, 1);
+  const tbl = leagueTable(t);
+  assert.equal(tbl.find((r) => r.id === 'a').played, 2, 'الجدول يجمع الجولتين');
+});
+
+test('والبطل لا يُتوَّج حتى تكتمل الجولات كلها', () => {
+  const one = { ...three, matches: [
+    { aId: 'a', bId: 'b', aScore: 2, bScore: 0 },
+    { aId: 'a', bId: 'c', aScore: 3, bScore: 1 },
+    { aId: 'b', bId: 'c', aScore: 1, bScore: 0 },
+  ] };
+  assert.equal(leagueChampion(one).name, 'الصقور');
+  assert.equal(leagueChampion({ ...one, rounds: 2 }), null, 'زادت جولةٌ فما بقي مكتملًا');
+});
+
+test('تُضاف جولةٌ حين يتّسع الوقت، وتُشال ما لم يُلعب فيها شيء', () => {
+  const t = addRound({ ...three, matches: [{ aId: 'a', bId: 'b', aScore: 1, bScore: 0 }] });
+  assert.equal(leagueRounds(t), 2);
+  assert.equal(canDropRound(t), true);
+  assert.equal(leagueRounds(dropRound(t)), 1);
+  assert.equal(dropRound(t).matches.length, 1, 'ونتيجة الجولة الأولى باقية');
+});
+
+test('ولا تُشال جولةٌ لُعبت فيها مباراة', () => {
+  const t = { ...three, rounds: 2, matches: [{ aId: 'a', bId: 'b', leg: 1, aScore: 1, bScore: 0 }] };
+  assert.equal(canDropRound(t), false);
+  assert.equal(dropRound(t), t);
+});
+
+test('ولا تُشال الجولة الأولى فيبقى دوريٌّ بلا مباريات', () => {
+  assert.equal(canDropRound({ ...three }), false);
+  assert.equal(leagueRounds(dropRound({ ...three })), 1);
+});
+
+test('والحدُّ ستٌّ لا يُتجاوز', () => {
+  let t = { ...three };
+  for (let i = 0; i < 20; i++) t = addRound(t);
+  assert.equal(leagueRounds(t), LEAGUE_ROUNDS_MAX);
 });
 
 /* ------------------------------- البطولة ------------------------------- */

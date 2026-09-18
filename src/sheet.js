@@ -122,7 +122,7 @@ const loadImage = (src) => new Promise((resolve) => {
  * ويُطوى ما غاب: من لا صلاحية له في المال لا يرى قسمًا فارغًا، ومن لم يُقم
  * شيئًا من النادي لا يرى عنوانه.
  */
-export const sheetSections = ({ students, present, enrolled, money, club } = {}) => {
+export const sheetSections = ({ students, present, enrolled, money, club, qiyami, notes, reports } = {}) => {
   const out = [];
   const who = [];
   if (students != null) who.push(['الطلاب المسجلون', fmt(students)]);
@@ -146,6 +146,28 @@ export const sheetSections = ({ students, present, enrolled, money, club } = {})
 
   const list = (club || []).map((c) => clean(c)).filter(Boolean);
   if (list.length) out.push({ title: 'النادي', lines: list });
+
+  /**
+   * القيمي: عنوانُه ومن ألقاه. ولا يصل هنا أصلًا إلا من يملك صلاحيته —
+   * الخادمُ لا يرسل بياناته لغيره، فالورقة تطلع بلا صندوقه.
+   */
+  const qs = (qiyami || []).map((q) => [clean(q.title), clean(q.by)]).filter(([t]) => t);
+  if (qs.length) out.push({ title: 'القيمي', rows: qs.map(([t, b]) => [t, b || '—']) });
+
+  /**
+   * الملاحظات السلوكية: عددُها ثم أسماؤها. وأسماءُ من كُتبت عليهم **في هذا
+   * اليوم** وحده، لا ما تراكم على الأولاد من قبل — فمن أخطأ في جمعةٍ لا
+   * يُعاد اسمُه في ورقة التي بعدها.
+   */
+  const names = (notes || []).map((n) => clean(n)).filter(Boolean);
+  if (names.length) {
+    // ثلاثةٌ في السطر: الأسماء الطويلة تخرج عن عرض الورقة لو رُصّت كلها سطرًا
+    const lines = [];
+    for (let i = 0; i < names.length; i += 3) lines.push(names.slice(i, i + 3).join(' · '));
+    out.push({ title: 'ملاحظات سلوكية', rows: [['عدد الطلاب', fmt(names.length), true]], lines });
+  }
+
+  if (reports) out.push({ title: 'تقارير الموظفين', rows: [['كتبوا تقرير اليوم', clean(reports), true]] });
   return out;
 };
 
@@ -207,25 +229,42 @@ export const reportSheet = async (info, { logo = '', team = 'فريق فيض ا�
   c.stroke();
   y += 50;
 
-  /* الأقسام */
-  for (const sec of sheetSections(info)) {
+  /*
+    الأقسام — وتُضغط لتسع الورقة.
+
+    كانت أربعةً فتسع بلا حساب، ثم صارت سبعةً (القيمي والملاحظات وتقارير
+    الموظفين)، فخرج آخرها عن الورقة ودخل في الذيل — رأيتُها في الفحص. فبدل أن
+    تُقصّ، تُقاس أوّلًا: إن زادت ضاقت المسافاتُ بقدرٍ واحد حتى تسع، ولا تضيق
+    أكثر من الثلثين فتصير سطورًا لا تُقرأ.
+  */
+  const secs = sheetSections(info);
+  const HEAD_H = 70, ROW_H = 56, LINE_H = 50, TAIL = 24, GAP = 28;
+  const natural = secs.reduce((s, sec) =>
+    s + HEAD_H + (sec.rows?.length || 0) * ROW_H + (sec.lines?.length || 0) * LINE_H + TAIL + GAP, 0);
+  const avail = (PAGE.h - 130) - y;
+  const k = natural > avail ? Math.max(0.66, avail / natural) : 1;
+  const S = (v) => Math.round(v * k);
+  // والخطُّ يضيق أبطأ من المسافة: الفراغ يُختصر قبل الحرف
+  const F = (v) => Math.round(v * Math.max(0.84, k));
+
+  for (const sec of secs) {
     const rows = sec.rows || [];
     const lines = sec.lines || [];
-    const h = 70 + rows.length * 56 + lines.length * 50 + 24;
+    const h = S(HEAD_H) + rows.length * S(ROW_H) + lines.length * S(LINE_H) + S(TAIL);
     box(PAD, y, PAGE.w - PAD * 2, h, 22, '#f8fafc', '#e8eef6');
-    text(sec.title, PAGE.w - PAD - 32, y + 42, { size: 27, weight: 800, color: NAVY });
-    let ry = y + 70;
+    text(sec.title, PAGE.w - PAD - 32, y + S(42), { size: F(27), weight: 800, color: NAVY });
+    let ry = y + S(HEAD_H);
     for (const [label, value, strong] of rows) {
-      const mid = ry + 28;
-      text(label, PAGE.w - PAD - 32, mid, { size: 25, color: strong ? '#0f172a' : '#64748b', weight: strong ? 700 : 400 });
-      text(value, PAD + 32, mid, { size: strong ? 30 : 26, weight: strong ? 800 : 600, align: 'left', dir: 'rtl' });
-      ry += 56;
+      const mid = ry + S(ROW_H) / 2;
+      text(label, PAGE.w - PAD - 32, mid, { size: F(25), color: strong ? '#0f172a' : '#64748b', weight: strong ? 700 : 400 });
+      text(value, PAD + 32, mid, { size: F(strong ? 30 : 26), weight: strong ? 800 : 600, align: 'left', dir: 'rtl' });
+      ry += S(ROW_H);
     }
     for (const line of lines) {
-      text(`• ${line}`, PAGE.w - PAD - 32, ry + 25, { size: 24, color: '#334155' });
-      ry += 50;
+      text(`• ${line}`, PAGE.w - PAD - 32, ry + S(LINE_H) / 2, { size: F(24), color: '#334155' });
+      ry += S(LINE_H);
     }
-    y += h + 28;
+    y += h + S(GAP);
   }
 
   /* الذيل */

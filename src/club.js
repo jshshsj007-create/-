@@ -139,14 +139,35 @@ export const questionTally = (q) => {
 export const LEAGUE = 'league';
 export const CUP = 'cup';
 
-/** كل فريقٍ يلاقي من بعده مرة. */
-export const leagueFixtures = (teams) => {
+/**
+ * جولات الدوري.
+ *
+ * يبدأ بجولةٍ واحدة، ويُزاد حين يتّسع الوقت في اليوم نفسه — فالوقت يُعرف
+ * أثناء البرنامج لا قبله. وستٌّ حدٌّ لا يُتجاوز: ما فوقها جدولٌ لا يُقرأ.
+ */
+export const LEAGUE_ROUNDS_MAX = 6;
+export const leagueRounds = (t) => Math.min(LEAGUE_ROUNDS_MAX, Math.max(1, Number(t?.rounds || 1)));
+
+/**
+ * كل فريقٍ يلاقي من بعده مرة، في كل جولة.
+ *
+ * و`leg` رقم الجولة من صفر. والدوريات المسجَّلة قبل الجولات مبارياتُها بلا
+ * `leg` — فتُقرأ جولةً أولى كما هي، ولا تفقد نتيجةً واحدة.
+ */
+export const leagueFixtures = (teams, rounds = 1) => {
   const out = [];
-  for (let i = 0; i < teams.length; i++) {
-    for (let j = i + 1; j < teams.length; j++) out.push({ aId: teams[i].id, bId: teams[j].id });
+  const legs = Math.max(1, Number(rounds) || 1);
+  for (let leg = 0; leg < legs; leg++) {
+    for (let i = 0; i < teams.length; i++) {
+      for (let j = i + 1; j < teams.length; j++) out.push({ aId: teams[i].id, bId: teams[j].id, leg });
+    }
   }
   return out;
 };
+
+/** مباراة هذي المواجهة في هذي الجولة. والقديم بلا `leg` جولةٌ أولى. */
+export const matchOf = (t, fx) => (t?.matches || []).find((m) => m.aId === fx.aId
+  && m.bId === fx.bId && Number(m.leg || 0) === Number(fx.leg || 0)) || null;
 
 const played = (m) => m && m.aScore !== '' && m.aScore !== null && m.aScore !== undefined
   && m.bScore !== '' && m.bScore !== null && m.bScore !== undefined;
@@ -237,8 +258,8 @@ export const cupBracket = (t) => {
 
 /** بطل الدوري: صدر الجدول، ولا يُتوَّج إلا بعد أن تُلعب مبارياته كلها. */
 export const leagueChampion = (t) => {
-  const fx = leagueFixtures(t?.teams || []);
-  const done = (t?.matches || []).filter(played).length;
+  const fx = leagueFixtures(t?.teams || [], leagueRounds(t));
+  const done = fx.filter((f) => played(matchOf(t, f))).length;
   if (!fx.length || done < fx.length) return null;
   const top = leagueTable(t)[0];
   return top ? { id: top.id, name: top.name } : null;
@@ -246,6 +267,24 @@ export const leagueChampion = (t) => {
 
 /** بطل الدوري بنوعيه. */
 export const champion = (t) => (t?.type === CUP ? cupBracket(t).champion : leagueChampion(t));
+
+/** جولةٌ جديدة: مواجهاتٌ فاضية تُضاف، وما لُعب قبلها يبقى في جدوله. */
+export const addRound = (t) => ({ ...t, rounds: Math.min(LEAGUE_ROUNDS_MAX, leagueRounds(t) + 1) });
+
+/**
+ * وتُشال الجولة ما لم يُلعب فيها شيء.
+ *
+ * فمن ضغط «+ جولة» ثم انتهى الوقت يرجع بضغطة، ومن لُعبت عنده مباراةٌ واحدة
+ * لا تُشال عليه نتيجة.
+ */
+export const canDropRound = (t) => leagueRounds(t) > 1
+  && !(t?.matches || []).some((m) => Number(m.leg || 0) === leagueRounds(t) - 1 && played(m));
+
+export const dropRound = (t) => {
+  if (!canDropRound(t)) return t;
+  const gone = leagueRounds(t) - 1;
+  return { ...t, rounds: gone, matches: (t.matches || []).filter((m) => Number(m.leg || 0) !== gone) };
+};
 
 /* ------------------------------ ربط الجمعة ------------------------------ */
 

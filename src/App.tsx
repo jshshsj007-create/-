@@ -3,7 +3,8 @@ import {
   Home, BookOpen, Wallet, Settings, Plus, X, Check, ChevronLeft, Trash2, Pencil,
   Users as UsersIcon, Calendar, TrendingUp, TrendingDown, Layers, ShieldCheck,
   Lock, Unlock, Trophy, LogOut, KeyRound, Plane, Search, AlertTriangle, Send,
-  RotateCcw, Wand2, CalendarDays, FileText, Copy, Clock, BookMarked, Eye, EyeOff, Link2, MapPin, Paperclip } from 'lucide-react';
+  RotateCcw, Wand2, CalendarDays, FileText, Copy, Clock, BookMarked, Eye, EyeOff, Link2, MapPin, Paperclip,
+  ClipboardList, StickyNote, Megaphone, Sparkles, Video } from 'lucide-react';
 import { api, clone, merge3, readSession, writeSession, clearSession, readPending, writePending, clearPending } from './cloud.js';
 import {
   normalizePhone, isValidPhone, formatPhone, normalizeName, sameName,
@@ -27,6 +28,7 @@ import {
 } from './receipt.js';
 import {
   LEAGUE, CUP, leagueFixtures, leagueTable, cupBracket, champion,
+  leagueRounds, matchOf, addRound, canDropRound, dropRound, LEAGUE_ROUNDS_MAX,
   weekRuns, programRuns, clubCounts, usedIn,
   answerVerdict, questionTally, Q_TEXTS, Q_ERRORS,
   drawPool, pastWinners, drawPoolMany, pastWinnersMany, makeDrawMany, applyDrawMany,
@@ -42,13 +44,24 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 import PdfFirstPage from './pdfview.jsx';
 import { say } from './adad.js';
 import { weekReport } from './report.js';
+import {
+  REPORT_PARTS, emptyReport, missingParts, reportReady, submitLabel, reportOf, dayReports,
+  mustReport, reportRoll, rollText, owedDays, dayNow, noteOn, notesOn, notesOfDay, noteNames,
+  NOTICE_SPANS, noticeLive, hasRead, noticesFor, markRead, readTally,
+  supervisorsOf, toggleSupervisor, supervisorNames, unassigned, SUPERVISOR_MAX,
+  qiyamiMissing, qiyamiReady, qiyamiOfDay, videoEmbed, daySummary,
+} from './taqreer.js';
 import { reportSheet, sheetFileName } from './sheet.js';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
+/** «الجولة الثانية» لا «الجولة ٢». ومؤنَّثة لأن الجولة مؤنّثة. */
+const ROUND_ORD = ['الأولى', 'الثانية', 'الثالثة', 'الرابعة', 'الخامسة', 'السادسة'];
+/** أرقام خانات التقرير — عربيةٌ كما يقرؤها صاحبها. */
+const ORDINALS_N = ['١', '٢', '٣'];
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v8.6';
-const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
+const APP_VERSION = 'v8.7';
+const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'القيمي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول النادي', 'معلّم خيركم', 'مسؤول فيض'];
@@ -508,6 +521,17 @@ const defaultData = () => ({
   clubRuns: [],
   tournaments: [],
   questions: [],
+  /**
+   * القيمي: فقرةٌ يُلقيها واحدٌ في يوم البرنامج. وهو محجوبٌ بصلاحيته — لا
+   * يُخفى في الشاشة بل لا يُرسل من الخادم أصلًا لمن لا يملكها.
+   */
+  qiyami: [],
+  /** تقرير كل موظفٍ عن يومه: ثلاث خانات، ومن كتبها ومتى. */
+  dayReports: [],
+  /** ملاحظةٌ على طالبٍ بعينه — يربطها المديرُ من التقرير فتدخل سجلّه. */
+  studentNotes: [],
+  /** تنبيهاتُ المدير: للكل أو لواحد، ولكلٍّ من قرأه. */
+  notices: [],
   /** تسليم مبلغٍ من حسابٍ إلى حساب — نقلُ نقدٍ لا إيراد ولا مصروف. */
   handovers: [],
   trips: [],
@@ -622,9 +646,21 @@ export function migrate(loaded) {
    */
   d.clubRuns = (d.clubRuns || [])
     .filter((r) => r && typeof r === 'object')
-    .map((r) => (r.id ? r : { ...r, id: uid() }));
+    .map((r) => ({ supervisors: [], helper: '', ...r, id: r.id || uid() }));
+  /**
+   * تقارير الأيام والملاحظات والقيمي والتنبيهات: قوائمُ تبدأ فارغة.
+   *
+   * وما سُجّل من النادي قبل اليوم لا مشرفَ له — فلا يُنسب إلى أحدٍ بالتخمين،
+   * ويظهر للمدير «غير مُسنَد» ليُسنِده بيده.
+   */
+  d.qiyami = (d.qiyami || []).map((q) => ({ supervisors: [], helper: '', title: '', points: '', qa: '', video: '', ...q }));
+  d.dayReports = (d.dayReports || []).map((r) => ({ comp: '', league: '', notes: '', ...r }));
+  d.studentNotes = d.studentNotes || [];
+  d.notices = (d.notices || []).map((n) => ({ to: '', days: 0, reads: [], ...n }));
   d.tournaments = (d.tournaments || []).map((t) => ({
-    type: LEAGUE, levels: [], teams: [], matches: [], players: '', programId: '', weekId: '', ...t,
+    // `rounds` جاء بعد الدوريات المسجَّلة: الواحدة هي حالُها، ومبارياتها بلا `leg` جولةٌ أولى
+    type: LEAGUE, levels: [], teams: [], matches: [], players: '', programId: '', weekId: '',
+    rounds: 1, supervisors: [], helper: '', ...t,
   }));
   d.questions = (d.questions || []).map((q) => ({
     mode: 'open', options: [], correctId: '', answer: '', alsoOk: [], levels: [],
@@ -662,7 +698,7 @@ export function migrate(loaded) {
   });
   // الدخول صار باسم مستخدم وكلمة مرور بدل «اختر اسمك + رمز»؛ نحوّل المستخدمين القدامى
   d.users = (d.users || []).map((u, i) => {
-    const user = { accessScope: 'all', allowedWeeks: [], permissions: [], ...u };
+    const user = { accessScope: 'all', allowedWeeks: [], permissions: [], phone: '', noReport: false, ...u };
     if (!user.username) user.username = (user.name || `user${i + 1}`).split(' ')[0];
     if (!user.password) user.password = user.code || '';
     delete user.code;
@@ -1217,14 +1253,48 @@ function Trace({ item, className = '' }) {
  * مربّع قسم في الرئيسية. الشبكة تتكيّف مع عدد الأقسام: مربّع واحد ما ينفرد
  * بعرض الشاشة كله (لذا max-w على المربّع نفسه)، ولا يتقزّم لما يكثرون.
  */
-function SectionTile({ icon: Icon, title, note, onClick }) {
+function SectionTile({ icon: Icon, title, note, onClick, badge = 0 }) {
   return (
     <button onClick={onClick}
-      className="w-full max-w-[13.5rem] mx-auto aspect-square bg-white rounded-2xl border border-slate-100 px-3 py-4 flex flex-col items-center justify-center text-center hover:shadow-md transition-shadow">
+      className="relative w-full max-w-[13.5rem] mx-auto aspect-square bg-white rounded-2xl border border-slate-100 px-3 py-4 flex flex-col items-center justify-center text-center hover:shadow-md transition-shadow">
+      {/* النقطة الحمراء: ما يُطالَب به اليوم يُرى قبل أن يُبحث عنه */}
+      {badge > 0 && (
+        <span className="absolute top-2.5 left-2.5 min-w-[1.15rem] h-[1.15rem] px-1 rounded-full bg-red-600 text-white text-[10px] font-extrabold flex items-center justify-center">{badge}</span>
+      )}
       <span className="w-12 h-12 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center mb-2.5"><Icon size={23} /></span>
       <span className="block font-bold text-slate-800 text-sm leading-snug">{title}</span>
       {note && <span className="block text-[11px] text-slate-400 mt-1 leading-relaxed">{note}</span>}
     </button>
+  );
+}
+
+/**
+ * من أقام هذا: مسابقةً كانت أو دوريًّا أو قيميًّا.
+ *
+ * اثنان على الأكثر، **بلا أوّلَ وثانٍ** — ولولا ذلك لكتب كلٌّ صاحبَه ثانيًا
+ * فعُدّت المسابقة الواحدة مرتين. ومن ساعدهم وليس له حسابٌ يُكتب اسمه، يظهر
+ * في السجلّ والورقة ولا يُطالَب بتقرير: ما له حسابٌ يكتب منه.
+ */
+function SupervisorPicker({ users, value = [], helper = '', onChange, onHelper, label = 'المشرفون على إقامتها' }) {
+  const staff = (users || []).filter((u) => u.status !== 'غير نشط');
+  const on = (id) => value.includes(id);
+  return (
+    <>
+      <Field label={label} hint={`اثنان على الأكثر من أصحاب الحسابات${value.length >= SUPERVISOR_MAX ? ' — وصلتَ الحدّ' : ''}.`}>
+        <div className="flex flex-wrap gap-2">
+          {staff.map((u) => (
+            <button key={u.id} type="button" onClick={() => onChange(toggleSupervisor({ supervisors: value }, u.id).supervisors || [])}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${on(u.id) ? 'bg-brand-700 text-white border-brand-700' : 'bg-white text-slate-600 border-slate-200'}`}>
+              {u.name}{on(u.id) ? ' ✕' : ''}
+            </button>
+          ))}
+          {!staff.length && <span className="text-xs text-slate-400">ما فيه حسابات موظفين بعد.</span>}
+        </div>
+      </Field>
+      <Field label="ومن ساعدهم وليس له حساب — اختياري" hint="يظهر اسمه في السجلّ والورقة، ولا يُطالَب بتقرير.">
+        <input className={inputCls} value={helper} onChange={(e) => onHelper(e.target.value)} placeholder="فيصل — متطوّع" />
+      </Field>
+    </>
   );
 }
 
@@ -1468,6 +1538,9 @@ export default function App() {
   const [faidPayee, setFaidPayee] = useState('');        // فلترة بمستفيد معيّن
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
+  /** أي يومٍ يُكتب تقريرُه الآن، وما كُتب فيه قبل الإرسال. */
+  const [reportDay, setReportDay] = useState('');
+  const [draft, setDraft] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const [search, setSearch] = useState('');
   const [currentUser, setCurrentUser] = useState(null);
@@ -2578,6 +2651,7 @@ export default function App() {
     const fields = {
       name: form.name.trim(), username, role: forceAdmin ? 'مدير' : (form.role || ROLES[0]),
       permissions: form.permissions || [], accessScope: form.accessScope || 'all', allowedWeeks: form.allowedWeeks || [],
+      phone: normalizePhone(form.phone || ''), noReport: Boolean(form.noReport),
       // «يشوف فقط» ما تُحفظ إلا لصلاحيةٍ يملكها، وإلا بقيت أثرًا لصلاحيةٍ نُزعت
       readOnly: (form.readOnly || []).filter((x) => (form.permissions || []).includes(x)),
     };
@@ -2656,15 +2730,35 @@ export default function App() {
   /* --------------------------------- النادي --------------------------------- */
 
   /** تسجيل أن هذي المسابقة نُفِّذت في جمعةٍ بعينها. */
+  /**
+   * تسجيل أن هذي المسابقة أُقيمت في جمعةٍ بعينها، ومن أقامها.
+   *
+   * والمسابقةُ المُقامة **سجلٌّ واحد لا يتكرّر**: لو سجّلها عبدالله وكتب سعودًا
+   * معه، ثم جاء سعودٌ يسجّلها، لصارت مسابقةٌ واحدة في سجلَّين وعُدّت مرتين.
+   * فمن سجّلها ثانيًا يُضاف إلى الأول ولا يُنشئ ثانيًا.
+   */
   const addRun = () => {
     if (!form.programId) { setForm({ ...form, error: 'اختر البرنامج' }); return; }
-    const dup = (data.clubRuns || []).some((r) => r.compId === form.compId
+    const mine = (form.supervisors || []).filter(Boolean).slice(0, SUPERVISOR_MAX);
+    const helper = String(form.helper || '').trim();
+    const dup = (data.clubRuns || []).find((r) => r.compId === form.compId
       && r.programId === form.programId && r.weekId === (form.weekId || ''));
-    if (dup) { setForm({ ...form, error: 'مسجّلة في هذي الجمعة أصلًا' }); return; }
+    if (dup) {
+      const merged = [...supervisorsOf(dup)];
+      for (const id of mine) if (!merged.includes(id) && merged.length < SUPERVISOR_MAX) merged.push(id);
+      save({
+        ...data,
+        clubRuns: data.clubRuns.map((r) => (r.id !== dup.id ? r
+          : { ...r, supervisors: merged, helper: helper || r.helper || '' })),
+      });
+      closeModal();
+      return;
+    }
     save({
       ...data,
       clubRuns: [...(data.clubRuns || []),
-        { id: uid(), compId: form.compId, programId: form.programId, weekId: form.weekId || '', at: Date.now() }],
+        { id: uid(), compId: form.compId, programId: form.programId, weekId: form.weekId || '',
+          supervisors: mine, helper, at: Date.now() }],
     });
     closeModal();
   };
@@ -2675,6 +2769,46 @@ export default function App() {
       clubRuns: (data.clubRuns || []).filter((r) => r.id !== rid),
       ...(gone ? { trash: intoTrash('clubRun', gone, { label: data.competitions.find((c) => c.id === gone.compId)?.name || 'مسابقة منفَّذة' }) } : {}),
     });
+  };
+
+  /**
+   * القيمي: اسم الملقي والعنوان إجباريان، وما تحتهما اختياريٌّ كلُّه.
+   *
+   * فبالاسم والعنوان يُعرف من ألقى وماذا ألقى، وهذا أقلُّ ما يُحفظ. وما
+   * تحتهما شرحٌ لا أصل — مرةً رابطٌ وحده، ومرةً سؤالٌ وجواب، ومرةً كلها.
+   */
+  const saveQiyami = () => {
+    const miss = qiyamiMissing(form);
+    if (miss.length) { setForm({ ...form, error: `ناقص: ${miss.join(' و')}` }); return; }
+    const fields = {
+      supervisors: (form.supervisors || []).filter(Boolean).slice(0, SUPERVISOR_MAX),
+      helper: String(form.helper || '').trim(),
+      title: form.title.trim(), points: form.points || '', qa: form.qa || '', video: String(form.video || '').trim(),
+      programId: form.programId || '', weekId: form.weekId || '',
+    };
+    save({
+      ...data,
+      qiyami: form.id
+        ? data.qiyami.map((q) => (q.id !== form.id ? q : { ...q, ...fields }))
+        : [...(data.qiyami || []), { id: uid(), at: Date.now(), ...fields }],
+    });
+    closeModal();
+  };
+
+  /**
+   * تنبيهٌ للفريق أو لواحد.
+   *
+   * ومدّته تنتهي وحدها فلا تتكدّس القديمةُ عندهم حتى تصير خلفيةً لا تُقرأ.
+   */
+  const saveNotice = () => {
+    const text = String(form.text || '').trim();
+    if (!text) { setForm({ ...form, error: 'اكتب نصّ التنبيه' }); return; }
+    save({
+      ...data,
+      notices: [...(data.notices || []),
+        { id: uid(), text, to: form.to || '', days: Number(form.days || 0), by: effectiveUser?.id || '', at: Date.now(), reads: [] }],
+    });
+    closeModal();
   };
 
   /** دوري أو بطولة. الفرق تُنشأ بأسمائها هنا، فلا تتغيّر معرّفاتها بعدها. */
@@ -2695,6 +2829,9 @@ export default function App() {
       name: form.name.trim(), type: form.type || LEAGUE,
       levels: (form.levels || []).filter((lv) => LEVELS.includes(lv)),
       programId: form.programId, weekId: form.weekId || '',
+      // ومن أقامه يُكتب عليه كما يُكتب على المسابقة — فالسؤال واحد: من عمل ماذا
+      supervisors: (form.supervisors || []).filter(Boolean).slice(0, SUPERVISOR_MAX),
+      helper: String(form.helper || '').trim(),
       players: String(form.players || ''), teams,
       matches: sameCount ? (old.matches || []) : [],
     };
@@ -2716,9 +2853,10 @@ export default function App() {
       ...data,
       tournaments: data.tournaments.map((t) => {
         if (t.id !== tid) return t;
+        // والدوري بجولاته: مواجهةُ الجولة الثانية غير مواجهة الأولى ولو تقابل الفريقان
         const same = (m) => (t.type === CUP
           ? m.round === key.round && m.slot === key.slot
-          : m.aId === key.aId && m.bId === key.bId);
+          : m.aId === key.aId && m.bId === key.bId && Number(m.leg || 0) === Number(key.leg || 0));
         const found = (t.matches || []).some(same);
         const patch = side === 'a' ? { aScore: v } : { bScore: v };
         return {
@@ -4071,6 +4209,23 @@ export default function App() {
   const myOpenDays = !canAttend ? [] : termPrograms.flatMap((p) =>
     p.weeks.filter((w) => weekState(w) === 'جاري' && canSeeWeek(p.id, w.id))
       .map((w) => ({ program: p, week: w })));
+  /**
+   * تقرير اليوم.
+   *
+   * يُطلب من كل من يقف مع الأولاد آخرَ يوم البرنامج، ولا يُغلق يومُه إلا
+   * بإرساله. و`seesWeek` تسأل عن مستخدمٍ بعينه — لا عن الحالي وحده — لأن
+   * المدير يرى من لم يكتب من الفريق كلّه.
+   */
+  const seesWeek = (u, programId, weekId) => u?.role === 'مدير' || u?.accessScope !== 'limited'
+    || (u?.allowedWeeks || []).some((a) => a.programId === programId && a.weekId === weekId);
+  /** يومُ البرنامج اليوم — منه تُملأ خانةُ اليوم مقدّمًا فيما يُسجَّل الآن. */
+  const todayDay = dayNow(termPrograms, (pid, wid) => canSeeWeek(pid, wid), Date.now());
+  const onToday = todayDay ? { programId: todayDay.program.id, weekId: todayDay.week.id } : { programId: '', weekId: '' };
+  const myOwed = !effectiveUser ? [] : owedDays(termPrograms, (pid, wid) => canSeeWeek(pid, wid), Date.now())
+    .filter(({ program: p, week: w }) => mustReport(effectiveUser, seesWeek, p.id, w.id)
+      && !reportReady(reportOf(data, effectiveUser.id, p.id, w.id)));
+  /** التنبيهات التي ما قرأها بعد — تظهر له أول ما يفتح. */
+  const myNotices = effectiveUser ? noticesFor(data, effectiveUser, Date.now()) : [];
   const canTransfer = can('فيض - الإيرادات والمصروفات') && canMoney;
   /**
    * جوالات الأهالي وأعمار الأطفال وملاحظاتهم الصحية بيانات حسّاسة، فلها صلاحية
@@ -4348,7 +4503,11 @@ export default function App() {
     );
   }
 
+  /** من يُطالَب بتقريرٍ أصلًا — بقطع النظر عن يومٍ بعينه. */
+  const writesReport = mustReport(effectiveUser);
   const sections = [
+    // تقريره أول ما يراه: هو الشيء الوحيد الذي يُطالَب به كل يوم برنامج
+    { id: 'dayReport', label: 'تقرير اليوم', desc: 'تقريرك عن يوم البرنامج', icon: ClipboardList, show: writesReport, badge: myOwed.length },
     { id: 'programs', label: 'البرامج', desc: 'عرض وإدارة البرامج', icon: BookOpen, show: canAttend },
     { id: 'faid', label: 'فيض', desc: 'حسابات فيض والأرصدة', icon: Wallet, show: can('فيض - الإيرادات والمصروفات') },
     { id: 'competitions', label: 'النادي', desc: 'المسابقات والدوري وسؤال اليوم', icon: Trophy, show: can('النادي') },
@@ -4357,6 +4516,9 @@ export default function App() {
     { id: 'khayrMe', label: 'خيركم', desc: 'سجلّك في التسميع', icon: BookMarked, show: !!myKhayrStudent },
     { id: 'trips', label: 'السفرات', desc: 'الرحلات وحساباتها', icon: Plane, show: can('السفرات') },
     { id: 'guardians', label: 'المشتركين', desc: 'الطلاب وأولياء أمورهم', icon: UsersIcon, show: canGuardians },
+    // الملاحظات السلوكية يراها الموظفون كلهم — لأنهم كلهم يتعاملون مع الطلاب
+    { id: 'studentNotes', label: 'ملاحظات الطلاب', desc: 'السلوكية، لكل الموظفين', icon: StickyNote, show: isAdmin || writesReport },
+    { id: 'notices', label: 'التنبيهات', desc: 'تكتبها للفريق أو لواحد', icon: Megaphone, show: isAdmin },
     { id: 'reports', label: 'التقارير', desc: 'التقارير والإحصائيات', icon: FileText, show: canMoney },
     { id: 'settings', label: 'الإعدادات', desc: 'المستخدمون والصلاحيات', icon: Settings, show: isAdmin },
   ].filter((c) => c.show);
@@ -4483,7 +4645,13 @@ export default function App() {
     // يظهر دائمًا: التسجيل بالاسم في يوم «سريع» يحوّله للأسماء تلقائيًا،
     // وبدونه يبقى المحضّر بلا أي تبويب فتطلع له شاشة فاضية
     { id: 'participants', label: 'الطلاب والحضور' },
-    ...(canMoney ? [{ id: 'report', label: 'تقرير اليوم' }] : []),
+    /**
+     * «ملخّص اليوم» لا «تقرير اليوم».
+     *
+     * لأن «تقرير اليوم» صار اسمًا لشيءٍ آخر: ما يكتبه كلُّ موظفٍ عن يومه.
+     * واسمان لشيئين مختلفين خيرٌ من اسمٍ واحد يُسأل عنه كل مرة.
+     */
+    ...(canMoney ? [{ id: 'report', label: 'ملخّص اليوم' }] : []),
   ];
   const activeWeekTab = weekTabs.some((t) => t.id === weekTab) ? weekTab : weekTabs[0]?.id;
 
@@ -4509,6 +4677,35 @@ export default function App() {
             )}
           </div>
         </header>
+
+      {/*
+        تنبيه الإدارة.
+
+        يظهر أول ما يفتح التطبيق، ولا يختفي إلا بـ«قرأت» — فبها يعرف المديرُ
+        من وصله الخبر ومن لم يصله. ولا فيه ✕ ولا «لاحقًا»: الذي يُغلق بلا
+        قراءةٍ لم يُقرأ، ولا يُبنى على ظنّه شيء.
+      */}
+      {myNotices.length > 0 && (
+        <div className="fixed inset-0 bg-brand-900/50 z-50 flex items-end sm:items-center justify-center sm:p-4">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-6 shadow-2xl">
+            <div className="flex items-center gap-2 mb-4">
+              <Megaphone size={18} className="text-brand-700" />
+              <h3 className="font-bold text-lg text-slate-800">تنبيه من الإدارة</h3>
+              {myNotices.length > 1 && <Badge tone="brand">{say(myNotices.length, 'notice')}</Badge>}
+            </div>
+            <div className="bg-brand-50 border border-brand-100 rounded-xl p-4 mb-5">
+              <div className="text-brand-800 font-semibold leading-8 whitespace-pre-wrap">{myNotices[0].text}</div>
+              <div className="text-[11px] text-slate-400 mt-2">
+                {myNotices[0].to ? 'لك وحدك' : 'للجميع'} · {hijri(myNotices[0].at)}
+              </div>
+            </div>
+            <button className={btnPrimary + ' w-full'} onClick={() => save({
+              ...data,
+              notices: data.notices.map((n) => (n.id === myNotices[0].id ? markRead(n, effectiveUser.id) : n)),
+            })}><Check size={16} /> قرأت</button>
+          </div>
+        </div>
+      )}
 
       {/* النسخة المحفوظة في المتصفح تخفي التحسينات عن صاحبها بلا ما يدري */}
       {staleBuild && (
@@ -4573,6 +4770,31 @@ export default function App() {
               );
             })()}
             {/*
+              تقرير اليوم: أوّلُ ما يُرى، وأحمرُ حتى يُكتب.
+
+              وما فيه «لاحقًا» ولا ✕ — الذي يُؤجَّل في المساء لا يُكتب أبدًا،
+              فيصير عندك يومٌ مضى ولا تدري ما جرى فيه.
+            */}
+            {myOwed.length > 0 && (() => {
+              const first = myOwed[0];
+              return (
+                <button onClick={() => { setReportDay(first.week.id); goto('dayReport'); }}
+                  className={`w-full text-right rounded-2xl border px-4 py-4 mb-5 ${first.late ? 'bg-white border-amber-300' : 'bg-white border-red-300'}`}>
+                  <div className="flex items-center gap-2.5 mb-1">
+                    <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${first.late ? 'bg-amber-500' : 'bg-red-600'}`} />
+                    <span className="font-extrabold text-slate-800">
+                      {first.late ? 'تقرير متأخّر' : 'تقرير اليوم ما كتبته'}
+                    </span>
+                    {myOwed.length > 1 && <Badge tone="amber">{say(myOwed.length, 'report')}</Badge>}
+                  </div>
+                  <div className="text-xs text-slate-500 mb-3">
+                    {first.program.name} · {first.week.name}{first.week.date ? ` · ${first.week.date}` : ''}
+                  </div>
+                  <span className={btnPrimary + ' w-full'}>اكتبه الآن</span>
+                </button>
+              );
+            })()}
+            {/*
               الرئيسية للشغل لا للأرقام: الرصيد رقم حسّاس يبين لكل من يطالع
               جوالك، ومكانه داخل فيض. وعدّاد البرامج انتقل لصفحة البرامج.
               اللي يبقى هنا هو اللي تحتاج تفتحه اليوم.
@@ -4630,11 +4852,196 @@ export default function App() {
 
             <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(9.25rem,1fr))]">
               {sections.map((c) => (
-                <SectionTile key={c.id} icon={c.icon} title={c.label} note={c.desc} onClick={() => goto(c.id)} />
+                <SectionTile key={c.id} icon={c.icon} title={c.label} note={c.desc} badge={c.badge} onClick={() => goto(c.id)} />
               ))}
             </div>
           </div>
         )}
+
+
+        {/* ------------------------------ تقرير اليوم ------------------------------ */}
+        {/*
+          يكتبه كلُّ موظفٍ عن يومه: ثلاث خانات لا يُرسَل إلا بها كلِّها.
+
+          و«لا يوجد» تُكتب بيده — لأن الفرق بين «قال: لم يكن» و«ترك الخانة»
+          هو الفرق بين تقريرٍ وصمت. ولا يرى تقارير زملائه: كتبها لمن يطالبه
+          بها، لا لهم.
+        */}
+        {view === 'dayReport' && writesReport && (() => {
+          const days = owedDays(termPrograms, (pid, wid) => canSeeWeek(pid, wid), Date.now(), { max: 8 })
+            .filter(({ program: p, week: w }) => mustReport(effectiveUser, seesWeek, p.id, w.id));
+          const pick = days.find((d) => d.week.id === reportDay) || days[0] || null;
+          if (!pick) {
+            return (
+              <div>
+                <h2 className="text-xl font-extrabold text-slate-800 mb-4">تقرير اليوم</h2>
+                <div className={cardCls + ' text-center text-slate-400 text-sm py-10'}>
+                  ما فيه يوم برنامجٍ يحتاج تقريرًا الآن.
+                </div>
+              </div>
+            );
+          }
+          const { program: pr, week: wk } = pick;
+          const key = pr.id + ':' + wk.id;
+          const saved = reportOf(data, effectiveUser.id, pr.id, wk.id);
+          const cur = draft?.key === key ? draft
+            : { key, comp: saved?.comp || '', league: saved?.league || '', notes: saved?.notes || '' };
+          const type = (k, v) => setDraft({ ...cur, [k]: v });
+          const ready = reportReady(cur);
+          const send = () => {
+            const row = {
+              ...emptyReport(effectiveUser.id, pr.id, wk.id),
+              id: saved?.id || uid(), userId: effectiveUser.id, programId: pr.id, weekId: wk.id,
+              byName: effectiveUser.name || '',
+              comp: cur.comp.trim(), league: cur.league.trim(), notes: cur.notes.trim(), at: Date.now(),
+            };
+            save({
+              ...data,
+              dayReports: saved
+                ? data.dayReports.map((r) => (r === saved ? row : r))
+                : [...(data.dayReports || []), row],
+            });
+            setDraft(null);
+            goto('home');
+          };
+          return (
+            <div>
+              <h2 className="text-xl font-extrabold text-slate-800">تقرير اليوم</h2>
+              <div className="text-xs text-slate-400 mt-1 mb-4">
+                {effectiveUser.name} · {pr.name} · {wk.name}{wk.date ? ` · ${wk.date}` : ''}
+              </div>
+
+              {days.length > 1 && (
+                <div className="flex gap-2 overflow-x-auto pb-1 mb-4">
+                  {days.map((d) => (
+                    <button key={d.week.id} onClick={() => { setDraft(null); setReportDay(d.week.id); }}
+                      className={`shrink-0 px-3 py-2 rounded-full text-xs font-bold border ${d.week.id === wk.id ? 'bg-brand-700 text-white border-brand-700' : 'bg-white text-slate-600 border-slate-200'}`}>
+                      {d.week.name}{d.late ? ' · متأخّر' : ''}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div className={`rounded-2xl border px-4 py-3 mb-4 flex items-center justify-between gap-2 ${ready ? 'bg-white border-green-200' : 'bg-white border-red-200'}`}>
+                <span className="text-sm font-bold text-slate-700">{ready ? 'جاهز للإرسال' : 'ما كتبتَ الخانات كلها'}</span>
+                <Badge tone={ready ? 'green' : 'red'}>{ready ? '٣ من ٣' : 'الثلاث إجبارية'}</Badge>
+              </div>
+
+              <div className="space-y-3">
+                {REPORT_PARTS.map((part, i) => (
+                  <div key={part.key} className={cardCls}>
+                    <div className="flex items-center gap-2 mb-2.5">
+                      <span className="w-6 h-6 rounded-lg bg-brand-700 text-white text-[11px] font-extrabold flex items-center justify-center shrink-0">{ORDINALS_N[i]}</span>
+                      <span className="font-bold text-slate-800 text-sm">{part.label}</span>
+                    </div>
+                    <textarea rows={3} className={inputCls + ' leading-8 ' + (String(cur[part.key] || '').trim() ? '' : 'border-red-200 bg-red-50/30')}
+                      value={cur[part.key]} onChange={(e) => type(part.key, e.target.value)}
+                      placeholder="اكتب ما جرى… ولو ما صار شيء اكتب: لا يوجد" />
+                  </div>
+                ))}
+              </div>
+
+              <button className={btnPrimary + ' w-full mt-4'} disabled={!ready} onClick={send}>
+                {submitLabel(cur)}
+              </button>
+              {saved && <div className="text-[11px] text-slate-400 text-center mt-2">أرسلتَه {hijri(saved.at)} — وتعديلُك يحلّ محلّه.</div>}
+            </div>
+          );
+        })()}
+
+        {/* --------------------------- ملاحظات الطلاب --------------------------- */}
+        {/*
+          يراها الموظفون كلُّهم — «لأن الموظفين كلهم يتعاملون مع الطلاب».
+
+          وهي شاشةٌ مستقلة عن قاعدة الأهالي عن قصد: فيها اسمُ الولد وملاحظتُه
+          ومن كتبها، ولا شيء غير ذلك — لا جوّال وليّ أمرٍ ولا حالةٌ صحية.
+        */}
+        {view === 'studentNotes' && (isAdmin || writesReport) && (() => {
+          const rows = (data.studentNotes || []).slice().sort((a, b) => (b.at || 0) - (a.at || 0));
+          const q = search.trim();
+          const shown = q ? rows.filter((n) => (n.studentName || '').includes(q) || (n.text || '').includes(q)) : rows;
+          return (
+            <div>
+              <h2 className="text-xl font-extrabold text-slate-800 mb-1">ملاحظات الطلاب</h2>
+              <div className="text-xs text-slate-400 mb-4">السلوكية — يراها كل الموظفين، ويربطها المدير من التقارير.</div>
+              {rows.length > 6 && (
+                <div className="relative mb-4">
+                  <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" />
+                  <input className={inputCls + ' pr-9'} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ابحث باسم الطالب أو بالنص" />
+                </div>
+              )}
+              {!shown.length ? (
+                <div className={cardCls + ' text-center text-slate-400 text-sm py-10'}>ما فيه ملاحظات بعد.</div>
+              ) : (
+                <div className="space-y-2.5">
+                  {shown.map((n) => (
+                    <div key={n.id} className={cardCls + ' py-4'}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="font-bold text-slate-800 text-sm">{n.studentName || 'طالب'}</div>
+                          <div className="text-[13px] text-slate-600 leading-8 mt-1 whitespace-pre-wrap">{n.text}</div>
+                          <div className="text-[11px] text-slate-400 mt-2">{n.byName || ''}{n.byName ? ' · ' : ''}{hijri(n.at)}</div>
+                        </div>
+                        {isAdmin && (
+                          <button onClick={() => askConfirm('حذف هذي الملاحظة من سجلّ الطالب؟',
+                            () => save({ ...data, studentNotes: data.studentNotes.filter((x) => x.id !== n.id) }))}
+                            className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 size={15} /></button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* ------------------------------ التنبيهات ------------------------------ */}
+        {view === 'notices' && isAdmin && (() => {
+          const rows = (data.notices || []).slice().sort((a, b) => (b.at || 0) - (a.at || 0));
+          const staff = data.users.filter((u) => u.role !== 'مدير' && u.status !== 'غير نشط');
+          return (
+            <div>
+              <div className="flex items-center justify-between mb-4 gap-3">
+                <h2 className="text-xl font-extrabold text-slate-800">التنبيهات</h2>
+                <button className={btnPrimary} onClick={() => { setForm({ to: '', text: '', days: 3 }); setModal('newNotice'); }}>
+                  <Plus size={16} /> تنبيه جديد
+                </button>
+              </div>
+              {!rows.length ? (
+                <div className={cardCls + ' text-center text-slate-400 text-sm py-10'}>ما أرسلتَ تنبيهًا بعد.</div>
+              ) : (
+                <div className="space-y-2.5">
+                  {rows.map((n) => {
+                    const tally = readTally(n, data.users);
+                    const live = noticeLive(n, Date.now());
+                    return (
+                      <div key={n.id} className={cardCls}>
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <Badge tone={live ? 'brand' : 'slate'}>{live ? tally.text : 'انتهى'}</Badge>
+                          <button onClick={() => askConfirm('حذف هذا التنبيه؟',
+                            () => save({ ...data, notices: data.notices.filter((x) => x.id !== n.id) }))}
+                            className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 size={15} /></button>
+                        </div>
+                        <div className="text-[13.5px] text-slate-700 leading-8 whitespace-pre-wrap">{n.text}</div>
+                        <div className="text-[11px] text-slate-400 mt-2">
+                          {n.to ? `إلى ${data.users.find((u) => u.id === n.to)?.name || 'موظف'}` : 'للجميع'} · {hijri(n.at)}
+                          {n.days ? ` · ينتهي بعد ${say(n.days, 'day')}` : ' · لا ينتهي'}
+                        </div>
+                        {staff.length > 0 && (
+                          <div className="mt-3 pt-3 border-t border-slate-50 text-[11.5px] space-y-1">
+                            <div className="text-slate-500"><b className="text-slate-700">قرأه:</b> {tally.read.map((u) => u.name).join(' · ') || '—'}</div>
+                            <div className="text-slate-500"><b className="text-slate-700">ما قرأه:</b> {tally.unread.map((u) => u.name).join(' · ') || '—'}</div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ------------------------------ قائمة البرامج ------------------------------ */}
         {view === 'programs' && (
@@ -6089,9 +6496,100 @@ export default function App() {
                     : [];
                   return (
                   <>
+                  {/*
+                    تقارير الموظفين عن هذا اليوم.
+
+                    للمدير وحده: هو من يطالب بها ويقرؤها. ومنها يربط الملاحظة
+                    بسجلّ الطالب — بيده هو، لأن ما يُكتب في سجلّ ولدٍ يبقى معه.
+                  */}
+                  {isAdmin && (() => {
+                    const roll = reportRoll(data, program.id, week.id, seesWeek);
+                    const loose = unassigned([
+                      ...(runs?.competitions || []),
+                      ...(runs?.tournaments || []),
+                    ]);
+                    if (!roll.total && !loose.length) return null;
+                    const nameOfRun = (r) => data.competitions.find((c) => c.id === r.compId)?.name || r.name || 'نشاط';
+                    return (
+                      <div className={cardCls + ' mb-3'}>
+                        <div className="flex items-center justify-between gap-2 mb-3">
+                          <h3 className="font-bold text-slate-700">تقارير اليوم</h3>
+                          <span className="text-xl font-extrabold text-brand-700">{rollText(roll)}</span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-slate-200 overflow-hidden mb-3">
+                          <div className="h-full bg-brand-600 rounded-full"
+                            style={{ width: `${roll.total ? Math.round((roll.done.length / roll.total) * 100) : 0}%` }} />
+                        </div>
+                        <div className="divide-y divide-slate-50">
+                          {roll.done.map(({ user: u, report: r }) => (
+                            <button key={u.id} onClick={() => { setForm({ reportId: r.id, userId: u.id }); setModal('readReport'); }}
+                              className="w-full flex items-center justify-between gap-2 py-2.5 text-right">
+                              <span className="flex items-center gap-2 min-w-0">
+                                <span className="w-5 h-5 rounded-full bg-green-100 text-green-700 text-[11px] font-extrabold flex items-center justify-center shrink-0">✓</span>
+                                <span className="text-sm font-semibold text-slate-700 truncate">{u.name}</span>
+                              </span>
+                              <span className="text-[11px] text-slate-400 shrink-0">اقرأه</span>
+                            </button>
+                          ))}
+                          {roll.late.map(({ user: u }) => (
+                            <div key={u.id} className="flex items-center justify-between gap-2 py-2.5">
+                              <span className="flex items-center gap-2 min-w-0">
+                                <span className="w-5 h-5 rounded-full bg-red-100 text-red-700 text-[11px] font-extrabold flex items-center justify-center shrink-0">✕</span>
+                                <span className="text-sm font-semibold text-slate-700 truncate">{u.name}</span>
+                              </span>
+                              {/* بجوّاله ضغطة، وبدونه تختار الرقم بنفسك — ولا نَعِد بما لا نملك */}
+                              <a className="shrink-0 text-[11px] font-bold text-green-700 border border-green-200 rounded-lg px-2.5 py-1.5"
+                                target="_blank" rel="noreferrer"
+                                href={u.phone
+                                  ? `https://wa.me/${waIntl(u.phone)}?text=${encodeURIComponent(`تقرير ${week.name} ما وصلني بعد.`)}`
+                                  : `https://wa.me/?text=${encodeURIComponent(`${u.name}: تقرير ${week.name} ما وصلني بعد.`)}`}>
+                                ذكّره بواتساب
+                              </a>
+                            </div>
+                          ))}
+                        </div>
+                        {loose.length > 0 && (
+                          <div className="mt-3 pt-3 border-t border-slate-100">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="text-xs font-bold text-amber-700">غير مُسنَد</span>
+                              <Badge tone="amber">{loose.length}</Badge>
+                            </div>
+                            {loose.map((r) => (
+                              <div key={r.id} className="flex items-center justify-between gap-2 py-1.5">
+                                <span className="text-[13px] text-slate-600 truncate">{nameOfRun(r)}</span>
+                                <button className="shrink-0 text-[11px] font-bold text-brand-700 border border-brand-200 rounded-lg px-2.5 py-1.5"
+                                  onClick={() => { setForm({ runId: r.id, isTournament: !r.compId, supervisors: [], helper: r.helper || '' }); setModal('assignRun'); }}>
+                                  أسنِدها
+                                </button>
+                              </div>
+                            ))}
+                            <div className="text-[11px] text-slate-400 mt-1.5">ما أُقيم بلا مشرفٍ لا يسقط من التقارير — يظهر هنا حتى تُسنِده.</div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                     {seesClub && <ClubReport data={data} program={program} week={week} />}
                     <WeekReport week={week} accounts={data.faidAccounts} canMoney={canMoney} programName={program.name}
-                      term={termText(program.termKey)} club={clubLines} />
+                      term={termText(program.termKey)} club={clubLines} extra={(() => {
+                        /*
+                          ملخّصُ اليوم وصناديقُه الثلاثة الجديدة.
+
+                          والقيمي منها لا يصل جهازَ من لا يملك صلاحيته أصلًا —
+                          فالورقة تطلع بلا صندوقه بلا حاجةٍ إلى شرطٍ هنا.
+                        */
+                        const qs = qiyamiOfDay(data, program.id, week.id)
+                          .map((q) => ({ title: q.title, by: supervisorNames(q, data.users).join(' و') }));
+                        const notes = noteNames(data, program.id, week.id, data.students);
+                        const roll = isAdmin ? reportRoll(data, program.id, week.id, seesWeek) : null;
+                        return {
+                          qiyami: qs, notes,
+                          reports: roll && roll.total ? rollText(roll) : '',
+                          summary: (names) => daySummary({
+                            comps: runs?.competitions.length || 0, qiyami: qs, noteNames: notes, roll,
+                          }, { names }),
+                        };
+                      })()} />
                   </>
                   );
                 })()}
@@ -6363,17 +6861,106 @@ export default function App() {
         )}
 
         {/* -------------------------------- النادي -------------------------------- */}
-        {view === 'competitions' && can('النادي') && (
-          <div>
-            <h2 className="text-xl font-extrabold text-slate-800">النادي</h2>
-            <div className="text-xs text-slate-400 mt-0.5 mb-4">المسابقات والدوري وسؤال اليوم.</div>
-            <Tabs value={clubTab} onChange={setClubTab} tabs={[
+        {view === 'competitions' && (can('النادي') || can('القيمي')) && (() => {
+          /*
+            القيمي صلاحيةٌ مستقلة، فقد يملكها من لا يملك النادي — فيدخل على
+            قسمه وحده، ولا يُترك بلا باب.
+          */
+          const tabs = [
+            ...(can('النادي') ? [
               { id: 'comps', label: 'المسابقات' },
               { id: 'league', label: 'الدوري والكأس' },
               { id: 'question', label: 'سؤال اليوم' },
-            ]} />
+            ] : []),
+            ...(can('القيمي') ? [{ id: 'qiyami', label: 'القيمي' }] : []),
+          ];
+          const tab = tabs.some((t) => t.id === clubTab) ? clubTab : tabs[0]?.id;
+          return (
+          <div>
+            <h2 className="text-xl font-extrabold text-slate-800">النادي</h2>
+            <div className="text-xs text-slate-400 mt-0.5 mb-4">المسابقات والدوري وسؤال اليوم{can('القيمي') ? ' والقيمي' : ''}.</div>
+            <Tabs value={tab} onChange={setClubTab} tabs={tabs} />
 
-            {clubTab === 'comps' && (
+            {tab === 'qiyami' && (() => {
+              const rows = (data.qiyami || []).slice().sort((a, b) => (b.at || 0) - (a.at || 0));
+              const canAdd = canWritePerm(effectiveUser, 'القيمي');
+              return (
+                <div>
+                  <div className="flex items-center justify-between mb-3 gap-3">
+                    <h3 className="font-bold text-slate-700">القيمي</h3>
+                    {canAdd && (
+                      <button className={btnPrimary} onClick={() => setForm({
+                        supervisors: effectiveUser && effectiveUser.role !== 'مدير' ? [effectiveUser.id] : [],
+                        helper: '', title: '', points: '', qa: '', video: '', ...onToday,
+                      }) || setModal('editQiyami')}><Plus size={16} /> قيمي</button>
+                    )}
+                  </div>
+                  <div className="text-xs text-slate-400 mb-4">
+                    واحدٌ يُلقي موضوعًا، ويوثَّق بنقاطه أو بسؤالٍ وجواب أو بمقطعٍ يُعرض. ولا يراه إلا من أُعطي صلاحيته.
+                  </div>
+                  {!rows.length ? (
+                    <div className={cardCls + ' text-center text-slate-400 text-sm py-10'}>ما فيه قيمي مسجَّل بعد.</div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {rows.map((q) => {
+                        const pg = data.programs.find((x) => x.id === q.programId);
+                        const wk = (pg?.weeks || []).find((x) => x.id === q.weekId);
+                        const embed = videoEmbed(q.video);
+                        return (
+                          <div key={q.id} className={cardCls}>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="font-bold text-slate-800">{q.title}</div>
+                                <div className="text-[11px] text-slate-400 mt-1">
+                                  {supervisorNames(q, data.users).join(' · ') || 'بلا ملقٍ'}
+                                  {pg ? ` · ${pg.name}` : ''}{wk ? ` — ${wk.name}` : ''}
+                                </div>
+                              </div>
+                              {canAdd && (
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button onClick={() => setForm({ ...q }) || setModal('editQiyami')}
+                                    className="text-slate-400 hover:text-brand-700"><Pencil size={15} /></button>
+                                  <button onClick={() => askConfirm(`حذف «${q.title}»؟`,
+                                    () => save({ ...data, qiyami: data.qiyami.filter((x) => x.id !== q.id) }))}
+                                    className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>
+                                </div>
+                              )}
+                            </div>
+                            {q.points && (
+                              <div className="mt-3 bg-slate-50 rounded-xl px-3 py-2.5">
+                                <div className="text-[11px] font-bold text-slate-400 mb-1">النقاط الرئيسة</div>
+                                <div className="text-[13px] text-slate-700 leading-8 whitespace-pre-wrap">{q.points}</div>
+                              </div>
+                            )}
+                            {q.qa && (
+                              <div className="mt-2 bg-slate-50 rounded-xl px-3 py-2.5">
+                                <div className="text-[11px] font-bold text-slate-400 mb-1">سؤال وجواب</div>
+                                <div className="text-[13px] text-slate-700 leading-8 whitespace-pre-wrap">{q.qa}</div>
+                              </div>
+                            )}
+                            {/* اليوتيوب يُعرض من عنده، فلا يُحمَّل من خادمنا ولا يُحسب على نقله */}
+                            {embed && (
+                              <div className="mt-3 rounded-xl overflow-hidden bg-black aspect-video">
+                                <iframe src={embed} title={q.title} allowFullScreen className="w-full h-full border-0"
+                                  allow="accelerometer; clipboard-write; encrypted-media; picture-in-picture" />
+                              </div>
+                            )}
+                            {!embed && q.video && (
+                              <a href={q.video} target="_blank" rel="noopener noreferrer"
+                                className="mt-3 flex items-center gap-2 text-brand-700 text-xs font-bold">
+                                <Video size={15} /> افتح المقطع
+                              </a>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {tab === 'comps' && (
               <div>
                 <div className="flex items-center justify-between mb-3 gap-3">
                   <h3 className="font-bold text-slate-700">بنك المسابقات</h3>
@@ -6425,12 +7012,12 @@ export default function App() {
               </div>
             )}
 
-            {clubTab === 'league' && (
+            {tab === 'league' && (
               <div>
                 <div className="flex items-center justify-between mb-3 gap-3">
                   <h3 className="font-bold text-slate-700">الدوري والكأس</h3>
                   <button className={btnPrimary}
-                    onClick={() => { setForm({ type: LEAGUE, levels: [], teamNames: ['', ''] }); setModal('editTournament'); }}>
+                    onClick={() => { setForm({ type: LEAGUE, levels: [], teamNames: ['', ''], ...onToday, supervisors: effectiveUser && effectiveUser.role !== 'مدير' ? [effectiveUser.id] : [], helper: '' }); setModal('editTournament'); }}>
                     <Plus size={16} /> جديد
                   </button>
                 </div>
@@ -6469,7 +7056,7 @@ export default function App() {
               </div>
             )}
 
-            {clubTab === 'question' && (
+            {tab === 'question' && (
               <div>
                 <div className="flex items-center justify-between mb-3 gap-3">
                   <h3 className="font-bold text-slate-700">أسئلة اليوم</h3>
@@ -6535,7 +7122,8 @@ export default function App() {
               </div>
             )}
           </div>
-        )}
+          );
+        })()}
 
         {/* بطاقة المسابقة: الفكرة والأدوات والصور */}
         {view === 'competitionDetail' && competition && (
@@ -6563,7 +7151,7 @@ export default function App() {
               <div className="flex items-center justify-between gap-3 mb-3">
                 <div className="text-sm font-semibold text-slate-700">استُخدمت في</div>
                 <button className="text-xs font-semibold text-brand-700 hover:text-brand-800"
-                  onClick={() => { setForm({ compId: competition.id, programId: '', weekId: '' }); setModal('addRun'); }}>
+                  onClick={() => { setForm({ compId: competition.id, ...onToday, supervisors: effectiveUser && effectiveUser.role !== 'مدير' ? [effectiveUser.id] : [], helper: '' }); setModal('addRun'); }}>
                   + سجّل جمعة
                 </button>
               </div>
@@ -6690,24 +7278,53 @@ export default function App() {
                       </div>
                     ))}
                   </div>
-                  <div className={cardCls}>
-                    <div className="text-sm font-semibold text-slate-700 mb-3">المباريات</div>
-                    <div className="space-y-2">
-                      {leagueFixtures(tournament.teams).map((fx) => {
-                        const m = (tournament.matches || []).find((x) => x.aId === fx.aId && x.bId === fx.bId) || {};
-                        const nm = (id) => tournament.teams.find((t) => t.id === id)?.name || '';
-                        return (
-                          <div key={`${fx.aId}-${fx.bId}`} className="flex items-center gap-2 bg-slate-50 rounded-xl px-3 py-2">
-                            <span className="flex-1 text-sm text-slate-700 truncate text-left">{nm(fx.aId)}</span>
-                            {score(fx, 'a', m.aScore)}
-                            <span className="text-slate-300 text-xs">×</span>
-                            {score(fx, 'b', m.bScore)}
-                            <span className="flex-1 text-sm text-slate-700 truncate">{nm(fx.bId)}</span>
+                  {(() => {
+                    const legs = leagueRounds(tournament);
+                    const nm = (id) => tournament.teams.find((t) => t.id === id)?.name || '';
+                    return (
+                      <div className={cardCls}>
+                        <div className="text-sm font-semibold text-slate-700 mb-3">المباريات</div>
+                        {Array.from({ length: legs }, (_, leg) => (
+                          <div key={leg} className={leg ? 'mt-4' : ''}>
+                            {legs > 1 && (
+                              <div className="text-[11px] font-bold text-slate-400 mb-2">الجولة {ROUND_ORD[leg] || leg + 1}</div>
+                            )}
+                            <div className="space-y-2">
+                              {leagueFixtures(tournament.teams, legs).filter((fx) => fx.leg === leg).map((fx) => {
+                                const m = matchOf(tournament, fx) || {};
+                                return (
+                                  <div key={`${fx.aId}-${fx.bId}-${fx.leg}`} className="flex items-center gap-2 bg-slate-50 rounded-xl px-3 py-2">
+                                    <span className="flex-1 text-sm text-slate-700 truncate text-left">{nm(fx.aId)}</span>
+                                    {score(fx, 'a', m.aScore)}
+                                    <span className="text-slate-300 text-xs">×</span>
+                                    {score(fx, 'b', m.bScore)}
+                                    <span className="flex-1 text-sm text-slate-700 truncate">{nm(fx.bId)}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
-                        );
-                      })}
-                    </div>
-                  </div>
+                        ))}
+                        {/* الوقت يُعرف أثناء اليوم لا قبله، فالجولة تُزاد حين يتّسع */}
+                        {tournament.teams.length > 1 && (
+                          <div className="flex gap-2 mt-4">
+                            {legs < LEAGUE_ROUNDS_MAX && (
+                              <button className={btnGhostBox + ' flex-1'}
+                                onClick={() => save({ ...data, tournaments: data.tournaments.map((t) => (t.id === tournament.id ? addRound(t) : t)) })}>
+                                <Plus size={15} /> جولة
+                              </button>
+                            )}
+                            {canDropRound(tournament) && (
+                              <button className={btnGhost + ' shrink-0'}
+                                onClick={() => save({ ...data, tournaments: data.tournaments.map((t) => (t.id === tournament.id ? dropRound(t) : t)) })}>
+                                شِل الجولة {ROUND_ORD[legs - 1] || legs}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </>
               ) : (
                 <div className="space-y-3">
@@ -8818,6 +9435,10 @@ export default function App() {
             </div>
           )}
           <Field label="الاسم"><input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+          <Field label="الجوال — اختياري" hint="منه يصله تذكير التقرير بضغطة. وبدونه تختار الرقم بنفسك من واتساب.">
+            <input className={inputCls} dir="ltr" inputMode="tel" value={form.phone || ''}
+              onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="05xxxxxxxx" />
+          </Field>
           <Field label="اسم المستخدم" hint="اللي يكتبه عند الدخول. حروف إنجليزية وأرقام بدون مسافات.">
             <input className={inputCls} dir="ltr" value={form.username || ''} onChange={(e) => setForm({ ...form, username: e.target.value, error: '' })} placeholder="saad" />
           </Field>
@@ -8844,12 +9465,16 @@ export default function App() {
               «يشوف فقط» ما تُعرض إلا لخيركم: الوعد بها في قسمٍ لم تُحرَس فيه
               الأزرارُ كذبٌ على صاحب التطبيق. تُضاف لغيرها متى حُرست فيه.
             */}
-            {(form.permissions || []).includes('خيركم') && (() => {
-              const ro = (form.readOnly || []).includes('خيركم');
-              const set = (v) => setForm({ ...form, readOnly: v ? ['خيركم'] : [] });
+            {['خيركم', 'القيمي'].filter((perm) => (form.permissions || []).includes(perm)).map((perm) => (() => {
+              const ro = (form.readOnly || []).includes(perm);
+              const set = (v) => setForm({
+                ...form,
+                readOnly: v ? [...(form.readOnly || []).filter((x) => x !== perm), perm]
+                  : (form.readOnly || []).filter((x) => x !== perm),
+              });
               return (
-                <div className="bg-slate-50 rounded-xl p-3 mt-3">
-                  <div className="text-xs text-slate-500 mb-2.5">خيركم:</div>
+                <div key={perm} className="bg-slate-50 rounded-xl p-3 mt-3">
+                  <div className="text-xs text-slate-500 mb-2.5">{perm}:</div>
                   <div className="grid grid-cols-2 gap-2">
                     <button type="button" onClick={() => set(false)}
                       className={`rounded-lg py-2.5 text-sm font-semibold border ${ro ? 'bg-white border-slate-200 text-slate-600' : 'bg-brand-600 border-brand-600 text-white'}`}>
@@ -8862,12 +9487,23 @@ export default function App() {
                   </div>
                   {ro && (
                     <div className="text-xs text-slate-400 mt-2 leading-6">
-                      يقرأ الطلاب والجلسات والتقرير، وما أمامه إضافةٌ ولا قلمٌ ولا سلة.
+                      {perm === 'القيمي'
+                        ? 'يقرأ القيمي ومقاطعه، وما أمامه إضافةٌ ولا قلمٌ ولا سلة.'
+                        : 'يقرأ الطلاب والجلسات والتقرير، وما أمامه إضافةٌ ولا قلمٌ ولا سلة.'}
                     </div>
                   )}
                 </div>
               );
-            })()}
+            })())}
+          </Field>
+          {/* مخرجٌ لمن لا يحضر يوم البرنامج، فلا تصير البطاقة ضجيجًا يُتجاهَل */}
+          <Field label="تقرير اليوم">
+            <div className="flex gap-2">
+              {[{ v: false, l: 'يُطالَب به' }, { v: true, l: 'لا يُطالَب' }].map((o) => (
+                <button key={String(o.v)} type="button" onClick={() => setForm({ ...form, noReport: o.v })}
+                  className={`flex-1 py-2 rounded-lg text-sm font-medium border ${Boolean(form.noReport) === o.v ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`}>{o.l}</button>
+              ))}
+            </div>
           </Field>
           <Field label="نطاق الوصول للأيام">
             <div className="flex gap-2 mb-2">
@@ -9037,9 +9673,207 @@ export default function App() {
       {modal === 'addRun' && (
         <Modal title="سجّل جمعة" onClose={closeModal}>
           <WeekPicker programs={data.programs} form={form} setForm={setForm} />
+          <SupervisorPicker users={data.users} value={form.supervisors || []} helper={form.helper || ''}
+            onChange={(supervisors) => setForm({ ...form, supervisors })}
+            onHelper={(helper) => setForm({ ...form, helper })} />
+          {/* اليوم المحسوب يوم الإقامة لا يوم تسجيلها في البنك */}
+          <div className="text-[11px] text-slate-400 -mt-2 mb-3">اليوم المحسوب هو يوم الإقامة، لا يوم تسجيلها في بنك المسابقات.</div>
           {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
           <div className="flex gap-2 mt-5">
             <button className={btnPrimary + ' flex-1'} onClick={addRun}>سجّل</button>
+            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+          </div>
+        </Modal>
+      )}
+
+      {/*
+        قراءة تقرير موظفٍ عن يومه، ومنه يُربط ما كتبه بسجلّ صاحبه.
+
+        والربط بيد المدير وحده — هكذا أرادها صاحب التطبيق: يكتبها الموظف
+        نصًّا، ولا تدخل سجلَّ ولدٍ إلا بعد أن يقرأها مَن يقرأ.
+      */}
+      {modal === 'readReport' && (() => {
+        const r = (data.dayReports || []).find((x) => x.id === form.reportId);
+        if (!r) return null;
+        const who = data.users.find((u) => u.id === r.userId);
+        return (
+          <Modal title={`تقرير ${who?.name || 'موظف'}`} onClose={closeModal} wide>
+            <div className="text-[11px] text-slate-400 mb-4">{hijri(r.at)}</div>
+            {REPORT_PARTS.map((part) => (
+              <div key={part.key} className="mb-4">
+                <div className="text-xs font-bold text-slate-500 mb-1.5">{part.label}</div>
+                <div className="bg-slate-50 rounded-xl px-3 py-2.5 text-[13.5px] text-slate-700 leading-8 whitespace-pre-wrap">
+                  {r[part.key]}
+                </div>
+                {part.key === 'notes' && String(r.notes || '').trim() && (
+                  <button className={btnGhostBox + ' w-full mt-2'}
+                    onClick={() => setForm({ ...form, noteText: r.notes, picked: [], error: '' }) || setModal('linkNote')}>
+                    <Plus size={15} /> اربطها بطالب
+                  </button>
+                )}
+              </div>
+            ))}
+            <button className={btnGhost + ' w-full'} onClick={closeModal}>إغلاق</button>
+          </Modal>
+        );
+      })()}
+
+      {modal === 'linkNote' && (() => {
+        const r = (data.dayReports || []).find((x) => x.id === form.reportId);
+        const who = data.users.find((u) => u.id === r?.userId);
+        /*
+          طلاب البرنامج بأسمائهم — بلا حاضرٍ ولا غائبٍ ولا عدد مرات. الحضور
+          له شاشته، ولا يُخلط بملاحظةٍ سلوكية.
+        */
+        const pool = [];
+        const seen = new Set();
+        for (const src of [program?.participants || [], week?.participants || []]) {
+          for (const p of src) {
+            const key = p.studentId || p.id;
+            if (!key || seen.has(key) || !String(p.name || '').trim()) continue;
+            seen.add(key);
+            pool.push({ key, id: p.studentId || '', name: p.name });
+          }
+        }
+        const q = (form.q || '').trim();
+        const shown = q ? pool.filter((p) => p.name.includes(q)) : pool;
+        const picked = form.picked || [];
+        const link = () => {
+          const text = String(form.noteText || '').trim();
+          if (!text) { setForm({ ...form, error: 'اكتب نصّ الملاحظة' }); return; }
+          if (!picked.length) { setForm({ ...form, error: 'اختر الطالب' }); return; }
+          const rows = picked.map((key) => {
+            const p = pool.find((x) => x.key === key);
+            return {
+              id: uid(),
+              ...noteOn(p?.id || key, text, r?.userId || '', {
+                programId: program?.id || '', weekId: week?.id || '',
+                studentName: p?.name || '', byName: who?.name || '',
+              }),
+            };
+          });
+          save({ ...data, studentNotes: [...(data.studentNotes || []), ...rows] });
+          closeModal();
+        };
+        return (
+          <Modal title="على مَن هذي الملاحظة؟" onClose={closeModal} wide>
+            <Field label="نصّ الملاحظة" hint="كما كتبها صاحبُها — ولك أن تختصرها قبل أن تدخل سجلّ الطالب.">
+              <textarea rows={3} className={inputCls + ' leading-8'} value={form.noteText || ''}
+                onChange={(e) => setForm({ ...form, noteText: e.target.value, error: '' })} />
+            </Field>
+            {pool.length > 6 && (
+              <div className="relative mb-3">
+                <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" />
+                <input className={inputCls + ' pr-9'} value={form.q || ''} onChange={(e) => setForm({ ...form, q: e.target.value })} placeholder="ابحث بالاسم…" />
+              </div>
+            )}
+            <div className="text-xs font-bold text-slate-400 mb-1.5">طلاب البرنامج</div>
+            <div className="max-h-64 overflow-y-auto divide-y divide-slate-50 mb-3">
+              {!shown.length && <div className="text-sm text-slate-400 py-6 text-center">ما فيه طلاب مسجَّلون.</div>}
+              {shown.map((p) => {
+                const on = picked.includes(p.key);
+                return (
+                  <button key={p.key} type="button" onClick={() => setForm({
+                    ...form, error: '',
+                    picked: on ? picked.filter((x) => x !== p.key) : [...picked, p.key],
+                  })} className="w-full flex items-center gap-3 py-2.5 text-right">
+                    <span className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${on ? 'bg-brand-700 border-brand-700 text-white' : 'border-slate-300'}`}>
+                      {on && <Check size={13} />}
+                    </span>
+                    <span className="text-sm font-semibold text-slate-700 truncate">{p.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+            <div className="flex gap-2">
+              <button className={btnPrimary + ' flex-1'} onClick={link}>
+                اربطها{picked.length > 1 ? ` بـ${say(picked.length, 'student')}` : ''}
+              </button>
+              <button className={btnGhost} onClick={() => setModal('readReport')}>رجوع</button>
+            </div>
+            <div className="text-[11px] text-slate-400 mt-2 text-center">تنطبق على أكثر من واحد؟ اختر عدّة أسماء.</div>
+          </Modal>
+        );
+      })()}
+
+      {modal === 'assignRun' && (
+        <Modal title="أسنِدها لمن أقامها" onClose={closeModal}>
+          <SupervisorPicker users={data.users} value={form.supervisors || []} helper={form.helper || ''}
+            onChange={(supervisors) => setForm({ ...form, supervisors })}
+            onHelper={(helper) => setForm({ ...form, helper })} />
+          <div className="flex gap-2 mt-5">
+            <button className={btnPrimary + ' flex-1'} onClick={() => {
+              const sup = (form.supervisors || []).filter(Boolean).slice(0, SUPERVISOR_MAX);
+              const helper = String(form.helper || '').trim();
+              save(form.isTournament
+                ? { ...data, tournaments: data.tournaments.map((t) => (t.id !== form.runId ? t : { ...t, supervisors: sup, helper })) }
+                : { ...data, clubRuns: data.clubRuns.map((r) => (r.id !== form.runId ? r : { ...r, supervisors: sup, helper })) });
+              closeModal();
+            }}>احفظ</button>
+            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+          </div>
+        </Modal>
+      )}
+
+      {modal === 'editQiyami' && (
+        <Modal title={form.id ? 'تعديل القيمي' : 'قيمي جديد'} onClose={closeModal} wide>
+          <SupervisorPicker users={data.users} value={form.supervisors || []} helper={form.helper || ''}
+            onChange={(supervisors) => setForm({ ...form, supervisors, error: '' })}
+            onHelper={(helper) => setForm({ ...form, helper, error: '' })} label="الملقي — إجباري" />
+          <Field label="العنوان — إجباري">
+            <input className={inputCls} value={form.title || ''} onChange={(e) => setForm({ ...form, title: e.target.value, error: '' })}
+              placeholder="برّ الوالدين" />
+          </Field>
+          <WeekPicker programs={data.programs} form={form} setForm={setForm} />
+          <Field label="النقاط الرئيسة — اختياري">
+            <textarea rows={4} className={inputCls + ' leading-8'} value={form.points || ''}
+              onChange={(e) => setForm({ ...form, points: e.target.value })} placeholder={'• النقطة الأولى\n• النقطة الثانية'} />
+          </Field>
+          <Field label="سؤال وجواب — اختياري">
+            <textarea rows={3} className={inputCls + ' leading-8'} value={form.qa || ''}
+              onChange={(e) => setForm({ ...form, qa: e.target.value })} placeholder={'س: …\nج: …'} />
+          </Field>
+          <Field label="رابط الفيديو — اختياري" hint="يوتيوب يُعرض داخل القسم ويُشغَّل منه، وغيره يُفتح بضغطة.">
+            <input className={inputCls} dir="ltr" value={form.video || ''}
+              onChange={(e) => setForm({ ...form, video: e.target.value })} placeholder="https://youtu.be/…" />
+          </Field>
+          {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+          <div className="flex gap-2 mt-5">
+            <button className={btnPrimary + ' flex-1'} onClick={saveQiyami}>احفظ</button>
+            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+          </div>
+        </Modal>
+      )}
+
+      {modal === 'newNotice' && (
+        <Modal title="تنبيه جديد" onClose={closeModal}>
+          <Field label="إلى مَن">
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => setForm({ ...form, to: '' })}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${!form.to ? 'bg-brand-700 text-white border-brand-700' : 'bg-white text-slate-600 border-slate-200'}`}>الكل</button>
+              {data.users.filter((u) => u.role !== 'مدير' && u.status !== 'غير نشط').map((u) => (
+                <button key={u.id} type="button" onClick={() => setForm({ ...form, to: u.id })}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${form.to === u.id ? 'bg-brand-700 text-white border-brand-700' : 'bg-white text-slate-600 border-slate-200'}`}>{u.name}</button>
+              ))}
+            </div>
+          </Field>
+          <Field label="النص">
+            <textarea rows={4} className={inputCls + ' leading-8'} value={form.text || ''}
+              onChange={(e) => setForm({ ...form, text: e.target.value, error: '' })}
+              placeholder="الجمعة الجاية البداية ٣:٣٠ لا ٤:٠٠" />
+          </Field>
+          <Field label="ينتهي بعد" hint="ينزل وحده بعد المدّة، فلا تتكدّس التنبيهات القديمة عندهم.">
+            <div className="flex flex-wrap gap-2">
+              {NOTICE_SPANS.map((s) => (
+                <button key={s.days} type="button" onClick={() => setForm({ ...form, days: s.days })}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${Number(form.days || 0) === s.days ? 'bg-brand-700 text-white border-brand-700' : 'bg-white text-slate-600 border-slate-200'}`}>{s.label}</button>
+              ))}
+            </div>
+          </Field>
+          {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+          <div className="flex gap-2 mt-5">
+            <button className={btnPrimary + ' flex-1'} onClick={saveNotice}><Send size={16} /> أرسل التنبيه</button>
             <button className={btnGhost} onClick={closeModal}>إلغاء</button>
           </div>
         </Modal>
@@ -9060,6 +9894,9 @@ export default function App() {
             </div>
           </Field>
           <WeekPicker programs={data.programs} form={form} setForm={setForm} />
+          <SupervisorPicker users={data.users} value={form.supervisors || []} helper={form.helper || ''}
+            onChange={(supervisors) => setForm({ ...form, supervisors })}
+            onHelper={(helper) => setForm({ ...form, helper })} label="المشرفون عليه" />
           <Field label="المرحلة" hint="اختياري.">
             <LevelPicker value={form.levels || []} onChange={(levels) => setForm({ ...form, levels })} />
           </Field>
@@ -10702,13 +11539,15 @@ function ProgramTotals({ program }) {
 function clubRows(data, program, runs, week) {
   const weekOf = (id) => (week ? '' : (program.weeks || []).find((w) => w.id === id)?.name || '');
   const compName = (id) => (data.competitions || []).find((x) => x.id === id)?.name || 'مسابقة محذوفة';
+  // ومن أقامها يُكتب معها: هذا أصلُ السؤال — من عمل ماذا في أي يوم
+  const by = (r) => { const n = supervisorNames(r, data.users); return n.length ? ` · ${n.join(' و')}` : ''; };
   return [
-    ...runs.competitions.map((r) => ({ id: r.id, name: compName(r.compId), kind: 'مسابقة', week: weekOf(r.weekId) })),
+    ...runs.competitions.map((r) => ({ id: r.id, name: compName(r.compId), kind: 'مسابقة' + by(r), week: weekOf(r.weekId) })),
     ...runs.tournaments.map((t) => {
       const ch = champion(t);
       return {
         id: t.id, name: t.name, week: weekOf(t.weekId),
-        kind: (t.type === CUP ? 'كأس' : 'دوري') + (ch ? ` · ${ch.name}` : ''),
+        kind: (t.type === CUP ? 'كأس' : 'دوري') + (ch ? ` · ${ch.name}` : '') + by(t),
       };
     }),
     ...runs.questions.map((q) => ({
@@ -11255,7 +12094,7 @@ const termText = (key) => {
 };
 
 /** نص التقرير للمشاركة عبر واتساب أو أي تطبيق. */
-function weekReportText(week, programName, canMoney, { term = '', club = [] } = {}) {
+function weekReportText(week, programName, canMoney, { term = '', club = [], summary = [] } = {}) {
   const rows = week.participants || [];
   return weekReport({
     week: week.name,
@@ -11271,13 +12110,26 @@ function weekReportText(week, programName, canMoney, { term = '', club = [] } = 
       revenue: L.revenue(week), expenses: L.expenses(week), net: L.net(week),
       school: L.school(week), faid: L.faid(week),
     } : null,
-    club,
+    club, summary,
   });
 }
 
-function WeekReport({ week, accounts, canMoney, programName, term, club }) {
+function WeekReport({ week, accounts, canMoney, programName, term, club, extra = null }) {
   const [shared, setShared] = useState('');
   const [busy, setBusy] = useState(false);
+  /**
+   * «بلا أسماء».
+   *
+   * الورقةُ والنصُّ يخرجان من التطبيق، ويخرجان من الصلاحيات معهما: ما إن
+   * يُلصق النصُّ في قروبٍ حتى يقرأه من لا يملك شيئًا. فالافتراضُ كاملٌ كما
+   * طلب صاحبُ التطبيق — يُرسلها لرئيس المجلس — ومفتاحٌ واحد يشيل أسماء
+   * الأولاد إن أرسلها لغيره.
+   */
+  const [bare, setBare] = useState(false);
+  const names = !bare;
+  const qs = (extra?.qiyami || []).map((q) => ({ title: q.title, by: names ? q.by : '' }));
+  const notes = names ? (extra?.notes || []) : [];
+  const summary = extra?.summary ? extra.summary(names) : [];
   /**
    * ورقةٌ تُرسَل لمن يُرفع إليه.
    *
@@ -11302,6 +12154,7 @@ function WeekReport({ week, accounts, canMoney, programName, term, club }) {
           school: L.school(week), faid: L.faid(week),
         } : null,
         club,
+        qiyami: qs, notes, reports: extra?.reports || '',
       }, { logo: LOGO_MARK_WHITE, team: TEAM_NAME, stamp: hijri(Date.now()) });
       const how = await shareFile(blob, sheetFileName(week.date), `تقرير ${week.name}`);
       setShared(how === 'downloaded' ? 'نزلت الورقة' : '');
@@ -11313,7 +12166,7 @@ function WeekReport({ week, accounts, canMoney, programName, term, club }) {
     }
   };
   const share = async () => {
-    const text = weekReportText(week, programName, canMoney, { term, club });
+    const text = weekReportText(week, programName, canMoney, { term, club, summary });
     try {
       if (navigator.share) { await navigator.share({ title: `تقرير ${week.name}`, text }); return; }
       await navigator.clipboard.writeText(text);
@@ -11346,6 +12199,12 @@ function WeekReport({ week, accounts, canMoney, programName, term, club }) {
         </div>
       )}
 
+      {(extra?.notes?.length > 0 || qs.length > 0) && (
+        <button type="button" onClick={() => setBare(!bare)}
+          className={`w-full rounded-xl border px-4 py-2.5 text-xs font-bold ${bare ? 'bg-brand-700 text-white border-brand-700' : 'bg-white text-slate-600 border-slate-200'}`}>
+          {bare ? 'بلا أسماء ✓ — يطلع العدد وحده' : 'بلا أسماء — لو أرسلتَه لغير رئيس المجلس'}
+        </button>
+      )}
       <button className={btnPrimary + ' w-full'} onClick={share}><Send size={16} /> مشاركة التقرير</button>
       {/* ورقةٌ رسمية تُرسَل لمن فوقك — غير الرسالة التي تُلصق في القروب */}
       <button className={btnGhostBox + ' w-full'} onClick={sheet} disabled={busy}>
