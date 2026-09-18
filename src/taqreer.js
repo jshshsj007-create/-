@@ -107,32 +107,69 @@ export const owedDays = (programs, sees, ms, { max = 3 } = {}) => {
 /* ------------------------------ تقرير اليوم ------------------------------ */
 
 /**
- * خاناته الثلاث. وكلها إجبارية بنصٍّ يُكتب بيده — ومن لم يكن عنده شيء كتب
- * «لا يوجد». وليس هذا تشديدًا بلا معنى: الفرق بين «قال: لم يكن» و«ترك الخانة»
- * هو الفرق بين تقريرٍ وبين صمت.
+ * خانات التقرير — بيد المدير.
+ *
+ * كانت ثلاثًا مكتوبةً في الشيفرة، فصارت قائمةً يضيف فيها ويحذف ويرتّب ويجعل
+ * الخانة إجبارية أو اختيارية. والافتراضُ هو الثلاث كما كانت، فمن لم يغيّر
+ * شيئًا لم يتغيّر عليه شيء.
+ *
+ * والإجباريةُ ليست تشديدًا بلا معنى: الفرق بين «قال: لم يكن» و«ترك الخانة»
+ * هو الفرق بين تقريرٍ وبين صمت — ولذلك يُكتب «لا يوجد» بيده.
  */
-export const REPORT_PARTS = [
-  { key: 'comp', label: 'المسابقة' },
-  { key: 'league', label: 'الدوري' },
-  { key: 'notes', label: 'الطلاب — ملاحظات سلوكية' },
-];
+export const defaultReportFields = () => ([
+  { id: 'comp', label: 'المسابقة', required: true },
+  { id: 'league', label: 'الدوري', required: true },
+  { id: 'notes', label: 'الطلاب — ملاحظات سلوكية', required: true },
+]);
+
+/**
+ * الخانات الحيّة: ما لم يُحذف.
+ *
+ * والمحذوفة تبقى في البيانات مطويّةً لا تُمحى، لأن تقارير الأيام الماضية
+ * كُتبت فيها — فلو مُحيت لقُرئ ما كُتب بلا عنوانٍ يقول ما هو.
+ */
+export const reportFields = (data) => {
+  const all = Array.isArray(data?.reportFields) ? data.reportFields : null;
+  if (!all) return defaultReportFields();
+  const live = all.filter((f) => f && f.id && !f.hidden);
+  return live;
+};
+
+/** وكلُّها — للقراءة: بها تُعرف عناوينُ ما كُتب في تقريرٍ قديم. */
+export const allReportFields = (data) => (Array.isArray(data?.reportFields) && data.reportFields.length
+  ? data.reportFields : defaultReportFields());
 
 export const emptyReport = (userId, programId, weekId) => ({
   userId: String(userId || ''), programId: String(programId || ''), weekId: String(weekId || ''),
-  comp: '', league: '', notes: '', at: 0,
+  values: {}, at: 0,
 });
 
-/** ما بقي فارغًا من الخانات، بأسمائه — لتُقال له لا أن يبحث عنها. */
-export const missingParts = (r) =>
-  REPORT_PARTS.filter((p) => !String(r?.[p.key] ?? '').trim()).map((p) => p.label);
+/**
+ * ما كُتب في خانةٍ من تقرير.
+ *
+ * والتقارير المكتوبة قبل الخانات المتغيّرة تحمل قيمها في جذرها (`comp`
+ * و`league` و`notes`) — فتُقرأ منه، ولا يضيع منها حرف.
+ */
+export const fieldValue = (r, id) => String(r?.values?.[id] ?? r?.[id] ?? '');
 
-export const reportReady = (r) => missingParts(r).length === 0;
+/** ما بقي فارغًا من الخانات الإجبارية، بأسمائه — لتُقال له لا أن يبحث عنها. */
+export const missingParts = (r, fields) => (fields || defaultReportFields())
+  .filter((f) => f.required !== false && !fieldValue(r, f.id).trim())
+  .map((f) => f.label);
+
+export const reportReady = (r, fields) => missingParts(r, fields).length === 0;
 
 /** نصّ الزرّ: يقول ما ينقص، فلا يبقى مطفأً بلا سبب. */
-export const submitLabel = (r) => {
-  const miss = missingParts(r);
+export const submitLabel = (r, fields) => {
+  const live = fields || defaultReportFields();
+  const need = live.filter((f) => f.required !== false);
+  const miss = missingParts(r, live);
   if (!miss.length) return 'أرسل تقرير اليوم';
-  if (miss.length === REPORT_PARTS.length) return 'اكتب الخانات الثلاث';
+  if (need.length && miss.length === need.length) {
+    // الثلاث هي الحال الغالبة، و«الخانات الثلاث» تُقرأ أحسن من «3 خانات»
+    if (need.length === 3) return 'اكتب الخانات الثلاث';
+    return `اكتب ${say(need.length, 'field')}`;
+  }
   return `ناقص: ${miss.join(' · ')}`;
 };
 
@@ -175,10 +212,18 @@ export const reportRoll = (data, programId, weekId, sees) => {
   const due = (data?.users || []).filter((u) => mustReport(u, sees, programId, weekId));
   const rows = dayReports(data, programId, weekId);
   const byUser = Object.fromEntries(rows.map((r) => [r.userId, r]));
+  /**
+   * ويُقاس بالخانات الحيّة لا بالثلاث الأصلية.
+   *
+   * وقعت في الفحص: حُذفت خانةٌ من النموذج، فصارت تقاريرُ من كتبها كاملةً
+   * تُعدّ ناقصةً — لأنها قيست بخانةٍ ما عادت تُطلب منه. فالمقياسُ ما يُطلب
+   * اليوم، لا ما كان يُطلب.
+   */
+  const fields = reportFields(data);
   const done = [], late = [];
   for (const u of due) {
     const r = byUser[u.id];
-    (r && reportReady(r) ? done : late).push({ user: u, report: r || null });
+    (r && reportReady(r, fields) ? done : late).push({ user: u, report: r || null });
   }
   const byName = (a, b) => String(a.user.name || '').localeCompare(String(b.user.name || ''), 'ar');
   return { done: done.sort(byName), late: late.sort(byName), total: due.length };
@@ -281,9 +326,20 @@ export const noticesFor = (data, user, ms) => {
     .sort((a, b) => (a.at || 0) - (b.at || 0));
 };
 
-/** القراءة تُكتب مرةً واحدة: ضغطتان لا تصيران قارئين. */
-export const markRead = (n, userId, ms) => (hasRead(n, userId) ? n
-  : { ...n, reads: [...(n.reads || []), { userId, at: ms || Date.now() }] });
+/**
+ * الردّ يُكتب، لا يُضغط.
+ *
+ * زرُّ «قرأت» وحده يقول إن أحدًا ضغط، ولا يقول إن أحدًا فهم. فطلب صاحبُ
+ * التطبيق أن يكتب: «تم» أو ما شاء — فيُقرأ ردُّه أمام اسمه، ويُعرف من
+ * استوعب من من مرّ عليه.
+ *
+ * والقراءة تُكتب مرةً واحدة: ضغطتان لا تصيران قارئين.
+ */
+export const markRead = (n, userId, ms, text) => (hasRead(n, userId) ? n
+  : { ...n, reads: [...(n.reads || []), { userId, at: ms || Date.now(), text: String(text || '').trim() }] });
+
+/** ردُّ فلانٍ على هذا التنبيه، كما كتبه. */
+export const replyOf = (n, userId) => String((n?.reads || []).find((r) => r.userId === userId)?.text || '');
 
 /**
  * من قرأ ومن لم يقرأ — وإنما تُحسب على من وُجّه إليهم، لا على كل من في

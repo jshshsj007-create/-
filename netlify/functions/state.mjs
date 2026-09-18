@@ -18,6 +18,7 @@ import { hash, verify, isHashed } from '../lib/password.mjs';
 import { loginBlocked, noteFail, clearFails } from '../../src/login.js';
 import { countVisit, dayKey } from '../../src/visits.js';
 import { moneyChanged, moneyRows, moneyMissing, moneySum, blindMoney, restoreMoney } from '../../src/money.js';
+import { vapid, saveSub, dropSub, subsOf, whoHasPush, notifyNewNotices } from '../lib/push.mjs';
 import { TRASH_DAYS } from '../../src/trash.js';
 
 /**
@@ -663,9 +664,12 @@ const guard = (incoming, current, me) => {
      */
     out.notices = (current?.notices || []).map((n) => {
       const sent = (incoming?.notices || []).find((x) => x.id === n.id);
-      const says = (sent?.reads || []).some((r) => r.userId === me?.id);
+      const mine = (sent?.reads || []).find((r) => r.userId === me?.id);
       const had = (n.reads || []).some((r) => r.userId === me?.id);
-      return says && !had ? { ...n, reads: [...(n.reads || []), { userId: me.id, at: Date.now() }] } : n;
+      // ونصُّ ردّه يمرّ معه: به يُعرف من استوعب، وبدونه صار زرَّ «قرأت» من جديد
+      return mine && !had
+        ? { ...n, reads: [...(n.reads || []), { userId: me.id, at: Date.now(), text: String(mine.text || '').slice(0, 500) }] }
+        : n;
     });
   }
 
@@ -1443,6 +1447,13 @@ export default async (req) => {
     // المال يُكتب بعد أن يستقرّ الحفظ: ما جدّ أو تبدّل يصير سطرًا لا يُمحى
     await moneyLog(r.out?.was, r.doc.data, me?.name || '');
     /**
+     * والتنبيهُ الجديد يُرسَل إشعارًا على جوّالاتهم.
+     *
+     * بعد استقرار الحفظ لا قبله — فلا يصل إشعارٌ بتنبيهٍ لم يُحفظ. وفشلُ
+     * الإرسال لا يُفشل الحفظ: التنبيه محفوظٌ ويُرى عند الفتح على كل حال.
+     */
+    await notifyNewNotices(store(), r.out?.was, r.doc.data, new URL(req.url).origin);
+    /**
      * ومن بدّل كلمته بيده يُعطى توكنًا جديدًا.
      *
      * تبديلُ الكلمة يُخرج الأجهزة كلها، وجهازُه منها — فلولا هذا لطُرد وهو
@@ -1454,6 +1465,34 @@ export default async (req) => {
       ok: true, rev: r.doc.rev, visits: await visitsFor(r.doc), back: r.out?.back || [],
       ...(moved ? { token: makeToken(r.doc.secret, now) } : {}),
     });
+  }
+
+  /* ----------------------------- إشعار الجوّال ----------------------------- */
+
+  /** المفتاح العامّ وحده يخرج إلى المتصفح — والخاصُّ لا يغادر المخزن. */
+  if (op === 'push_key') {
+    const keys = await vapid(store());
+    return json({ ok: true, key: keys.publicKey });
+  }
+
+  /** جهازٌ يسجّل نفسه ليصله الإشعار. ولكلٍّ اشتراكاتُه وحده. */
+  if (op === 'push_sub') {
+    const ok = await saveSub(store(), me.id, body.sub);
+    return json(ok ? { ok: true } : { error: 'bad_sub' }, ok ? 200 : 400);
+  }
+
+  /** وإيقافُه: يشيل هذا الجهاز وحده، وبقيّة أجهزته تبقى. */
+  if (op === 'push_off') {
+    await dropSub(store(), me.id, String(body.endpoint || ''));
+    return json({ ok: true });
+  }
+
+  /** من فعّل إشعاراته: يقرؤها المديرُ ليعرف من يحتاج تذكيرًا بالخطوات. */
+  if (op === 'push_who') {
+    if (!isAdmin(me)) return json({ error: 'forbidden' }, 403);
+    const d = await readDoc();
+    const ids = (d?.data?.users || []).filter((u) => u.role !== 'مدير').map((u) => u.id);
+    return json({ ok: true, ids: await whoHasPush(store(), ids), mine: (await subsOf(store(), me.id)).length > 0 });
   }
 
   return json({ error: 'unknown_op' }, 400);

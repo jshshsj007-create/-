@@ -7,7 +7,8 @@
  */
 import assert from 'node:assert/strict';
 import {
-  REPORT_PARTS, emptyReport, missingParts, reportReady, submitLabel,
+  defaultReportFields, reportFields, allReportFields, fieldValue,
+  emptyReport, missingParts, reportReady, submitLabel, replyOf,
   reportOf, dayReports, mustReport, reportRoll, rollText,
   hijriKey, sameDate, dayNow, dateRank, owedDays,
   noteOn, notesOn, notesOfDay, noteNames,
@@ -22,6 +23,8 @@ const test = (name, fn) => { fn(); passed++; console.log('  ✓ ' + name); };
 
 /* ------------------------------ الخانات الثلاث ------------------------------ */
 
+const fill = (v) => ({ ...emptyReport('u1', 'p1', 'w1'), values: v });
+
 test('التقرير الفاضي ناقصٌ ثلاثًا، وتُسمّى له', () => {
   const r = emptyReport('u1', 'p1', 'w1');
   assert.deepEqual(missingParts(r), ['المسابقة', 'الدوري', 'الطلاب — ملاحظات سلوكية']);
@@ -30,24 +33,72 @@ test('التقرير الفاضي ناقصٌ ثلاثًا، وتُسمّى له'
 });
 
 test('وما نقص منه واحدة يُقال له أيّها', () => {
-  const r = { ...emptyReport('u1', 'p1', 'w1'), comp: 'أقمنا الكنز', notes: 'لا يوجد' };
+  const r = fill({ comp: 'أقمنا الكنز', notes: 'لا يوجد' });
   assert.deepEqual(missingParts(r), ['الدوري']);
   assert.equal(submitLabel(r), 'ناقص: الدوري');
 });
 
 test('و«لا يوجد» جوابٌ يُقبل — المقصود أن يقول، لا أن يملأ', () => {
-  const r = { ...emptyReport('u1', 'p1', 'w1'), comp: 'لا يوجد', league: 'لا يوجد', notes: 'لا يوجد' };
+  const r = fill({ comp: 'لا يوجد', league: 'لا يوجد', notes: 'لا يوجد' });
   assert.equal(reportReady(r), true);
   assert.equal(submitLabel(r), 'أرسل تقرير اليوم');
 });
 
 test('والفراغ وحده لا يمرّ ولو كان مسافات', () => {
-  const r = { ...emptyReport('u1', 'p1', 'w1'), comp: '   ', league: '\n', notes: 'شيء' };
+  const r = fill({ comp: '   ', league: '\n', notes: 'شيء' });
   assert.deepEqual(missingParts(r), ['المسابقة', 'الدوري']);
 });
 
-test('وخاناته ثلاث لا تزيد', () => {
-  assert.equal(REPORT_PARTS.length, 3);
+/* --------------------------- والخانات بيد المدير --------------------------- */
+
+test('الافتراض ثلاثٌ إجبارية — فمن لم يغيّر لم يتغيّر عليه شيء', () => {
+  assert.deepEqual(defaultReportFields().map((f) => f.id), ['comp', 'league', 'notes']);
+  assert.ok(defaultReportFields().every((f) => f.required));
+  assert.deepEqual(reportFields({}).map((f) => f.id), ['comp', 'league', 'notes']);
+  assert.deepEqual(reportFields(null).map((f) => f.id), ['comp', 'league', 'notes']);
+});
+
+test('ويضيف خانةً ويحذف ويرتّب', () => {
+  const data = { reportFields: [
+    { id: 'x1', label: 'القيمي', required: true },
+    { id: 'comp', label: 'المسابقة', required: true },
+    { id: 'league', label: 'الدوري', required: true, hidden: true },
+  ] };
+  assert.deepEqual(reportFields(data).map((f) => f.label), ['القيمي', 'المسابقة']);
+  const r = fill({ x1: 'برّ الوالدين' });
+  assert.deepEqual(missingParts(r, reportFields(data)), ['المسابقة']);
+});
+
+test('والمحذوفة تبقى مطويّةً، فما كُتب فيها يُقرأ بعنوانه', () => {
+  const data = { reportFields: [{ id: 'league', label: 'الدوري', required: true, hidden: true }] };
+  assert.deepEqual(reportFields(data), []);
+  assert.deepEqual(allReportFields(data).map((f) => f.label), ['الدوري']);
+  assert.equal(fieldValue(fill({ league: 'فاز النسور' }), 'league'), 'فاز النسور');
+});
+
+test('والاختيارية لا تمنع الإرسال', () => {
+  const fields = [
+    { id: 'a', label: 'أ', required: true },
+    { id: 'b', label: 'ب', required: false },
+  ];
+  const r = fill({ a: 'كتبت' });
+  assert.deepEqual(missingParts(r, fields), []);
+  assert.equal(reportReady(r, fields), true);
+  assert.equal(submitLabel(r, fields), 'أرسل تقرير اليوم');
+});
+
+test('ونصّ الزرّ يتبع عدد الإجباري لا الثلاث', () => {
+  const one = [{ id: 'a', label: 'أ', required: true }];
+  const two = [{ id: 'a', label: 'أ', required: true }, { id: 'b', label: 'ب', required: true }];
+  assert.equal(submitLabel(emptyReport('u', 'p', 'w'), one), 'اكتب الخانة');
+  assert.equal(submitLabel(emptyReport('u', 'p', 'w'), two), 'اكتب خانتين');
+});
+
+test('وتقريرٌ كُتب قبل الخانات المتغيّرة يُقرأ من جذره، فلا يضيع حرف', () => {
+  const old = { userId: 'u1', programId: 'p1', weekId: 'w1', comp: 'أ', league: 'ب', notes: 'ج', at: 5 };
+  assert.equal(fieldValue(old, 'comp'), 'أ');
+  assert.equal(reportReady(old), true);
+  assert.deepEqual(missingParts(old), []);
 });
 
 /* ------------------------------- من لم يكتب ------------------------------- */
@@ -88,6 +139,20 @@ test('حال اليوم: من كتب ومن لم يكتب، والناقص ما 
   assert.deepEqual(roll.done.map((x) => x.user.id), ['b']);
   assert.deepEqual(roll.late.map((x) => x.user.id), ['c']);
   assert.equal(rollText(roll), '1 من 2');
+});
+
+test('وتُقاس التقارير بالخانات الحيّة لا بالمحذوفة', () => {
+  // وقعت في الفحص: حُذفت خانة، فصار تقريرٌ كاملٌ يُعدّ ناقصًا
+  const data = {
+    users,
+    reportFields: [
+      { id: 'comp', label: 'المسابقة', required: true },
+      { id: 'notes', label: 'الطلاب', required: true, hidden: true },
+    ],
+    dayReports: [{ userId: 'b', programId: 'p1', weekId: 'w1', values: { comp: 'أقمنا الكنز' }, at: 5 }],
+  };
+  const roll = reportRoll(data, 'p1', 'w1');
+  assert.deepEqual(roll.done.map((x) => x.user.id), ['b']);
 });
 
 test('وتقرير يومٍ آخر ما يُحسب لهذا اليوم', () => {
@@ -259,6 +324,14 @@ test('والقراءة تُكتب مرة: ضغطتان لا تصيران قار�
   assert.equal(once.reads.length, 1);
   assert.equal(twice, once);
   assert.equal(hasRead(twice, 'b'), true);
+});
+
+test('والردّ يُكتب فيُعرف من استوعب، لا من ضغط', () => {
+  const n = markRead(notice(), 'b', 5, '  تم، بس بتأخّر ربع ساعة  ');
+  assert.equal(replyOf(n, 'b'), 'تم، بس بتأخّر ربع ساعة');
+  assert.equal(replyOf(n, 'c'), '');
+  // وأول ردٍّ هو المحفوظ: لا يُبدَّل بضغطةٍ ثانية
+  assert.equal(replyOf(markRead(n, 'b', 9, 'غيّرته'), 'b'), 'تم، بس بتأخّر ربع ساعة');
 });
 
 test('وتنبيهٌ لواحدٍ لا يُقال فيه «قرأه ١ من ٥»', () => {

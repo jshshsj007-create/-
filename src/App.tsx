@@ -4,7 +4,7 @@ import {
   Users as UsersIcon, Calendar, TrendingUp, TrendingDown, Layers, ShieldCheck,
   Lock, Unlock, Trophy, LogOut, KeyRound, Plane, Search, AlertTriangle, Send,
   RotateCcw, Wand2, CalendarDays, FileText, Copy, Clock, BookMarked, Eye, EyeOff, Link2, MapPin, Paperclip,
-  ClipboardList, StickyNote, Megaphone, Sparkles, Video } from 'lucide-react';
+  ClipboardList, StickyNote, Megaphone, Sparkles, Video, Bell, BellOff } from 'lucide-react';
 import { api, clone, merge3, readSession, writeSession, clearSession, readPending, writePending, clearPending } from './cloud.js';
 import {
   normalizePhone, isValidPhone, formatPhone, normalizeName, sameName,
@@ -44,8 +44,10 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 import PdfFirstPage from './pdfview.jsx';
 import { say } from './adad.js';
 import { weekReport } from './report.js';
+import { pushStatus, PUSH_TEXTS, HOME_STEPS, readEnv, currentSub, enablePush, disablePush } from './notify.js';
 import {
-  REPORT_PARTS, emptyReport, missingParts, reportReady, submitLabel, reportOf, dayReports,
+  defaultReportFields, reportFields, allReportFields, fieldValue, replyOf,
+  emptyReport, missingParts, reportReady, submitLabel, reportOf, dayReports,
   mustReport, reportRoll, rollText, owedDays, dayNow, noteOn, notesOn, notesOfDay, noteNames,
   NOTICE_SPANS, noticeLive, hasRead, noticesFor, markRead, readTally,
   supervisorsOf, toggleSupervisor, supervisorNames, unassigned, SUPERVISOR_MAX,
@@ -57,10 +59,10 @@ const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** «الجولة الثانية» لا «الجولة ٢». ومؤنَّثة لأن الجولة مؤنّثة. */
 const ROUND_ORD = ['الأولى', 'الثانية', 'الثالثة', 'الرابعة', 'الخامسة', 'السادسة'];
 /** أرقام خانات التقرير — عربيةٌ كما يقرؤها صاحبها. */
-const ORDINALS_N = ['١', '٢', '٣'];
+const ORDINALS_N = ['١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩', '١٠'];
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v8.7';
+const APP_VERSION = 'v8.8';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'القيمي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -657,6 +659,17 @@ export function migrate(loaded) {
   d.dayReports = (d.dayReports || []).map((r) => ({ comp: '', league: '', notes: '', ...r }));
   d.studentNotes = d.studentNotes || [];
   d.notices = (d.notices || []).map((n) => ({ to: '', days: 0, reads: [], ...n }));
+  /**
+   * خانات التقرير: الافتراض ثلاثٌ إجبارية كما كانت مكتوبةً في الشيفرة.
+   *
+   * ولا تُكتب في البيانات حتى يغيّرها المدير — فالفارغُ يعني «الافتراض»،
+   * وهذا أصدق من نسخةٍ مكتوبةٍ تتخلّف عنه.
+   */
+  if (Array.isArray(d.reportFields)) {
+    d.reportFields = d.reportFields
+      .filter((f) => f && f.id)
+      .map((f) => ({ required: true, hidden: false, label: '', ...f }));
+  }
   d.tournaments = (d.tournaments || []).map((t) => ({
     // `rounds` جاء بعد الدوريات المسجَّلة: الواحدة هي حالُها، ومبارياتها بلا `leg` جولةٌ أولى
     type: LEAGUE, levels: [], teams: [], matches: [], players: '', programId: '', weekId: '',
@@ -1541,6 +1554,15 @@ export default function App() {
   /** أي يومٍ يُكتب تقريرُه الآن، وما كُتب فيه قبل الإرسال. */
   const [reportDay, setReportDay] = useState('');
   const [draft, setDraft] = useState(null);
+  /**
+   * حال إشعار الجوّال عند هذا الجهاز.
+   *
+   * ويُقرأ مرةً عند الفتح: من المتصفح نفسه (أذنَ أو منع) ومن الاشتراك
+   * القائم. ولا يُسأل الخادم عنه — الجهازُ أدرى بنفسه.
+   */
+  const [push, setPush] = useState({ status: 'unsupported', busy: false, why: '' });
+  /** من فعّل إشعاراته من الفريق — يُسأل عنه الخادم بضغطة، فلا يُثقل كل فتحة. */
+  const [pushWho, setPushWho] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const [search, setSearch] = useState('');
   const [currentUser, setCurrentUser] = useState(null);
@@ -1584,6 +1606,16 @@ export default function App() {
   const [cloudMode, setCloudMode] = useState('checking'); // checking | cloud | local
   const [cloudInit, setCloudInit] = useState(false);      // هل أُنشئ حساب المدير الأول؟
   const [syncState, setSyncState] = useState('idle');     // idle | saving | offline
+  useEffect(() => {
+    let dead = false;
+    (async () => {
+      const env = readEnv();
+      const sub = env.supported ? await currentSub() : null;
+      if (!dead) setPush((p) => ({ ...p, status: pushStatus({ ...env, subscribed: Boolean(sub) }) }));
+    })();
+    return () => { dead = true; };
+  }, []);
+
   const sess = useRef({ token: null, username: '' });
   const revRef = useRef(0);
   const baseRef = useRef(null);   // آخر نسخة متفق عليها مع الخادم — مرجع الدمج
@@ -4699,10 +4731,29 @@ export default function App() {
                 {myNotices[0].to ? 'لك وحدك' : 'للجميع'} · {hijri(myNotices[0].at)}
               </div>
             </div>
-            <button className={btnPrimary + ' w-full'} onClick={() => save({
-              ...data,
-              notices: data.notices.map((n) => (n.id === myNotices[0].id ? markRead(n, effectiveUser.id) : n)),
-            })}><Check size={16} /> قرأت</button>
+            {/*
+              الردُّ يُكتب، لا يُضغط.
+
+              زرُّ «قرأت» وحده يقول إن أحدًا ضغط، ولا يقول إن أحدًا فهم —
+              وهذا ما طلبه صاحب التطبيق: «يكتب تم أو غيره عشان أعرف أنه
+              استوعب». ومن ليس عنده ما يزيد يضغط «تم» فتُملأ له.
+            */}
+            <textarea rows={2} className={inputCls + ' leading-8 mb-2'}
+              value={form.reply || ''} onChange={(e) => setForm({ ...form, reply: e.target.value })}
+              placeholder="اكتب ردَّك… «تم» تكفي" />
+            <div className="flex gap-2">
+              <button className={btnGhostBox + ' shrink-0'} type="button"
+                onClick={() => setForm({ ...form, reply: 'تم' })}>تم</button>
+              <button className={btnPrimary + ' flex-1'} disabled={!String(form.reply || '').trim()}
+                onClick={() => {
+                  save({
+                    ...data,
+                    notices: data.notices.map((n) => (n.id === myNotices[0].id
+                      ? markRead(n, effectiveUser.id, Date.now(), form.reply) : n)),
+                  });
+                  setForm({ ...form, reply: '' });
+                }}><Check size={16} /> أرسل ردّك</button>
+            </div>
           </div>
         </div>
       )}
@@ -4795,6 +4846,60 @@ export default function App() {
               );
             })()}
             {/*
+              إشعار الجوّال.
+
+              التنبيه كان لا يُرى إلا إذا فتح التطبيق، فيُكتب المساء ويُقرأ بعد
+              يومين. وهذا يوصله إلى جوّاله والتطبيق مقفول.
+
+              وعلى الآيفون لا يُعرض زرٌّ لا ينفع: آبل لا تسمح بالإشعار إلا
+              لتطبيقٍ على الشاشة الرئيسية — فتُقال له الخطوات بدل وعدٍ كاذب.
+            */}
+            {writesReport && push.status !== 'unsupported' && (() => {
+              const t = PUSH_TEXTS[push.status] || PUSH_TEXTS.off;
+              return (
+                <div className={`bg-white border rounded-2xl p-4 mb-5 ${push.status === 'on' ? 'border-green-200' : 'border-brand-200'}`}>
+                  <div className="flex items-start gap-2.5 mb-2">
+                    <Bell size={17} className={push.status === 'on' ? 'text-green-600 shrink-0 mt-0.5' : 'text-brand-700 shrink-0 mt-0.5'} />
+                    <div className="min-w-0">
+                      <div className="font-bold text-slate-800 text-sm">{t.title}</div>
+                      <div className="text-[11.5px] text-slate-500 mt-1 leading-6">{t.note}</div>
+                    </div>
+                  </div>
+                  {push.status === 'needs-home' && (
+                    <ol className="text-[12px] text-slate-600 leading-7 mt-2 mb-1 pr-4 list-decimal">
+                      {HOME_STEPS.map((step) => <li key={step}>{step}</li>)}
+                    </ol>
+                  )}
+                  {push.status === 'off' && (
+                    <button className={btnPrimary + ' w-full mt-2'} disabled={push.busy}
+                      onClick={async () => {
+                        setPush((p) => ({ ...p, busy: true, why: '' }));
+                        const k = await api('push_key', { token: sess.current.token });
+                        const r = await enablePush({
+                          key: k.body?.key,
+                          send: (sub) => api('push_sub', { token: sess.current.token, sub }),
+                        });
+                        const env = readEnv();
+                        setPush({
+                          busy: false, why: r.ok ? '' : (r.why || ''),
+                          status: pushStatus({ ...env, subscribed: r.ok }),
+                        });
+                      }}>
+                      <Bell size={16} /> {push.busy ? 'لحظة…' : t.action}
+                    </button>
+                  )}
+                  {push.status === 'on' && (
+                    <button className="text-[11.5px] font-bold text-slate-400 hover:text-slate-600 mt-1"
+                      onClick={async () => {
+                        await disablePush({ send: (endpoint) => api('push_off', { token: sess.current.token, endpoint }) });
+                        setPush({ busy: false, why: '', status: pushStatus({ ...readEnv(), subscribed: false }) });
+                      }}>{PUSH_TEXTS.on.action}</button>
+                  )}
+                  {push.why && <div className="text-[11.5px] text-red-600 mt-2">{push.why}</div>}
+                </div>
+              );
+            })()}
+            {/*
               الرئيسية للشغل لا للأرقام: الرصيد رقم حسّاس يبين لكل من يطالع
               جوالك، ومكانه داخل فيض. وعدّاد البرامج انتقل لصفحة البرامج.
               اللي يبقى هنا هو اللي تحتاج تفتحه اليوم.
@@ -4884,16 +4989,22 @@ export default function App() {
           const { program: pr, week: wk } = pick;
           const key = pr.id + ':' + wk.id;
           const saved = reportOf(data, effectiveUser.id, pr.id, wk.id);
+          const fields = reportFields(data);
           const cur = draft?.key === key ? draft
-            : { key, comp: saved?.comp || '', league: saved?.league || '', notes: saved?.notes || '' };
-          const type = (k, v) => setDraft({ ...cur, [k]: v });
-          const ready = reportReady(cur);
+            : { key, values: Object.fromEntries(fields.map((f) => [f.id, fieldValue(saved, f.id)])) };
+          const type = (id, v) => setDraft({ ...cur, values: { ...cur.values, [id]: v } });
+          const ready = reportReady(cur, fields);
+          const need = fields.filter((f) => f.required !== false).length;
+          const done = fields.filter((f) => f.required !== false && String(cur.values[f.id] || '').trim()).length;
           const send = () => {
+            const values = {};
+            for (const f of fields) values[f.id] = String(cur.values[f.id] || '').trim();
             const row = {
               ...emptyReport(effectiveUser.id, pr.id, wk.id),
               id: saved?.id || uid(), userId: effectiveUser.id, programId: pr.id, weekId: wk.id,
               byName: effectiveUser.name || '',
-              comp: cur.comp.trim(), league: cur.league.trim(), notes: cur.notes.trim(), at: Date.now(),
+              // وما كُتب في خاناتٍ حُذفت يبقى كما كُتب: التقرير المرسَل لا يُنقَص
+              values: { ...(saved?.values || {}), ...values }, at: Date.now(),
             };
             save({
               ...data,
@@ -4924,25 +5035,32 @@ export default function App() {
 
               <div className={`rounded-2xl border px-4 py-3 mb-4 flex items-center justify-between gap-2 ${ready ? 'bg-white border-green-200' : 'bg-white border-red-200'}`}>
                 <span className="text-sm font-bold text-slate-700">{ready ? 'جاهز للإرسال' : 'ما كتبتَ الخانات كلها'}</span>
-                <Badge tone={ready ? 'green' : 'red'}>{ready ? '٣ من ٣' : 'الثلاث إجبارية'}</Badge>
+                <Badge tone={ready ? 'green' : 'red'}>{ready ? `${done} من ${need}` : (need ? 'إجبارية' : 'اختيارية')}</Badge>
               </div>
 
+              {!fields.length ? (
+                <div className={cardCls + ' text-center text-slate-400 text-sm py-8'}>
+                  ما فيه خانات في التقرير. يضيفها المدير من الإعدادات.
+                </div>
+              ) : (
               <div className="space-y-3">
-                {REPORT_PARTS.map((part, i) => (
-                  <div key={part.key} className={cardCls}>
+                {fields.map((f, i) => (
+                  <div key={f.id} className={cardCls}>
                     <div className="flex items-center gap-2 mb-2.5">
-                      <span className="w-6 h-6 rounded-lg bg-brand-700 text-white text-[11px] font-extrabold flex items-center justify-center shrink-0">{ORDINALS_N[i]}</span>
-                      <span className="font-bold text-slate-800 text-sm">{part.label}</span>
+                      <span className="w-6 h-6 rounded-lg bg-brand-700 text-white text-[11px] font-extrabold flex items-center justify-center shrink-0">{ORDINALS_N[i] || i + 1}</span>
+                      <span className="font-bold text-slate-800 text-sm">{f.label}</span>
+                      {f.required === false && <Badge tone="slate">اختيارية</Badge>}
                     </div>
-                    <textarea rows={3} className={inputCls + ' leading-8 ' + (String(cur[part.key] || '').trim() ? '' : 'border-red-200 bg-red-50/30')}
-                      value={cur[part.key]} onChange={(e) => type(part.key, e.target.value)}
-                      placeholder="اكتب ما جرى… ولو ما صار شيء اكتب: لا يوجد" />
+                    <textarea rows={3} className={inputCls + ' leading-8 ' + (String(cur.values[f.id] || '').trim() || f.required === false ? '' : 'border-red-200 bg-red-50/30')}
+                      value={cur.values[f.id] || ''} onChange={(e) => type(f.id, e.target.value)}
+                      placeholder={f.required === false ? 'اكتب إن كان عندك شيء…' : 'اكتب ما جرى… ولو ما صار شيء اكتب: لا يوجد'} />
                   </div>
                 ))}
               </div>
+              )}
 
-              <button className={btnPrimary + ' w-full mt-4'} disabled={!ready} onClick={send}>
-                {submitLabel(cur)}
+              <button className={btnPrimary + ' w-full mt-4'} disabled={!ready || !fields.length} onClick={send}>
+                {submitLabel(cur, fields)}
               </button>
               {saved && <div className="text-[11px] text-slate-400 text-center mt-2">أرسلتَه {hijri(saved.at)} — وتعديلُك يحلّ محلّه.</div>}
             </div>
@@ -5008,6 +5126,34 @@ export default function App() {
                   <Plus size={16} /> تنبيه جديد
                 </button>
               </div>
+              {/*
+                من فعّل إشعارات جوّاله: به تعرف من يصله التنبيه وهو مقفول،
+                ومن يحتاج تذكيرًا بالخطوات (والآيفون يحتاج إضافةً للشاشة).
+              */}
+              <div className={cardCls + ' mb-4'}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-bold text-slate-700">إشعارات الجوّال</span>
+                  <button className="text-[11.5px] font-bold text-brand-700"
+                    onClick={async () => {
+                      const r = await api('push_who', { token: sess.current.token });
+                      setPushWho(r.body?.ids || []);
+                    }}>حدّث</button>
+                </div>
+                {(() => {
+                  const staffAll = data.users.filter((u) => u.role !== 'مدير' && u.status !== 'غير نشط');
+                  const on = staffAll.filter((u) => (pushWho || []).includes(u.id));
+                  const off = staffAll.filter((u) => !(pushWho || []).includes(u.id));
+                  if (pushWho === null) {
+                    return <div className="text-[11.5px] text-slate-400 mt-2">اضغط «حدّث» لتعرف من فعّلها.</div>;
+                  }
+                  return (
+                    <div className="text-[11.5px] mt-2 space-y-1">
+                      <div className="text-slate-500"><b className="text-green-700">مفعّلة:</b> {on.map((u) => u.name).join(' · ') || '—'}</div>
+                      <div className="text-slate-500"><b className="text-slate-700">ما فعّلها:</b> {off.map((u) => u.name).join(' · ') || '—'}</div>
+                    </div>
+                  );
+                })()}
+              </div>
               {!rows.length ? (
                 <div className={cardCls + ' text-center text-slate-400 text-sm py-10'}>ما أرسلتَ تنبيهًا بعد.</div>
               ) : (
@@ -5028,10 +5174,33 @@ export default function App() {
                           {n.to ? `إلى ${data.users.find((u) => u.id === n.to)?.name || 'موظف'}` : 'للجميع'} · {hijri(n.at)}
                           {n.days ? ` · ينتهي بعد ${say(n.days, 'day')}` : ' · لا ينتهي'}
                         </div>
+                        {/*
+                          والواتساب لمن لم يفعّل الإشعارات: يصله حيث هو فعلًا.
+                          والإرسالُ بيدك لا بيد التطبيق — إرسالٌ تلقائيّ عبر
+                          واتساب يحتاج حسابَ أعمالٍ باشتراكٍ شهري، ولا يستحقّه
+                          تنبيهٌ للفريق.
+                        */}
+                        <a className="inline-flex items-center gap-1.5 mt-2.5 text-[11.5px] font-bold text-green-700 border border-green-200 rounded-lg px-2.5 py-1.5"
+                          target="_blank" rel="noreferrer"
+                          href={(() => {
+                            const who = n.to ? data.users.find((u) => u.id === n.to) : null;
+                            const txt = encodeURIComponent(n.text || '');
+                            return who?.phone ? `https://wa.me/${waIntl(who.phone)}?text=${txt}` : `https://wa.me/?text=${txt}`;
+                          })()}>
+                          <Send size={13} /> أرسله بواتساب
+                        </a>
                         {staff.length > 0 && (
-                          <div className="mt-3 pt-3 border-t border-slate-50 text-[11.5px] space-y-1">
-                            <div className="text-slate-500"><b className="text-slate-700">قرأه:</b> {tally.read.map((u) => u.name).join(' · ') || '—'}</div>
-                            <div className="text-slate-500"><b className="text-slate-700">ما قرأه:</b> {tally.unread.map((u) => u.name).join(' · ') || '—'}</div>
+                          <div className="mt-3 pt-3 border-t border-slate-50 text-[11.5px] space-y-1.5">
+                            {/* الردُّ أمام اسم صاحبه: به يُعرف من استوعب لا من ضغط */}
+                            {tally.read.map((u) => (
+                              <div key={u.id} className="flex items-start gap-2">
+                                <span className="font-bold text-slate-700 shrink-0">{u.name}:</span>
+                                <span className="text-slate-500">«{replyOf(n, u.id) || 'قرأه'}»</span>
+                              </div>
+                            ))}
+                            {tally.unread.length > 0 && (
+                              <div className="text-slate-500 pt-1"><b className="text-slate-700">ما ردّوا:</b> {tally.unread.map((u) => u.name).join(' · ')}</div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -8081,11 +8250,96 @@ export default function App() {
               { id: 'users', label: 'المستخدمون والصلاحيات' },
               { id: 'terms', label: 'السنوات والفصول' },
               { id: 'signup', label: 'نموذج التسجيل' },
+              { id: 'reportFields', label: 'خانات تقرير اليوم' },
               { id: 'pay', label: 'طرق الدفع' },
               { id: 'states', label: 'حالات المشتركين' },
               { id: 'trash', label: `المحذوفات${(data.trash || []).length ? ` (${data.trash.length})` : ''}` },
               { id: 'backup', label: 'النسخ الاحتياطي' },
             ]} />
+
+
+            {/* ---------------------- خانات تقرير اليوم ---------------------- */}
+            {/*
+              الخانات بيد المدير: يضيف ويحذف ويرتّب ويجعلها إجبارية أو
+              اختيارية. والافتراضُ هو الثلاث كما كانت.
+
+              والمحذوفةُ تُطوى ولا تُمحى، لأن تقارير الأيام الماضية كُتبت فيها
+              — فلو مُحيت لقُرئ ما كُتب بلا عنوانٍ يقول ما هو.
+            */}
+            {settingsTab === 'reportFields' && (() => {
+              const live = reportFields(data);
+              const gone = allReportFields(data).filter((f) => f.hidden);
+              const write = (list) => save({ ...data, reportFields: list });
+              const all = () => (Array.isArray(data.reportFields) && data.reportFields.length
+                ? data.reportFields : defaultReportFields());
+              const patch = (id, p) => write(all().map((f) => (f.id === id ? { ...f, ...p } : f)));
+              const move = (id, dir) => {
+                const list = [...all()];
+                const i = list.findIndex((f) => f.id === id);
+                const j = i + dir;
+                if (i < 0 || j < 0 || j >= list.length) return;
+                [list[i], list[j]] = [list[j], list[i]];
+                write(list);
+              };
+              return (
+                <div className="space-y-3">
+                  <div className={cardCls}>
+                    <div className="text-sm font-bold text-slate-800 mb-1">خانات تقرير اليوم</div>
+                    <div className="text-xs text-slate-400 leading-6">
+                      ما يكتبه كل موظف آخر يوم البرنامج. تضيف وتحذف وترتّب، وتجعل الخانة إجبارية أو اختيارية.
+                      والإجبارية لا يُرسَل التقرير بدونها — ومن لا شيء عنده يكتب «لا يوجد».
+                    </div>
+                  </div>
+
+                  {live.map((f, i) => (
+                    <div key={f.id} className={cardCls}>
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className="w-6 h-6 rounded-lg bg-brand-700 text-white text-[11px] font-extrabold flex items-center justify-center shrink-0">{ORDINALS_N[i] || i + 1}</span>
+                        <input className={inputCls} value={f.label}
+                          onChange={(e) => patch(f.id, { label: e.target.value })} placeholder="اسم الخانة" />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="flex gap-1.5 flex-1">
+                          {[{ v: true, l: 'إجبارية' }, { v: false, l: 'اختيارية' }].map((o) => (
+                            <button key={String(o.v)} type="button" onClick={() => patch(f.id, { required: o.v })}
+                              className={`flex-1 py-2 rounded-lg text-xs font-semibold border ${(f.required !== false) === o.v ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`}>{o.l}</button>
+                          ))}
+                        </div>
+                        <button type="button" onClick={() => move(f.id, -1)} disabled={i === 0}
+                          className="w-9 h-9 rounded-lg border border-slate-200 text-slate-500 disabled:opacity-30">↑</button>
+                        <button type="button" onClick={() => move(f.id, 1)} disabled={i === live.length - 1}
+                          className="w-9 h-9 rounded-lg border border-slate-200 text-slate-500 disabled:opacity-30">↓</button>
+                        <button type="button" className="w-9 h-9 rounded-lg border border-slate-200 text-slate-300 hover:text-red-500 flex items-center justify-center"
+                          onClick={() => askConfirm(`حذف خانة «${f.label}»؟ ما كُتب فيها في التقارير الماضية يبقى ويُقرأ.`,
+                            () => patch(f.id, { hidden: true }), 'نعم، احذفها')}>
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+
+                  <button className={btnGhostBox + ' w-full'} onClick={() => write([
+                    ...all(), { id: uid(), label: 'خانة جديدة', required: true, hidden: false },
+                  ])}><Plus size={16} /> خانة</button>
+
+                  {gone.length > 0 && (
+                    <div className={cardCls}>
+                      <div className="text-xs font-bold text-slate-500 mb-2">خانات محذوفة</div>
+                      <div className="text-[11px] text-slate-400 mb-3 leading-6">
+                        ما عادت تظهر للموظفين، وما كُتب فيها باقٍ في تقارير الأيام الماضية. وتقدر ترجعها.
+                      </div>
+                      {gone.map((f) => (
+                        <div key={f.id} className="flex items-center justify-between gap-2 py-2 border-t border-slate-50">
+                          <span className="text-sm text-slate-600 truncate">{f.label}</span>
+                          <button className="text-[11px] font-bold text-brand-700 border border-brand-200 rounded-lg px-2.5 py-1.5"
+                            onClick={() => patch(f.id, { hidden: false })}>أرجعها</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* ---------------------- حدّا المستمر والمتقطع ---------------------- */}
             {settingsTab === 'states' && (() => {
@@ -9699,20 +9953,34 @@ export default function App() {
         return (
           <Modal title={`تقرير ${who?.name || 'موظف'}`} onClose={closeModal} wide>
             <div className="text-[11px] text-slate-400 mb-4">{hijri(r.at)}</div>
-            {REPORT_PARTS.map((part) => (
-              <div key={part.key} className="mb-4">
-                <div className="text-xs font-bold text-slate-500 mb-1.5">{part.label}</div>
-                <div className="bg-slate-50 rounded-xl px-3 py-2.5 text-[13.5px] text-slate-700 leading-8 whitespace-pre-wrap">
-                  {r[part.key]}
+            {/*
+              كلُّ الخانات تُقرأ — حتى المحذوفة منها — لأن ما كُتب في يومه
+              يبقى خبرَ ذلك اليوم ولو غُيّر النموذج بعده.
+
+              وزرُّ الربط تحت كلِّ خانة، لا تحت «الطلاب» وحدها: الخانات صارت
+              بيد المدير يحذفها ويضيفها، فلا يُبنى الربطُ على خانةٍ قد تُحذف.
+            */}
+            {allReportFields(data).map((f) => {
+              const val = fieldValue(r, f.id);
+              if (!val.trim() && f.hidden) return null;
+              return (
+                <div key={f.id} className="mb-4">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <span className="text-xs font-bold text-slate-500">{f.label}</span>
+                    {f.hidden && <Badge tone="slate">خانة محذوفة</Badge>}
+                  </div>
+                  <div className="bg-slate-50 rounded-xl px-3 py-2.5 text-[13.5px] text-slate-700 leading-8 whitespace-pre-wrap">
+                    {val || '—'}
+                  </div>
+                  {val.trim() && (
+                    <button className={btnGhostBox + ' w-full mt-2'}
+                      onClick={() => setForm({ ...form, noteText: val, picked: [], error: '' }) || setModal('linkNote')}>
+                      <Plus size={15} /> اربطها بطالب
+                    </button>
+                  )}
                 </div>
-                {part.key === 'notes' && String(r.notes || '').trim() && (
-                  <button className={btnGhostBox + ' w-full mt-2'}
-                    onClick={() => setForm({ ...form, noteText: r.notes, picked: [], error: '' }) || setModal('linkNote')}>
-                    <Plus size={15} /> اربطها بطالب
-                  </button>
-                )}
-              </div>
-            ))}
+              );
+            })}
             <button className={btnGhost + ' w-full'} onClick={closeModal}>إغلاق</button>
           </Modal>
         );

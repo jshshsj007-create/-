@@ -76,4 +76,5 @@ node tests/adad.test.mjs
 node tests/report.test.mjs
 node tests/sheet.test.mjs
 node tests/taqreer.test.mjs
+node tests/notify.test.mjs
 rm -rf "$STUB" tests/build
