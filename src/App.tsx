@@ -12,7 +12,7 @@ import {
   dedupeByPhone, remapParticipants, nameMatches, searchStudents,
 } from './people.js';
 import { STATES, TONES, studentState, stateCounts, stateOpts, NEAR, FAR } from './status.js';
-import { stamped, traceText, agoText } from './trace.js';
+import { stamped, traceText, agoText, clockText } from './trace.js';
 import { checkAll, worst } from './watch.js';
 import { trashed, pruned, sortedTrash, leftText, kindLabel, TRASH_DAYS } from './trash.js';
 import { canWrite as canWritePerm } from './perms.js';
@@ -65,7 +65,7 @@ const ROUND_ORD = ['الأولى', 'الثانية', 'الثالثة', 'الرا
 const ORDINALS_N = ['١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩', '١٠'];
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v9.1';
+const APP_VERSION = 'v9.2';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'القيمي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -1573,8 +1573,18 @@ export default function App() {
    * القائم. ولا يُسأل الخادم عنه — الجهازُ أدرى بنفسه.
    */
   const [push, setPush] = useState({ status: 'unsupported', busy: false, why: '' });
-  /** من فعّل إشعاراته من الفريق — يُسأل عنه الخادم بضغطة، فلا يُثقل كل فتحة. */
+  /**
+   * من فعّل إشعاراته من الفريق — يُسأل عنه الخادم بضغطة، فلا يُثقل كل فتحة.
+   *
+   * ومعه متى قُرئ وهل تعثّرت القراءة: الزرّ كان يصمت في الحالتين — يقرأ
+   * فيجد ما وجده أولَ مرة فلا يتغيّر شيءٌ في الشاشة، أو ينقطع النداء فيُكتب
+   * «ما فعّلها أحد» وهو خبرٌ كاذب. فلا يُعرف: أحدّثَ ولم يجدّ جديد، أم ما
+   * وصل الخادمَ أصلًا؟
+   */
   const [pushWho, setPushWho] = useState(null);
+  const [pushWhoAt, setPushWhoAt] = useState(0);
+  const [pushWhoBusy, setPushWhoBusy] = useState(false);
+  const [pushWhoErr, setPushWhoErr] = useState('');
   const [confirm, setConfirm] = useState(null);
   const [search, setSearch] = useState('');
   const [currentUser, setCurrentUser] = useState(null);
@@ -5255,23 +5265,63 @@ export default function App() {
               <div className={cardCls + ' mb-4'}>
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-sm font-bold text-slate-700">إشعارات الجوّال</span>
-                  <button className="text-[11.5px] font-bold text-brand-700"
+                  <button className="text-[11.5px] font-bold text-brand-700 disabled:opacity-40"
+                    disabled={pushWhoBusy}
                     onClick={async () => {
-                      const r = await api('push_who', { token: sess.current.token });
-                      setPushWho(r.body?.ids || []);
-                    }}>حدّث</button>
+                      setPushWhoBusy(true);
+                      setPushWhoErr('');
+                      /*
+                        ونُمهل «نقرأ…» لحظةً تُرى: الخادم قد يردّ في مئة
+                        جزءٍ من الثانية، فتمرّ الكلمةُ بلا أن تُلحَظ، فتبقى
+                        الضغطةُ كأنها لم تقع.
+                      */
+                      const [r] = await Promise.all([
+                        api('push_who', { token: sess.current.token }),
+                        new Promise((done) => setTimeout(done, 500)),
+                      ]);
+                      setPushWhoBusy(false);
+                      /*
+                        وما وصل لا يُكتب صفرًا: كان أيُّ تعثّرٍ في الشبكة يُقرأ
+                        «ما فعّلها أحد» فتظنّ الفريقَ كلَّه بلا إشعارات. فالقائمة
+                        تبقى كما كانت، ويُقال إن القراءة ما تمّت.
+                      */
+                      if (r.status !== 200 || !Array.isArray(r.body?.ids)) {
+                        setPushWhoErr(r.status === 0 ? 'ما وصلنا الخادم. جرّب ثانية.' : 'ما قدرنا نقرأ. جرّب ثانية.');
+                        return;
+                      }
+                      setPushWho(r.body.ids);
+                      setPushWhoAt(Date.now());
+                    }}>{pushWhoBusy ? 'نقرأ…' : 'حدّث'}</button>
                 </div>
                 {(() => {
                   const staffAll = data.users.filter((u) => u.role !== 'مدير' && u.status !== 'غير نشط');
                   const on = staffAll.filter((u) => (pushWho || []).includes(u.id));
                   const off = staffAll.filter((u) => !(pushWho || []).includes(u.id));
                   if (pushWho === null) {
-                    return <div className="text-[11.5px] text-slate-400 mt-2">اضغط «حدّث» لتعرف من فعّلها.</div>;
+                    return (
+                      <>
+                        <div className="text-[11.5px] text-slate-400 mt-2">اضغط «حدّث» لتعرف من فعّلها.</div>
+                        {pushWhoErr && <div className="text-[11.5px] text-red-500 mt-1">{pushWhoErr}</div>}
+                      </>
+                    );
                   }
                   return (
                     <div className="text-[11.5px] mt-2 space-y-1">
                       <div className="text-slate-500"><b className="text-green-700">مفعّلة:</b> {on.map((u) => u.name).join(' · ') || '—'}</div>
                       <div className="text-slate-500"><b className="text-slate-700">ما فعّلها:</b> {off.map((u) => u.name).join(' · ') || '—'}</div>
+                      {/*
+                        ساعةُ القراءة: بها يُعرف أن الضغطة عملت ولو ما تغيّرت
+                        القائمة — وأكثرُ الضغطات كذلك: تقرأ فتجد ما وجدتْه.
+                      */}
+                      {pushWhoErr
+                        ? <div className="text-red-500">{pushWhoErr}</div>
+                        : <div className="text-slate-400">قُرئت {clockText(pushWhoAt)} · {on.length} من {staffAll.length}</div>}
+                      {/* وأكثرُ من يظنّ أنه فعّلها ولم يفعل: آيفونٌ ما أُضيف للشاشة */}
+                      {!pushWhoErr && off.length > 0 && (
+                        <div className="text-slate-400 leading-6">
+                          ومن قال إنه فعّلها ولم يظهر: الآيفون لا يقبلها حتى يُضاف التطبيق للشاشة الرئيسية.
+                        </div>
+                      )}
                     </div>
                   );
                 })()}

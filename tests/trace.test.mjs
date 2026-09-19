@@ -3,7 +3,7 @@
  * والصندوق فيه سجلات محذوفة — لو غلط في المدة أو الترتيب ضاعت على صاحبها.
  */
 import assert from 'node:assert/strict';
-import { stampNew, stampEdit, stamped, traceText, agoText } from '../src/trace.js';
+import { stampNew, stampEdit, stamped, traceText, agoText, clockText } from '../src/trace.js';
 import { trashed, pruned, sortedTrash, daysLeft, leftText, kindLabel, TRASH_DAYS } from '../src/trash.js';
 
 let passed = 0;
@@ -146,6 +146,35 @@ test('كم بقي له قبل ما يمضي', () => {
   assert.equal(daysLeft({ at: now - (TRASH_DAYS - 1) * DAY }, now), 1);
   assert.equal(daysLeft({ at: now - 99 * DAY }, now), 0, 'ما ينزل تحت الصفر');
   assert.equal(leftText({ at: now - (TRASH_DAYS - 1) * DAY }, now), 'يمضي غدًا');
+});
+
+/* ------------------------------ ساعة الحائط ------------------------------ */
+
+/** ساعةٌ محليّة: نبنيها بـ`Date` نفسها فما يتعلّق الاختبار بمنطقةٍ بعينها. */
+const at = (h, m) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.getTime(); };
+
+test('الساعة تُكتب اثنتي عشرة، والدقيقةُ برقمين', () => {
+  assert.equal(clockText(at(9, 46)), '9:46');
+  assert.equal(clockText(at(21, 5)), '9:05');
+  assert.equal(clockText(at(13, 0)), '1:00');
+});
+
+test('ومنتصف الليل والظهر ١٢ لا صفرًا', () => {
+  assert.equal(clockText(at(0, 7)), '12:07');
+  assert.equal(clockText(at(12, 30)), '12:30');
+});
+
+test('وبلا وقتٍ لا يُكتب شيء', () => {
+  assert.equal(clockText(0), '');
+  assert.equal(clockText(null), '');
+});
+
+/** وهي غير «قبل قليل»: الدقيقتان تتغيّران فيها ولا تتغيّران فيه. */
+test('وتتغيّر في الدقيقة، وعمرُ «الآن» لا يتغيّر', () => {
+  const now = at(10, 0);
+  assert.equal(agoText(now, now), 'الآن');
+  assert.equal(agoText(now, now + 60000), 'الآن', 'العمر ساكتٌ دقيقةً');
+  assert.notEqual(clockText(now), clockText(now + 60000), 'والساعة تنطق');
 });
 
 console.log(`\n✅ ${passed} اختبارًا للأثر وصندوق المحذوفات\n`);
