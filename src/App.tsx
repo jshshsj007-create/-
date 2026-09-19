@@ -65,7 +65,7 @@ const ROUND_ORD = ['الأولى', 'الثانية', 'الثالثة', 'الرا
 const ORDINALS_N = ['١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩', '١٠'];
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v9.0';
+const APP_VERSION = 'v9.1';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'القيمي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -3238,9 +3238,15 @@ export default function App() {
         ...Object.fromEntries(PARTS.map((p) => {
           const v = form[p.id] || {};
           const x = v.extra;
-          // المدى الثاني للمراجعة وحدها، وما يُخزَّن إلا لو كُتب فعلًا —
-          // فسجلّ عامّة الطلاب يبقى كما كان، بلا خانة فاضية تثقله
-          const hasExtra = p.id === 'review' && !!(x && (x.from || x.to || Number(x.pages)));
+          /*
+            المدى الثاني في الأقسام الثلاثة، وما يُخزَّن إلا لو كُتب فعلًا —
+            فسجلّ عامّة الطلاب يبقى كما كان، بلا خانة فاضية تثقله.
+
+            وكان مشروطًا بالمراجعة وحدها، فلمّا فُتحت الخانة في التثبيت
+            انفتحت في الشاشة وسقطت عند الحفظ: يكتبه الشيخ فيراه، ثم يرجع
+            فلا يجده. فحصتُ فتحَ الخانة ولم أفحص حفظَها — وهذا موضع العطب.
+          */
+          const hasExtra = !!(x && (x.from || x.to || Number(x.pages)));
           return [p.id, {
             from: v.from || '', fromAya: v.fromAya || '',
             to: v.to || '', toAya: v.toAya || '',
@@ -10938,10 +10944,15 @@ export default function App() {
         const st = khayr.students.find((s) => s.id === form.studentId);
         if (!st) return null;
         const before = carryBefore(st, khayrSession);
+        /*
+          وحفظُه في الجلسة قد يكون من موضعين، فيُقرأ بـ`pagesOf` كما تقرؤه
+          بقيّةُ التطبيق. وكان يُقرأ من `hifz.pages` وحدها، فيظهر له متراكمٌ
+          في النافذة غيرُ الذي يُحفظ لحظةَ الضغط — رقمان لشيءٍ واحد.
+        */
         const after = carryAfter(before, form.present === false
           ? { present: false, due: form.due }
-          : { present: true, hifz: { pages: form.hifz?.pages } }, st.wird?.hifz);
-        const said = Number(form.hifz?.pages || 0);
+          : { present: true, hifz: form.hifz }, st.wird?.hifz);
+        const said = pagesOf(form, 'hifz');
         const need = Number(st.wird?.hifz || 0);
         return (
           <Modal title={`تسميع ${st.name}`} onClose={closeModal} wide>
@@ -10995,8 +11006,6 @@ export default function App() {
                 };
                 /** المدى الثاني: نفس الحساب التلقائي، وأوجهه دائمًا أوجه. */
                 const x = val.extra;
-                /** والمراجعة والتثبيت يُسمَّعان من موضعين؛ والحفظ موضعٌ واحد يمضي. */
-                const twoSides = p.id === 'review' || p.id === 'tathbit';
                 const setExtra = (patch) => {
                   const next = { ...(x || {}), ...patch };
                   if (['from', 'to', 'fromAya', 'toAya'].some((k) => k in patch) && !next.pagesTouched) {
@@ -11051,17 +11060,19 @@ export default function App() {
                       الأصل موضع واحد، وبعضهم يسمّع من موضعين. فالزر رمادي صغير
                       ما يضغطه إلا صاحب الحالة، والبطاقة تبقى كما هي عند الباقين.
 
-                      وفُتح في التثبيت كما هو في المراجعة بطلب صاحب التطبيق:
-                      من يثبّت من موضعين في الجلسة الواحدة كمن يراجع منهما،
-                      والحساب والمتراكم والورقة تجمع المديَين لكل قسمٍ أصلًا.
+                      والأقسام الثلاثة فيه سواء بطلب صاحب التطبيق: من سمّع من
+                      موضعين سمّع من موضعين، لا فرق بين مراجعةٍ وتثبيتٍ وحفظ —
+                      منهم من يحفظ من أول المصحف نازلًا ومن آخره صاعدًا. والحسابُ
+                      والمتراكمُ والورقةُ تجمع المديَين لكل قسمٍ أصلًا، فما احتاج
+                      شيئًا غير فتح الباب.
                     */}
-                    {twoSides && !x && (
+                    {!x && (
                       <button type="button" onClick={() => setExtra({ from: '', to: '' })}
                         className="text-[11px] font-semibold text-slate-400 hover:text-brand-700 mt-2.5">
                         + مدى ثانٍ
                       </button>
                     )}
-                    {twoSides && x && (
+                    {x && (
                       <div className="mt-3 pt-3 border-t border-dashed border-slate-200">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-[11px] font-bold text-slate-500">المدى الثاني</span>
