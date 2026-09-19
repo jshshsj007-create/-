@@ -229,6 +229,48 @@ export const reportRoll = (data, programId, weekId, sees) => {
   return { done: done.sort(byName), late: late.sort(byName), total: due.length };
 };
 
+/**
+ * جدول «من كتب ماذا» — مبنيٌّ من التقارير التي كتبوها هم.
+ *
+ * صفٌّ لكل موظف، وأعمدتُه خاناتُ التقرير كما ضبطها المدير — فإن حذف خانةً
+ * سقط عمودُها، وإن أضاف «القيمي» صار عمودًا. والخليّة نصُّ صاحبها مقتطعًا
+ * ليسع السطر، ومن لم يكتب يُقال فيه ذلك صريحًا.
+ */
+export const reportTable = (data, programId, weekId, sees, { cut = 42 } = {}) => {
+  const fields = reportFields(data);
+  const roll = reportRoll(data, programId, weekId, sees);
+  const clip = (t) => {
+    const x = String(t || '').replace(/\s+/g, ' ').trim();
+    return x.length > cut ? `${x.slice(0, cut - 1)}…` : x;
+  };
+  const rows = [
+    ...roll.done.map(({ user, report }) => ({
+      user, wrote: true,
+      cells: fields.map((f) => ({ id: f.id, text: clip(fieldValue(report, f.id)), full: fieldValue(report, f.id) })),
+      reportId: report?.id || '',
+    })),
+    ...roll.late.map(({ user, report }) => ({
+      user, wrote: false,
+      cells: fields.map((f) => ({ id: f.id, text: clip(fieldValue(report, f.id)), full: fieldValue(report, f.id) })),
+      reportId: report?.id || '',
+    })),
+  ];
+  return { fields, rows, roll };
+};
+
+/**
+ * وسطورُه في الورقة: اسمٌ ثم ما كتبه في كل خانة.
+ *
+ * و«لا يوجد» تسقط: على الشاشة تُرمَّد فيمرّ عليها البصر، وفي الورقة تُقرأ
+ * كأنها خبر. والورقةُ تقول ما جرى، لا ما لم يجرِ.
+ */
+const NONE = /^لا\s*يوجد$/;
+export const reportTableLines = (table) => (table?.rows || []).map((r) => {
+  if (!r.wrote) return `${r.user.name} — ما كتب تقريره`;
+  const said = (r.cells || []).filter((c) => c.text && !NONE.test(c.text.trim())).map((c) => c.text).join(' · ');
+  return `${r.user.name} — ${said || '—'}`;
+});
+
 /** «٣ من ٥» — وبالأرقام اللاتينية لأن بقيّة التطبيق كذلك. */
 export const rollText = (roll) => `${roll.done.length} من ${roll.total}`;
 

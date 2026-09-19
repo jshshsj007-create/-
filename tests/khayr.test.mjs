@@ -6,6 +6,9 @@ import assert from 'node:assert/strict';
 import {
   SURAHS, PARTS, rangeText, carryAfter, studentTotals, allTotals,
   studentSessions, studentOfUser, emptyWird, khayrRows, khayrReportText,
+  memorizedPages, memRangeText, lastStop, lastStopExtra, stopsExtraOf,
+  sessionRows, sessionTotals, sessionReportText, seasonBrief,
+  khayrSessionSections, khayrSeasonSections,
 } from '../src/khayr.js';
 
 let passed = 0;
@@ -156,6 +159,103 @@ test('الطالب المربوط بحساب', () => {
   assert.equal(studentOfUser(students, 'u9').name, 'محمد');
   assert.equal(studentOfUser(students, 'u1'), null);
   assert.equal(studentOfUser(students, undefined), null, 'حساب بلا معرّف ما يربط بأحد');
+});
+
+/* ------------------------ الجهة الثانية ------------------------ */
+
+test('المحفوظ من جهتين يُجمع، والمدى يُقال كاملًا', () => {
+  const st = { mem: { from: 'النساء', to: 'هود', amount: 12, unit: 'parts',
+    extra: { from: 'الملك', to: 'الناس', amount: 2, unit: 'parts' } } };
+  assert.equal(memorizedPages(st), 280, '١٤ جزءًا = ٢٨٠ وجهًا');
+  assert.equal(memRangeText(st), 'من النساء إلى هود · ومن الملك إلى الناس');
+});
+
+test('ومن يحفظ من جهةٍ واحدة ما يتغيّر عليه شيء', () => {
+  const st = { mem: { from: 'النساء', to: 'هود', amount: 12, unit: 'parts' } };
+  assert.equal(memorizedPages(st), 240);
+  assert.equal(memRangeText(st), 'من النساء إلى هود');
+  assert.equal(memorizedPages({}), 0);
+});
+
+test('وموضعا المراجعة يُحفظان، فلا تُكتب الثانية كل جلسة', () => {
+  const st = { id: 's1' };
+  const sessions = [
+    { id: 'a', date: '1448/01/01', entries: { s1: { present: true,
+      review: { to: 'الحديد', toAya: 12, extra: { to: 'الملك', toAya: 8 } } } } },
+  ];
+  assert.deepEqual(lastStop(st, sessions, 'review'), { from: 'الحديد', fromAya: 12 });
+  assert.deepEqual(lastStopExtra(st, sessions, 'review'), { from: 'الملك', fromAya: 8 });
+  assert.deepEqual(stopsExtraOf(st, sessions).review, { from: 'الملك', fromAya: 8 });
+});
+
+test('ومن ما له جهةٌ ثانية ما يُفتح له موضعٌ ثانٍ', () => {
+  const st = { id: 's1' };
+  const sessions = [{ id: 'a', date: '1448/01/01', entries: { s1: { present: true, review: { to: 'الحديد' } } } }];
+  assert.equal(lastStopExtra(st, sessions, 'review'), null);
+});
+
+/* ------------------------ تقرير الجلسة ------------------------ */
+
+const sStudents = [
+  { id: 's1', name: 'سعد' }, { id: 's2', name: 'فهد' }, { id: 's3', name: 'تركي' },
+];
+const oneSession = { id: 'x', date: '1448/04/03', entries: {
+  s1: { present: true, review: { from: 'الناس', to: 'النبأ', pages: 20 }, tathbit: { pages: 4 }, hifz: { pages: 2 }, note: 'ممتاز' },
+  s2: { present: false, due: 3 },
+} };
+
+test('صفوف الجلسة تفرّق بين الغائب ومن لم يُسجَّل بعد', () => {
+  const rows = sessionRows(sStudents, oneSession);
+  assert.equal(rows[0].present, true);
+  assert.equal(rows[1].present, false);
+  assert.equal(rows[2].written, false, 'تركي ما سُجّل — وهذا غير الغياب');
+  assert.equal(rows[2].present, null);
+});
+
+test('ومجاميعها تُحسب ممّن سُجّل وحده', () => {
+  const t = sessionTotals(sessionRows(sStudents, oneSession));
+  assert.deepEqual(t, { attended: 1, absent: 1, review: 20, tathbit: 4, hifz: 2 });
+});
+
+test('ونصُّها يُقرأ في واتساب: اسمٌ وسطورُه', () => {
+  const txt = sessionReportText(sessionRows(sStudents, oneSession), { title: 'جلسة خيركم', date: '1448/04/03' });
+  assert.ok(txt.startsWith('جلسة خيركم'));
+  assert.ok(txt.includes('الحضور: 1 من 2'));
+  assert.ok(txt.includes('من الناس إلى النبأ'));
+  assert.ok(txt.includes('فهد — غائب'));
+  assert.ok(txt.includes('عليه 3 أوجه'));
+  assert.ok(txt.includes('تركي — ما سُجّل'));
+  assert.ok(txt.includes('ملاحظة: ممتاز'));
+});
+
+/* ------------------------ تقرير الموسم ------------------------ */
+
+const seasonRows = [
+  { student: { name: 'سعد' }, attended: 4, absent: 1, review: 60, tathbit: 8, hifz: 6, carry: 0 },
+  { student: { name: 'فهد' }, attended: 3, absent: 2, review: 20, tathbit: 4, hifz: 2, carry: 3 },
+];
+
+test('المختصر: أعدادٌ ونسبة، وأسماءٌ في موضعين يستحقّانها', () => {
+  const b = seasonBrief(seasonRows, 5);
+  assert.equal(b.percent, 70);
+  assert.equal(b.hifz, 8);
+  assert.deepEqual(b.top.map((x) => x.name), ['سعد', 'فهد']);
+  assert.deepEqual(b.owing.map((x) => x.name), ['فهد'], 'ومن عليه متراكم وحده');
+});
+
+test('وأقسام الورقة: المختصر بلا قائمة الطلاب، والكامل بها', () => {
+  const brief = khayrSeasonSections(seasonRows, { sessions: 5, brief: true });
+  const full = khayrSeasonSections(seasonRows, { sessions: 5, brief: false });
+  assert.ok(!brief.some((s) => s.title === 'الطلاب'));
+  assert.ok(full.some((s) => s.title === 'الطلاب'));
+  assert.equal(full.at(-1).lines.length, 2);
+  assert.ok(full.at(-1).lines[1].includes('متراكم'));
+});
+
+test('وورقةُ الجلسة فيها الحضور وما سُمِّع والمجموع', () => {
+  const secs = khayrSessionSections(sessionRows(sStudents, oneSession));
+  assert.deepEqual(secs.map((s) => s.title), ['الحضور', 'ما سُمِّع', 'المجموع']);
+  assert.ok(secs[1].lines.some((l) => l.includes('تركي — ما سُجّل')));
 });
 
 console.log(`\n✅ ${passed} اختبارًا لخيركم\n`);

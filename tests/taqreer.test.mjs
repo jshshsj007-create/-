@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import {
   defaultReportFields, reportFields, allReportFields, fieldValue,
   emptyReport, missingParts, reportReady, submitLabel, replyOf,
-  reportOf, dayReports, mustReport, reportRoll, rollText,
+  reportOf, dayReports, mustReport, reportRoll, rollText, reportTable, reportTableLines,
   hijriKey, sameDate, dayNow, dateRank, owedDays,
   noteOn, notesOn, notesOfDay, noteNames,
   NOTICE_SPANS, noticeLive, hasRead, noticesFor, markRead, readTally,
@@ -160,6 +160,61 @@ test('وتقرير يومٍ آخر ما يُحسب لهذا اليوم', () => {
   assert.equal(reportRoll(data, 'p1', 'w1').done.length, 0);
   assert.equal(reportOf(data, 'b', 'p1', 'w1'), null);
   assert.equal(dayReports(data, 'p1', 'w9').length, 1);
+});
+
+/* --------------------------- جدول «من كتب ماذا» --------------------------- */
+
+const tblData = {
+  users,
+  dayReports: [
+    { id: 'r1', userId: 'b', programId: 'p1', weekId: 'w1', at: 5,
+      values: { comp: 'أقمنا الكنز المفقود بعد الفسحة، وحضره أربعةٌ وعشرون طالبًا', league: 'لا يوجد', notes: 'سعد تأخّر' } },
+  ],
+};
+
+test('صفٌّ لكل موظف، وأعمدتُه خاناتُ التقرير', () => {
+  const t = reportTable(tblData, 'p1', 'w1');
+  assert.deepEqual(t.fields.map((f) => f.id), ['comp', 'league', 'notes']);
+  assert.deepEqual(t.rows.map((r) => r.user.id), ['b', 'c'], 'من كتب أولًا ثم من لم يكتب');
+  assert.equal(t.rows[0].wrote, true);
+  assert.equal(t.rows[1].wrote, false);
+  assert.equal(t.rows[0].reportId, 'r1', 'ويُفتح تقريره بالضغط');
+});
+
+test('والخليّة نصُّ صاحبه مقتطعًا، وكاملُه محفوظٌ معها', () => {
+  const t = reportTable(tblData, 'p1', 'w1', null, { cut: 20 });
+  const cell = t.rows[0].cells[0];
+  assert.equal(cell.text.length, 20);
+  assert.ok(cell.text.endsWith('…'));
+  assert.ok(cell.full.startsWith('أقمنا الكنز المفقود'), 'والكامل ما يُقصّ');
+});
+
+test('وإن حُذفت خانةٌ سقط عمودُها', () => {
+  const t = reportTable({
+    ...tblData,
+    reportFields: [
+      { id: 'comp', label: 'المسابقة', required: true },
+      { id: 'league', label: 'الدوري', required: true, hidden: true },
+      { id: 'notes', label: 'الطلاب', required: true },
+    ],
+  }, 'p1', 'w1');
+  assert.deepEqual(t.fields.map((f) => f.id), ['comp', 'notes']);
+  assert.equal(t.rows[0].cells.length, 2);
+});
+
+test('وسطورُ الورقة: من كتب ماذا، ومن لم يكتب يُقال فيه', () => {
+  const lines = reportTableLines(reportTable(tblData, 'p1', 'w1', null, { cut: 100 }));
+  assert.equal(lines[0], 'عبدالله — أقمنا الكنز المفقود بعد الفسحة، وحضره أربعةٌ وعشرون طالبًا · سعد تأخّر');
+  assert.ok(!lines[0].includes('لا يوجد'), 'و«لا يوجد» ما تدخل الورقة');
+  assert.equal(lines[1], 'سعود — ما كتب تقريره');
+});
+
+test('ومن كتب «لا يوجد» في كلّها لا يبقى سطرُه فارغًا', () => {
+  const lines = reportTableLines(reportTable({
+    ...tblData,
+    dayReports: [{ id: 'r9', userId: 'b', programId: 'p1', weekId: 'w1', values: { comp: 'لا يوجد', league: 'لا يوجد', notes: 'لا يوجد' } }],
+  }, 'p1', 'w1'));
+  assert.equal(lines[0], 'عبدالله — —');
 });
 
 /* -------------------------------- يوم البرنامج -------------------------------- */

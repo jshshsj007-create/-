@@ -153,6 +153,154 @@ export const khayrReportText = (rows, title) => {
   return lines.join('\n');
 };
 
+/* ---------------------------- تقرير الجلسة ---------------------------- */
+
+/**
+ * ما جرى في جلسةٍ واحدة، صفًّا صفًّا.
+ *
+ * يُبنى هنا لا في الرسم، لأن النصّ المشارَك والورقة والشاشة تقرؤه كلُّها —
+ * فلو بُني في كلٍّ على حدة تفرّقت الأرقام وما درى أحدٌ أيُّها الصحيح.
+ */
+export const sessionRows = (students, session) => (students || []).map((st) => {
+  const entry = session?.entries?.[st.id];
+  const parts = PARTS.map((p) => ({
+    id: p.id, label: p.label,
+    range: rangeText(entry?.[p.id]),
+    pages: entry ? pagesOf(entry, p.id) : 0,
+  })).filter((x) => x.pages > 0 || x.range);
+  return {
+    student: st,
+    // من لم يُكتب له شيءٌ في الجلسة لم يُسجَّل بعد — وهذا غير الغائب المكتوب غيابُه
+    written: Boolean(entry),
+    present: entry ? entry.present !== false : null,
+    due: Number(entry?.due || 0),
+    note: String(entry?.note || '').trim(),
+    parts,
+  };
+});
+
+/** مجاميع الجلسة: كم رُوجع وثُبّت وحُفظ فيها. */
+export const sessionTotals = (rows) => {
+  const out = { attended: 0, absent: 0, review: 0, tathbit: 0, hifz: 0 };
+  for (const r of rows || []) {
+    if (!r.written) continue;
+    if (r.present) out.attended++; else out.absent++;
+    for (const p of r.parts) out[p.id] += p.pages;
+  }
+  return out;
+};
+
+/**
+ * نصّ الجلسة كما يُلصق في واتساب — بلا جداول، فواتساب لا يرسمها.
+ *
+ * ومن لم يُسجَّل بعد يُقال فيه «ما سُجّل»: سكوتُ التقرير عنه يُقرأ حضورًا،
+ * وهو لم يُسأل عنه أصلًا.
+ */
+export const sessionReportText = (rows, { title = 'جلسة خيركم', date = '' } = {}) => {
+  const t = sessionTotals(rows);
+  const lines = [title];
+  if (String(date || '').trim()) lines.push(`التاريخ: ${date}`);
+  lines.push(`الحضور: ${t.attended} من ${t.attended + t.absent}`);
+  for (const r of rows || []) {
+    if (!r.written) { lines.push('', `${r.student.name} — ما سُجّل`); continue; }
+    if (!r.present) {
+      lines.push('', `${r.student.name} — غائب${r.due ? ` · عليه ${partsText(r.due)}` : ''}`);
+      continue;
+    }
+    const said = r.parts.map((p) => `${p.label}: ${p.range || partsText(p.pages)}`
+      + (p.range && p.pages ? ` (${partsText(p.pages)})` : ''));
+    lines.push('', r.student.name, ...said.map((x) => `  ${x}`));
+    if (r.note) lines.push(`  ملاحظة: ${r.note}`);
+  }
+  const sum = PARTS.map((p) => (t[p.id] ? `${p.label}: ${partsText(t[p.id])}` : '')).filter(Boolean);
+  if (sum.length) lines.push('', `— المجموع — ${sum.join(' · ')}`);
+  return lines.join('\n');
+};
+
+/* ---------------------------- تقرير الموسم ---------------------------- */
+
+/**
+ * المختصر: صفحةٌ تُرسَل لمن فوقك.
+ *
+ * لا أسماءَ إلا في موضعين يستحقّانها: الأعلى حفظًا، ومن عليه متراكم — فهذان
+ * ما يُسأل عنهما، وما سواهما عددٌ يكفي.
+ */
+export const seasonBrief = (rows, sessionsCount = 0) => {
+  const list = rows || [];
+  const sum = (k) => list.reduce((a, r) => a + Number(r[k] || 0), 0);
+  const attended = sum('attended'), absent = sum('absent');
+  const top = list.filter((r) => r.hifz > 0).slice().sort((a, b) => b.hifz - a.hifz).slice(0, 3);
+  const owing = list.filter((r) => Number(r.carry || 0) > 0).slice().sort((a, b) => b.carry - a.carry);
+  return {
+    sessions: sessionsCount,
+    students: list.length,
+    attended, absent,
+    percent: attended + absent > 0 ? Math.round((attended / (attended + absent)) * 100) : null,
+    review: sum('review'), tathbit: sum('tathbit'), hifz: sum('hifz'),
+    top: top.map((r) => ({ name: r.student.name, pages: r.hifz })),
+    owing: owing.map((r) => ({ name: r.student.name, pages: r.carry })),
+  };
+};
+
+/* ---------------------- أقسام ورقة خيركم (PDF) ---------------------- */
+
+/** ورقةُ الجلسة: كلُّ طالبٍ سطرٌ بما سمّعه، ثم مجاميعُها. */
+export const khayrSessionSections = (rows) => {
+  const t = sessionTotals(rows);
+  const out = [{
+    title: 'الحضور',
+    rows: [['الحاضرون', `${t.attended} من ${t.attended + t.absent}`, true]],
+  }];
+  const lines = (rows || []).map((r) => {
+    if (!r.written) return `${r.student.name} — ما سُجّل`;
+    if (!r.present) return `${r.student.name} — غائب${r.due ? ` · عليه ${partsText(r.due)}` : ''}`;
+    const said = r.parts.map((p) => `${p.label} ${p.range || partsText(p.pages)}`).join(' · ');
+    return `${r.student.name} — ${said || 'حضر'}`;
+  });
+  if (lines.length) out.push({ title: 'ما سُمِّع', lines });
+  const sum = PARTS.map((p) => (t[p.id] ? [p.label, partsText(t[p.id])] : null)).filter(Boolean);
+  if (sum.length) out.push({ title: 'المجموع', rows: sum });
+  return out;
+};
+
+/**
+ * ورقةُ الموسم بشكليها.
+ *
+ * `brief` صفحةٌ تُرسَل لمن فوقك: أعدادٌ ونسبة، ولا أسماءَ إلا في موضعين
+ * يستحقّانهما — الأعلى حفظًا، ومن عليه متراكم. والكاملُ كلُّ طالبٍ بسطره.
+ */
+export const khayrSeasonSections = (rows, { sessions = 0, brief = true } = {}) => {
+  const b = seasonBrief(rows, sessions);
+  const out = [{
+    title: 'الخلاصة',
+    rows: [
+      ['الجلسات', String(b.sessions)],
+      ['الطلاب', String(b.students)],
+      ['الحضور', `${b.attended} من ${b.attended + b.absent}${b.percent == null ? '' : ` · ${b.percent}٪`}`, true],
+    ],
+  }, {
+    title: 'ما سُمِّع في الموسم',
+    rows: PARTS.map((p) => [p.label, partsText(b[p.id])]),
+  }];
+  if (brief) {
+    if (b.top.length) {
+      out.push({ title: 'الأعلى حفظًا', rows: b.top.map((x) => [x.name, partsText(x.pages)]) });
+    }
+    if (b.owing.length) {
+      out.push({ title: 'عليهم متراكم', rows: b.owing.map((x) => [x.name, partsText(x.pages)]) });
+    }
+    return out;
+  }
+  out.push({
+    title: 'الطلاب',
+    lines: (rows || []).map((r) => `${r.student.name} — حضور ${r.attended}`
+      + `${r.absent ? ` · غياب ${r.absent}` : ''}`
+      + ` · مراجعة ${partsText(r.review)} · تثبيت ${partsText(r.tathbit)} · حفظ ${partsText(r.hifz)}`
+      + `${Number(r.carry) > 0 ? ` · متراكم ${partsText(r.carry)}` : ''}`),
+  });
+  return out;
+};
+
 /** جلسات طالب بعينه، من الأحدث للأقدم — هذا اللي يقراه في سجلّه. */
 export const studentSessions = (student, sessions) =>
   sortedSessions(sessions)
@@ -188,14 +336,28 @@ export const partsText = (pages) => {
   return `${partWord} و${pageWord}`;
 };
 
-/** محفوظ الطالب بالأوجه — منه تُقاس دورة المراجعة كلها. */
-export const memorizedPages = (student) => toPages(student?.mem?.amount, student?.mem?.unit);
+/**
+ * محفوظ الطالب بالأوجه — منه تُقاس دورة المراجعة كلها.
+ *
+ * ومنهم من يحفظ **من جهتين**: من أول المصحف نازلًا، ومن آخره صاعدًا. فمحفوظُه
+ * قطعتان لا قطعة، والخانةُ الواحدة تكذب عليه: يُكتب «من النساء إلى هود» وهو
+ * يحفظ معها جزأين من الآخر. فصار له مدًى ثانٍ بمقداره، والمجموعُ منهما.
+ */
+export const memorizedPages = (student) =>
+  toPages(student?.mem?.amount, student?.mem?.unit)
+  + toPages(student?.mem?.extra?.amount, student?.mem?.extra?.unit || student?.mem?.unit);
 
-/** «من الناس إلى الروم» — حدّ المحفوظ كما يكتبه الشيخ. */
-export const memRangeText = (student) => {
-  const from = String(student?.mem?.from || '').trim();
-  const to = String(student?.mem?.to || '').trim();
+const oneMem = (m) => {
+  const from = String(m?.from || '').trim();
+  const to = String(m?.to || '').trim();
   return from && to ? `من ${from} إلى ${to}` : from ? `من ${from}` : to ? `إلى ${to}` : '';
+};
+
+/** «من الناس إلى الروم» — حدّ المحفوظ كما يكتبه الشيخ، والجهتان تُقالان معًا. */
+export const memRangeText = (student) => {
+  const main = oneMem(student?.mem);
+  const extra = oneMem(student?.mem?.extra);
+  return main && extra ? `${main} · و${extra}` : main || extra;
 };
 
 /* --------------------------- دورة المراجعة --------------------------- */
@@ -268,6 +430,20 @@ export const lastStop = (student, sessions, partId) => {
   return null;
 };
 
+/**
+ * وموضعُ الجهة الثانية — لمن يسمّع من فوق ومن تحت.
+ *
+ * كان يُحفظ موضعٌ واحد، فيفتح الشيخُ الجلسةَ الجاية فيجد «من» الأولى مملوءةً
+ * والثانية فاضيةً يكتبها بيده كل مرة. والجهتان سواءٌ في أنه وقف فيهما.
+ */
+export const lastStopExtra = (student, sessions, partId) => {
+  for (const { entry } of studentSessions(student, sessions)) {
+    const x = entry?.[partId]?.extra;
+    if (x?.to) return { from: x.to, fromAya: x.toAya || '' };
+  }
+  return null;
+};
+
 /** «الحديد ١٢» — موضعه معروضًا. */
 export const stopText = (stop) =>
   !stop?.from ? '' : `${stop.from}${num(stop.fromAya) ? ` ${num(stop.fromAya)}` : ''}`;
@@ -317,3 +493,7 @@ export const pagesBetween = (from, to, fromAya, toAya) => {
 /** موضع الطالب في الأقسام الثلاثة، لتعبئة «من» عند فتح تسميعه. */
 export const stopsOf = (student, sessions) =>
   Object.fromEntries(PARTS.map((p) => [p.id, lastStop(student, sessions, p.id)]));
+
+/** ومواضعُ الجهة الثانية معها، فتُفتح الخانتان على موضعيهما. */
+export const stopsExtraOf = (student, sessions) =>
+  Object.fromEntries(PARTS.map((p) => [p.id, lastStopExtra(student, sessions, p.id)]));

@@ -6,7 +6,7 @@
  * حقًّا (وهذا ما يكسر الملفَّ إن غلط بايتٌ واحد)، وأن تُطوى الأقسامُ الغائبة.
  */
 import assert from 'node:assert/strict';
-import { pdfFromJpeg, sheetSections, sheetFileName } from '../src/sheet.js';
+import { pdfFromJpeg, pdfFromJpegs, sheetSections, sheetFileName, paginate, wrapLine } from '../src/sheet.js';
 
 let passed = 0;
 const test = (name, fn) => { fn(); passed++; console.log('  ✓ ' + name); };
@@ -128,6 +128,89 @@ test('وقيميٌّ بلا ملقٍ يُكتب عنوانه ولا يُترك �
 test('وما حُجب لا يُطبع له صندوق', () => {
   const s = sheetSections({ students: 3, qiyami: [], notes: [], reports: '' });
   assert.deepEqual(s.map((x) => x.title), ['الحضور']);
+});
+
+test('وصفحتان في ملفٍ واحد: العدّ صحيح وجدول المواضع يدلّ عليها', () => {
+  const jpeg = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3, 0xFF, 0xD9]);
+  const pdf = pdfFromJpegs([jpeg, jpeg], { width: 100, height: 140, title: 'ورقتان' });
+  const txt = Buffer.from(pdf).toString('latin1');
+  assert.ok(txt.includes('/Count 2'), 'صفحتان');
+  assert.ok(txt.includes('/Kids [3 0 R 6 0 R]'), 'وكلٌّ تشير إلى كائنها');
+  // جدول المواضع يدلّ على مواضع الكائنات حقًّا — وإلا فُتح الملفُّ «تالفًا»
+  const start = Number(/startxref\n(\d+)/.exec(txt)[1]);
+  assert.equal(txt.slice(start, start + 4), 'xref');
+  const offsets = [...txt.slice(start).matchAll(/^(\d{10}) 00000 n $/gm)].map((m) => Number(m[1]));
+  offsets.forEach((off, i) => {
+    assert.equal(txt.slice(off, off + `${i + 1} 0 obj`.length), `${i + 1} 0 obj`);
+  });
+  assert.equal(offsets.length, 3 + 2 * 3 - 1 + 1, 'كائنٌ للفهرس وآخر للصفحات وثلاثةٌ لكل صفحة ومعلوماتٌ');
+});
+
+test('وصفحةٌ واحدة تبقى كما كانت', () => {
+  const jpeg = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 1, 0xFF, 0xD9]);
+  const txt = Buffer.from(pdfFromJpeg(jpeg, { width: 10, height: 14 })).toString('latin1');
+  assert.ok(txt.includes('/Count 1'));
+  assert.ok(txt.includes('/Kids [3 0 R]'));
+});
+
+/* ------------------------------ تقسيم الصفحات ------------------------------ */
+
+test('ما يسع صفحةً يبقى فيها', () => {
+  const secs = [{ title: 'أ', rows: [[1, 2]] }, { title: 'ب', lines: ['x'] }];
+  const pages = paginate(secs, 2000);
+  assert.equal(pages.length, 1);
+  assert.deepEqual(pages[0].map((x) => x.title), ['أ', 'ب']);
+});
+
+test('والقسم الطويل يُشقّ ويكمل بعنوانه و«تتمة» — فما يُقصّ عند العاشر', () => {
+  const lines = Array.from({ length: 40 }, (_, i) => 'طالب ' + (i + 1));
+  const pages = paginate([{ title: 'الطلاب', lines }], 600);
+  assert.ok(pages.length > 1, 'انقسم');
+  assert.equal(pages[0][0].title, 'الطلاب');
+  assert.equal(pages[1][0].title, 'الطلاب — تتمة');
+  const all = pages.flatMap((pg) => pg.flatMap((sec) => sec.lines || []));
+  assert.deepEqual(all, lines, 'ولا يسقط سطرٌ واحد');
+});
+
+test('وصفوفُ القسم تُشقّ كذلك', () => {
+  const rows = Array.from({ length: 30 }, (_, i) => ['س' + i, String(i)]);
+  const pages = paginate([{ title: 'جدول', rows }], 500);
+  const all = pages.flatMap((pg) => pg.flatMap((sec) => sec.rows || []));
+  assert.equal(all.length, 30);
+});
+
+test('ولا يُرجَع فارغًا بلا أقسام', () => {
+  assert.deepEqual(paginate([], 800), [[]]);
+  assert.deepEqual(paginate(null, 800), [[]]);
+});
+
+/* ------------------------------ شقّ السطر ------------------------------ */
+
+/** قياسٌ مصطنع: كل حرفٍ عشرة — يكفي لاختبار المنطق بلا كانفاس. */
+const w10 = (s) => s.length * 10;
+
+test('السطر الطويل يُشقّ على كلماته، والتتمّة معلَّمة', () => {
+  const out = wrapLine(w10, 'مراجعة من الناس إلى النبأ وتثبيت من الملك', 150);
+  assert.ok(out.length > 1, 'انشقّ');
+  assert.equal(out[0].cont, false);
+  assert.ok(out.slice(1).every((x) => x.cont), 'ما بعد الأول تتمّة');
+  assert.equal(out.map((x) => x.t).join(' '), 'مراجعة من الناس إلى النبأ وتثبيت من الملك', 'ولا تسقط كلمة');
+  assert.ok(out.every((x) => w10(x.t) <= 150 || !x.t.includes(' ')), 'وكلٌّ يسع العرض');
+});
+
+test('وما يسع يبقى سطرًا واحدًا', () => {
+  assert.deepEqual(wrapLine(w10, 'قصير', 500), [{ t: 'قصير', cont: false }]);
+});
+
+test('والكلمة الأطول من السطر لا تُكسر ولا تُسقط', () => {
+  const out = wrapLine(w10, 'كلمةٌطويلةٌجدًّاماتنكسر بعدها', 50);
+  assert.equal(out[0].t, 'كلمةٌطويلةٌجدًّاماتنكسر');
+  assert.equal(out[1].t, 'بعدها');
+});
+
+test('والفارغ لا يصير سطرًا', () => {
+  assert.deepEqual(wrapLine(w10, '   ', 100), []);
+  assert.deepEqual(wrapLine(w10, null, 100), []);
 });
 
 test('واسم الملف لاتينيّ فما يُتجاهَل عند التنزيل', () => {

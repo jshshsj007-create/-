@@ -38,7 +38,8 @@ import {
   SURAHS, PARTS, emptyWird, rangeText, carryAfter, studentTotals,
   studentSessions, studentOfUser, khayrRows, khayrReportText,
   PAGES_PER_PART, toPages, partsText, memorizedPages, memRangeText,
-  reviewCycles, cycleTarget, cycleDrift, stopsOf, stopText, pagesBetween, pagesOf,
+  reviewCycles, cycleTarget, cycleDrift, stopsOf, stopsExtraOf, stopText, pagesBetween, pagesOf,
+  sessionRows, sessionReportText, khayrSessionSections, khayrSeasonSections,
 } from './khayr.js';
 import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 import PdfFirstPage from './pdfview.jsx';
@@ -48,12 +49,13 @@ import { pushStatus, PUSH_TEXTS, HOME_STEPS, readEnv, currentSub, enablePush, di
 import {
   defaultReportFields, reportFields, allReportFields, fieldValue, replyOf,
   emptyReport, missingParts, reportReady, submitLabel, reportOf, dayReports,
-  mustReport, reportRoll, rollText, owedDays, dayNow, noteOn, notesOn, notesOfDay, noteNames,
+  mustReport, reportRoll, rollText, reportTable, reportTableLines, owedDays, dayNow, hijriKey, sameDate,
+  noteOn, notesOn, notesOfDay, noteNames,
   NOTICE_SPANS, noticeLive, hasRead, noticesFor, markRead, readTally,
   supervisorsOf, toggleSupervisor, supervisorNames, unassigned, SUPERVISOR_MAX,
   qiyamiMissing, qiyamiReady, qiyamiOfDay, videoEmbed, daySummary,
 } from './taqreer.js';
-import { reportSheet, sheetFileName } from './sheet.js';
+import { reportSheet, paperSheet, sheetFileName } from './sheet.js';
 
 const STORAGE_KEY = 'nadi-alahya-data-v1';
 /** «الجولة الثانية» لا «الجولة ٢». ومؤنَّثة لأن الجولة مؤنّثة. */
@@ -62,7 +64,7 @@ const ROUND_ORD = ['الأولى', 'الثانية', 'الثالثة', 'الرا
 const ORDINALS_N = ['١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩', '١٠'];
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v8.8';
+const APP_VERSION = 'v8.9';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'القيمي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -831,8 +833,15 @@ function WeekPicker({ programs, form, setForm, optional }) {
    * فحفظتَ عليها — فينقطع ربطٌ صحيحٌ بلا أن تقصد.
    */
   const open = (p?.weeks || []).filter((w) => !['مقفل', 'مكتمل'].includes(weekState(w)));
+  /**
+   * وأوّلُ ما يُقدَّم: **الجمعة التي تاريخها تاريخُ اليوم**.
+   *
+   * كانت تعرض «الجارية» كلَّها، ومن عنده جمعتان جاريتان يقف أمام اسمين
+   * يدوّر أيّهما اليوم. والتاريخُ يقطع الشكّ — وهو مكتوبٌ عنده أصلًا.
+   */
+  const today = open.filter((w) => sameDate(w.date, hijriKey(Date.now())));
   const live = open.filter((w) => weekState(w) === 'جاري');
-  const mine = live.length ? live : open.slice(0, 1);
+  const mine = today.length ? today : (live.length ? live : open.slice(0, 1));
   const weeks = (p?.weeks || []).filter((w) => mine.includes(w) || w.id === form.weekId);
   return (
     <>
@@ -1531,6 +1540,8 @@ export default function App() {
   const [khayrTab, setKhayrTab] = useState('report');   // التقرير · الجلسات · الطلاب
   const [khayrScope, setKhayrScope] = useState('term');  // هذا الموسم أو كلها
   const [khayrMsg, setKhayrMsg] = useState('');
+  // رسمُ الورقة يأخذ وقتًا على الجوّال، فالزرّ يُقفل حتى تخرج — وإلا خرجت مرتين
+  const [khayrBusy, setKhayrBusy] = useState('');
   const [weekTab, setWeekTab] = useState('finance');
   const [programTab, setProgramTab] = useState('days');
   // البرنامج اللي فُتحت له خانات «مكان ثاني». معرّفٌ لا `true` عشان ما تبقى
@@ -3074,6 +3085,11 @@ export default function App() {
       memFrom: mem.from || '', memTo: mem.to || '',
       memAmount: mem.amount || '', memUnit: mem.unit || 'parts',
       memTarget: mem.target || 3,
+      // الجهة الثانية: تُحمَّل إن كانت، وإلا بقيت الخانة مطويّة
+      memX: mem.extra
+        ? { from: mem.extra.from || '', to: mem.extra.to || '',
+          amount: mem.extra.amount || '', unit: mem.extra.unit || mem.unit || 'parts' }
+        : null,
     };
   };
 
@@ -3095,6 +3111,16 @@ export default function App() {
         amount: Number(form.memAmount || 0),
         unit: form.memUnit || 'parts',
         target: Math.max(1, Number(form.memTarget || 3)),
+        /*
+          والجهة الثانية ما تُخزَّن إلا لو كُتبت فعلًا — فسجلّ عامّة الطلاب
+          يبقى كما كان، بلا خانةٍ فاضية تثقله.
+        */
+        ...(form.memX && (form.memX.from || form.memX.to || Number(form.memX.amount))
+          ? { extra: {
+            from: form.memX.from || '', to: form.memX.to || '',
+            amount: Number(form.memX.amount || 0), unit: form.memX.unit || form.memUnit || 'parts',
+          } }
+          : {}),
       },
       userId: form.userId || '',
     };
@@ -3167,10 +3193,21 @@ export default function App() {
     // جلسات ما قبل هذي وحدها — الموضع يُؤخذ من الماضي لا من المستقبل
     const before = khayr.sessions.filter((x) => String(x.date || '') < String(session.date || ''));
     const stops = stopsOf(st, before);
+    /*
+      وموضعُ الجهة الثانية معه.
+
+      كان يُحفظ موضعٌ واحد، فيفتح الشيخُ الجلسةَ الجاية فيجد «من» الأولى
+      مملوءةً والثانية فاضيةً يكتبها بيده كل مرة. والجهتان سواءٌ في أنه
+      وقف فيهما.
+    */
+    const xstops = stopsExtraOf(st, before);
     return {
       studentId: st.id, present: true, due: '',
       reviewUnit: st.wird?.reviewUnit || 'parts',
-      ...Object.fromEntries(PARTS.map((p) => [p.id, stops[p.id] || {}])),
+      ...Object.fromEntries(PARTS.map((p) => [p.id, {
+        ...(stops[p.id] || {}),
+        ...(xstops[p.id] ? { extra: { ...xstops[p.id] } } : {}),
+      }])),
     };
   };
 
@@ -4301,6 +4338,68 @@ export default function App() {
       if (navigator.share) { await navigator.share({ title, text }); return; }
       await navigator.clipboard.writeText(text);
       setKhayrMsg('اننسخ التقرير، الصقه وين ما تبي');
+    } catch {
+      setKhayrMsg('ما قدر ينسخ. حدّد النص ونسخه يدويًا.');
+    }
+    setTimeout(() => setKhayrMsg(''), 3000);
+  };
+
+  /** عنوان الموسم: يتبع الشريط — هذا الموسم أو كلها — فما تخرج ورقةٌ لا يُدرى مداها. */
+  const khayrScopeName = khayrScope === 'all' ? 'كل المواسم' : `الترم ${data.currentTerm} ${data.currentYear} هـ`;
+  /** اسم الملف لاتينيّ: العربيّ يسقط في بعض المتصفّحات فينزل بلا اسم. */
+  const khayrFile = (tag, date) => `faydh-khayr-${tag}${date ? `-${String(date).replace(/[^0-9]/g, '-')}` : ''}.pdf`;
+
+  /**
+   * ورقةُ خيركم — الجلسةُ والموسم من بابٍ واحد.
+   *
+   * والجلسةُ تُضغط لتسع صفحةً (طلابُها معدودون)، والموسمُ الكاملُ يُقسَّم على
+   * صفحات: ثلاثون طالبًا لا يسعهم ورقٌ واحد.
+   */
+  const khayrSheet = async (kind) => {
+    if (khayrBusy) return;
+    setKhayrBusy(kind);
+    setKhayrMsg('');
+    try {
+      const season = kind !== 'session';
+      const rows = season
+        ? khayrRows(khayr.students, scopedKhayrSessions, khayr.sessions)
+        : sessionRows(khayr.students, khayrSession);
+      const brief = kind === 'brief';
+      const title = season
+        ? `خيركم — ${brief ? 'المختصر' : 'التقرير الكامل'}`
+        : `خيركم — جلسة ${khayrSession?.date || ''}`;
+      const blob = await paperSheet({
+        sub: khayrScopeName,
+        title,
+        date: season ? '' : (khayrSession?.date || ''),
+        sections: season
+          ? khayrSeasonSections(rows, { sessions: scopedKhayrSessions.length, brief })
+          : khayrSessionSections(rows),
+        fileTitle: title,
+      }, {
+        logo: LOGO_MARK_WHITE, team: TEAM_NAME, stamp: hijri(Date.now()),
+        // الكاملُ وحده يُقسَّم؛ وما سواه صفحةٌ تُضغط لتسع
+        fit: kind !== 'full',
+      });
+      const how = await shareFile(blob, khayrFile(kind, season ? '' : khayrSession?.date), title);
+      setKhayrMsg(how === 'downloaded' ? 'نزلت الورقة' : '');
+    } catch {
+      setKhayrMsg('ما قدرنا نجهّز الورقة. جرّب مرة ثانية.');
+    } finally {
+      setKhayrBusy('');
+      setTimeout(() => setKhayrMsg(''), 4000);
+    }
+  };
+
+  /** نصُّ الجلسة كما يُلصق في واتساب — النصُّ يكفي المتابع، والورقة لمن يُرفع إليه. */
+  const shareKhayrSession = async () => {
+    const rows = sessionRows(khayr.students, khayrSession);
+    const title = `خيركم — جلسة ${khayrSession?.date || ''}`;
+    const text = sessionReportText(rows, { title, date: khayrSession?.date || '' });
+    try {
+      if (navigator.share) { await navigator.share({ title, text }); return; }
+      await navigator.clipboard.writeText(text);
+      setKhayrMsg('اننسخ تقرير الجلسة، الصقه وين ما تبي');
     } catch {
       setKhayrMsg('ما قدر ينسخ. حدّد النص ونسخه يدويًا.');
     }
@@ -6690,32 +6789,84 @@ export default function App() {
                             style={{ width: `${roll.total ? Math.round((roll.done.length / roll.total) * 100) : 0}%` }} />
                         </div>
                         <div className="divide-y divide-slate-50">
-                          {roll.done.map(({ user: u, report: r }) => (
-                            <button key={u.id} onClick={() => { setForm({ reportId: r.id, userId: u.id }); setModal('readReport'); }}
-                              className="w-full flex items-center justify-between gap-2 py-2.5 text-right">
-                              <span className="flex items-center gap-2 min-w-0">
-                                <span className="w-5 h-5 rounded-full bg-green-100 text-green-700 text-[11px] font-extrabold flex items-center justify-center shrink-0">✓</span>
-                                <span className="text-sm font-semibold text-slate-700 truncate">{u.name}</span>
-                              </span>
-                              <span className="text-[11px] text-slate-400 shrink-0">اقرأه</span>
-                            </button>
-                          ))}
-                          {roll.late.map(({ user: u }) => (
-                            <div key={u.id} className="flex items-center justify-between gap-2 py-2.5">
-                              <span className="flex items-center gap-2 min-w-0">
-                                <span className="w-5 h-5 rounded-full bg-red-100 text-red-700 text-[11px] font-extrabold flex items-center justify-center shrink-0">✕</span>
-                                <span className="text-sm font-semibold text-slate-700 truncate">{u.name}</span>
-                              </span>
-                              {/* بجوّاله ضغطة، وبدونه تختار الرقم بنفسك — ولا نَعِد بما لا نملك */}
-                              <a className="shrink-0 text-[11px] font-bold text-green-700 border border-green-200 rounded-lg px-2.5 py-1.5"
-                                target="_blank" rel="noreferrer"
-                                href={u.phone
-                                  ? `https://wa.me/${waIntl(u.phone)}?text=${encodeURIComponent(`تقرير ${week.name} ما وصلني بعد.`)}`
-                                  : `https://wa.me/?text=${encodeURIComponent(`${u.name}: تقرير ${week.name} ما وصلني بعد.`)}`}>
-                                ذكّره بواتساب
-                              </a>
-                            </div>
-                          ))}
+                          {/*
+                            جدول «من كتب ماذا» — مبنيٌّ من تقاريرهم هم.
+
+                            القائمةُ كانت تقول من كتب ومن لم يكتب، ولا تقول
+                            ماذا كتب. وسؤالُ صاحب التطبيق من أوّل يوم: «أعرف
+                            موظف عبدالله أقام مسابقة ودوري» — وهذا يجيبه في
+                            سطر. وأعمدتُه خاناتُ التقرير كما ضبطها، فإن حذف
+                            خانةً سقط عمودُها.
+                          */}
+                          {(() => {
+                            const tbl = reportTable(data, program.id, week.id, seesWeek);
+                            if (!tbl.rows.length) return null;
+                            /*
+                              ثلاثُ خاناتٍ أو أقلّ تسع شاشة الجوّال بلا سحب:
+                              الأعمدةُ بنسبها والنصُّ مقتطع. وفوقها يُسحب —
+                              وأربعةُ أعمدةٍ في ٣٩٠ بكسل حروفٌ لا تُقرأ.
+                            */
+                            const wide = tbl.fields.length > 3;
+                            const col = Math.floor(70 / Math.max(1, tbl.fields.length));
+                            return (
+                              <div className={`-mx-1 ${wide ? 'overflow-x-auto' : ''}`}>
+                                <table className="w-full text-right"
+                                  style={wide ? { minWidth: 60 + tbl.fields.length * 130 } : { tableLayout: 'fixed' }}>
+                                  <thead>
+                                    <tr className="bg-slate-50">
+                                      <th className="px-2.5 py-2 text-[10.5px] font-extrabold text-slate-400 whitespace-nowrap"
+                                        style={wide ? undefined : { width: '30%' }}>الموظف</th>
+                                      {tbl.fields.map((f) => (
+                                        <th key={f.id} className="px-2.5 py-2 text-[10.5px] font-extrabold text-slate-400 whitespace-nowrap overflow-hidden text-ellipsis"
+                                          style={wide ? undefined : { width: `${col}%` }}>{f.label}</th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {tbl.rows.map((r) => (
+                                      <tr key={r.user.id} className="border-t border-slate-50">
+                                        <td className="px-2.5 py-2 align-top overflow-hidden text-ellipsis">
+                                          {r.wrote ? (
+                                            <button className="text-[12px] font-bold text-slate-800 whitespace-nowrap underline decoration-slate-200 underline-offset-4"
+                                              onClick={() => { setForm({ reportId: r.reportId, userId: r.user.id }); setModal('readReport'); }}>
+                                              {r.user.name}
+                                            </button>
+                                          ) : (
+                                            <span className="text-[12px] font-bold text-slate-800 whitespace-nowrap">{r.user.name}</span>
+                                          )}
+                                        </td>
+                                        {r.wrote ? tbl.fields.map((f, i) => {
+                                          const cell = r.cells[i];
+                                          const empty = !cell.text;
+                                          const none = /^لا\s*يوجد$/.test(cell.text.trim());
+                                          return (
+                                            <td key={f.id} className={`px-2.5 py-2 text-[11.5px] align-top whitespace-nowrap overflow-hidden text-ellipsis ${none || empty ? 'text-slate-300' : 'text-slate-600'}`}
+                                              style={wide ? { maxWidth: 150 } : undefined}>
+                                              {cell.text || '—'}
+                                            </td>
+                                          );
+                                        }) : (
+                                          <td colSpan={tbl.fields.length} className="px-2.5 py-2">
+                                            <Badge tone="red">ما كتب تقريره</Badge>
+                                            <a className="inline-block mr-2 text-[11px] font-bold text-green-700 border border-green-200 rounded-lg px-2 py-1"
+                                              target="_blank" rel="noreferrer"
+                                              href={r.user.phone
+                                                ? `https://wa.me/${waIntl(r.user.phone)}?text=${encodeURIComponent(`تقرير ${week.name} ما وصلني بعد.`)}`
+                                                : `https://wa.me/?text=${encodeURIComponent(`${r.user.name}: تقرير ${week.name} ما وصلني بعد.`)}`}>
+                                              ذكّره
+                                            </a>
+                                          </td>
+                                        )}
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                                <div className="text-[10.5px] text-slate-400 mt-2 px-1 leading-6">
+                                  اضغط اسم الموظف لتقرأ تقريره كاملًا وتربط ملاحظته بطالب.
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
                         {loose.length > 0 && (
                           <div className="mt-3 pt-3 border-t border-slate-100">
@@ -6754,6 +6905,8 @@ export default function App() {
                         return {
                           qiyami: qs, notes,
                           reports: roll && roll.total ? rollText(roll) : '',
+                          // وسطورُ الجدول تدخل الورقة: من كتب ماذا، لا كم عددُهم
+                          reportLines: isAdmin ? reportTableLines(reportTable(data, program.id, week.id, seesWeek)) : [],
                           summary: (names) => daySummary({
                             comps: runs?.competitions.length || 0, qiyami: qs, noteNames: notes, roll,
                           }, { names }),
@@ -7059,8 +7212,8 @@ export default function App() {
                     <h3 className="font-bold text-slate-700">القيمي</h3>
                     {canAdd && (
                       <button className={btnPrimary} onClick={() => setForm({
-                        supervisors: effectiveUser && effectiveUser.role !== 'مدير' ? [effectiveUser.id] : [],
-                        helper: '', title: '', points: '', qa: '', video: '', ...onToday,
+                        supervisors: [], helper: effectiveUser && effectiveUser.role !== 'مدير' ? (effectiveUser.name || '') : '',
+                        title: '', points: '', qa: '', video: '', ...onToday,
                       }) || setModal('editQiyami')}><Plus size={16} /> قيمي</button>
                     )}
                   </div>
@@ -7820,6 +7973,19 @@ export default function App() {
                     <button className={btnPrimary + ' w-full mt-3'} onClick={shareKhayrReport}>
                       <Copy size={16} /> نسخ التقرير
                     </button>
+                    {/*
+                      ورقتان لا واحدة: المختصرُ يُرفع لمن فوقك — أعدادٌ ونسبةٌ
+                      ولا أسماءَ إلا الأعلى حفظًا ومن عليه متراكم — والكاملُ
+                      لك أنت: كلُّ طالبٍ بسطره كما في الجدول أعلاه.
+                    */}
+                    <div className="grid grid-cols-2 gap-2 mt-2">
+                      <button className={btnGhostBox + ' disabled:opacity-40'} disabled={!!khayrBusy} onClick={() => khayrSheet('brief')}>
+                        <FileText size={16} /> {khayrBusy === 'brief' ? 'نجهّزها…' : 'ورقة مختصرة'}
+                      </button>
+                      <button className={btnGhostBox + ' disabled:opacity-40'} disabled={!!khayrBusy} onClick={() => khayrSheet('full')}>
+                        <FileText size={16} /> {khayrBusy === 'full' ? 'نجهّزها…' : 'ورقة كاملة'}
+                      </button>
+                    </div>
                     {khayrMsg && <div className="text-xs text-brand-700 text-center mt-2">{khayrMsg}</div>}
                   </>
                 )}
@@ -8030,6 +8196,20 @@ export default function App() {
                     </div>
                   );
                 })}
+                {/*
+                  تقريرُ الجلسة من الجلسة نفسها: الشيخ يُنهي التسميع وهو فيها،
+                  فما يُخرجه يكون في يده لا في شاشةٍ أخرى يبحث عنها.
+                */}
+                <div className="pt-2 space-y-2">
+                  <button className={btnPrimary + ' w-full'} onClick={shareKhayrSession}>
+                    <Send size={16} /> مشاركة تقرير الجلسة
+                  </button>
+                  <button className={btnGhostBox + ' w-full disabled:opacity-40'}
+                    disabled={!!khayrBusy} onClick={() => khayrSheet('session')}>
+                    <FileText size={16} /> {khayrBusy === 'session' ? 'نجهّز الورقة…' : 'ورقة الجلسة PDF'}
+                  </button>
+                  {khayrMsg && <div className="text-xs text-brand-700 text-center">{khayrMsg}</div>}
+                </div>
               </div>
             )}
           </div>
@@ -10086,9 +10266,18 @@ export default function App() {
 
       {modal === 'editQiyami' && (
         <Modal title={form.id ? 'تعديل القيمي' : 'قيمي جديد'} onClose={closeModal} wide>
-          <SupervisorPicker users={data.users} value={form.supervisors || []} helper={form.helper || ''}
-            onChange={(supervisors) => setForm({ ...form, supervisors, error: '' })}
-            onHelper={(helper) => setForm({ ...form, helper, error: '' })} label="الملقي — إجباري" />
+          {/*
+            الملقي يُكتب اسمه، ولا تُعرض قائمةُ الموظفين.
+
+            طلبها صاحبُ التطبيق صريحةً: «تشيل الخيارات بحيث ما يطلع له
+            الموظفين، فقط كتابة». وقد يكون الملقي ضيفًا أو طالبًا، فالقائمةُ
+            تحصره في الفريق بلا سبب.
+          */}
+          <Field label="الملقي — إجباري">
+            <input className={inputCls} value={form.helper || ''}
+              onChange={(e) => setForm({ ...form, helper: e.target.value, error: '' })}
+              placeholder="اكتب اسم من ألقاه" />
+          </Field>
           <Field label="العنوان — إجباري">
             <input className={inputCls} value={form.title || ''} onChange={(e) => setForm({ ...form, title: e.target.value, error: '' })}
               placeholder="برّ الوالدين" />
@@ -10594,11 +10783,57 @@ export default function App() {
                 value={form.memAmount ?? ''} onChange={(e) => setForm({ ...form, memAmount: e.target.value })} placeholder="0" />
               <UnitPick value={form.memUnit || 'parts'} onChange={(u) => setForm({ ...form, memUnit: u })} />
             </div>
-            {Number(form.memAmount || 0) > 0 && (
-              <div className="text-[11px] text-brand-700 font-semibold mt-2">
-                = {partsText(toPages(form.memAmount, form.memUnit || 'parts'))}
+            {/*
+              الجهة الثانية.
+
+              منهم من يحفظ من أول المصحف نازلًا ومن آخره صاعدًا، فمحفوظُه
+              قطعتان. والخانةُ الواحدة تكذب عليه: يُكتب «من النساء إلى هود»
+              وهو يحفظ معها جزأين من الآخر، فيُصحَّح المقدارُ بيدٍ ويبقى
+              المدى خطأً. والزرُّ رماديٌّ صغير: ما يضغطه إلا صاحب الحالة.
+            */}
+            {!form.memX ? (
+              <button type="button" className="text-[11px] font-semibold text-slate-400 hover:text-brand-700 mt-2.5"
+                onClick={() => setForm({ ...form, memX: { from: '', to: '', amount: '', unit: form.memUnit || 'parts' } })}>
+                + محفوظ من جهة ثانية
+              </button>
+            ) : (
+              <div className="mt-3 pt-3 border-t border-dashed border-slate-200">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[11px] font-bold text-slate-500">الجهة الثانية</span>
+                  <button type="button" className="text-[11px] text-red-400"
+                    onClick={() => setForm({ ...form, memX: null })}>شِلها</button>
+                </div>
+                <div className="flex gap-2 mb-2">
+                  <select className={inputCls} value={form.memX.from || ''}
+                    onChange={(e) => setForm({ ...form, memX: { ...form.memX, from: e.target.value } })}>
+                    <option value="">— من سورة —</option>
+                    {SURAHS.map((x) => <option key={x} value={x}>{x}</option>)}
+                  </select>
+                  <select className={inputCls} value={form.memX.to || ''}
+                    onChange={(e) => setForm({ ...form, memX: { ...form.memX, to: e.target.value } })}>
+                    <option value="">— إلى سورة —</option>
+                    {SURAHS.map((x) => <option key={x} value={x}>{x}</option>)}
+                  </select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input type="number" className={inputCls + ' text-center'} style={{ maxWidth: 96 }}
+                    value={form.memX.amount ?? ''} placeholder="0"
+                    onChange={(e) => setForm({ ...form, memX: { ...form.memX, amount: e.target.value } })} />
+                  <UnitPick value={form.memX.unit || 'parts'}
+                    onChange={(u) => setForm({ ...form, memX: { ...form.memX, unit: u } })} />
+                </div>
               </div>
             )}
+            {/* والمجموع من الجهتين: هو الذي تُقاس عليه الدورة */}
+            {(Number(form.memAmount || 0) > 0 || Number(form.memX?.amount || 0) > 0) && (() => {
+              const first = toPages(form.memAmount, form.memUnit || 'parts');
+              const second = toPages(form.memX?.amount, form.memX?.unit || form.memUnit || 'parts');
+              return (
+                <div className="text-[11px] text-brand-700 font-semibold mt-2">
+                  {second > 0 && `${first} + ${second} = `}{partsText(first + second)}
+                </div>
+              );
+            })()}
           </Field>
 
           <Field label="هدف الدورة (بالجلسات)" hint="في كم جلسة تبون يمرّ على محفوظه كاملًا؟ الجلسة أسبوعية.">
@@ -12422,7 +12657,7 @@ function WeekReport({ week, accounts, canMoney, programName, term, club, extra =
           school: L.school(week), faid: L.faid(week),
         } : null,
         club,
-        qiyami: qs, notes, reports: extra?.reports || '',
+        qiyami: qs, notes, reports: extra?.reports || '', reportLines: names ? (extra?.reportLines || []) : [],
       }, { logo: LOGO_MARK_WHITE, team: TEAM_NAME, stamp: hijri(Date.now()) });
       const how = await shareFile(blob, sheetFileName(week.date), `تقرير ${week.name}`);
       setShared(how === 'downloaded' ? 'نزلت الورقة' : '');
