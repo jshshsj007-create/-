@@ -11,7 +11,7 @@ import { getStore } from '@netlify/blobs';
 import crypto from 'node:crypto';
 import { isAdmin, allowed, canWrite } from '../../src/perms.js';
 import { programFor, publicView, validateSubmission, applySubmission, normalizeSubmission, rateLimited, waIntl, isReceipt, closureOf, makeToken as makeSignupToken } from '../../src/signup.js';
-import { questionView, validateAnswer, applyAnswer, answersRateLimited, makeDrawMany, applyDrawMany } from '../../src/club.js';
+import { questionView, validateAnswer, applyAnswer, answersRateLimited, makeDrawMany, applyDrawMany, drawWinnersNow } from '../../src/club.js';
 import { dedupeByPhone, remapParticipants } from '../../src/people.js';
 import { runBackup, backupStatus, readSnapshot, writeUndo, UNDO } from '../lib/backup.mjs';
 import { hash, verify, isHashed } from '../lib/password.mjs';
@@ -594,6 +594,37 @@ const bury = (out, incoming, current) => {
  * كلمات المرور المخزّنة، وقاعدة الأهالي، وقائمة المستخدمين نفسها —
  * وإلا صار بإمكان أي موظف يرفّع نفسه مديرًا من جهازه.
  */
+/**
+ * القرعة لا تُكتب ولا تُعدَّل بحفظة.
+ *
+ * هي الشيءُ الوحيد في التطبيق يُحتجّ به على الناس: يقف أمام الأولاد ويقول
+ * «خرج اسمُ فلان». فلو قدر جهازٌ أن يكتب قرعةً أو يُبدّل ترتيبها، سقطت
+ * حجّتُها كلُّها — ولا يُعرف أوقعت أم صُنعت. فبابُها واحد: `question_draw`
+ * عند الخادم، بعشوائيّته هو.
+ *
+ * وما يُقبل من الجهاز شيءٌ واحد: أن يُعلَّم اسمٌ خرج فائزًا بأنه **غاب**. حتى
+ * هذي لا تُصدَّق كما جاءت: الغائبُ لا يُقبل إلا إن كان في الترتيب المحفوظ،
+ * والفائزون يُعادون حسابًا هنا من الترتيب — فما يكتب الجهازُ فائزًا بيده.
+ */
+const drawsKeep = (q, was) => {
+  const kept = Array.isArray(was?.draws) ? was.draws : [];
+  if (!kept.length) return kept;
+  const sent = new Map((Array.isArray(q?.draws) ? q.draws : []).map((d) => [d?.id, d]));
+  return kept.map((d) => {
+    const mine = sent.get(d.id);
+    const order = Array.isArray(d.order) ? d.order : null;
+    if (!mine || !order) return d;
+    // ولا يُشال غائبٌ عُلِّم: الترتيب يمضي إلى أمام، فما يُرجَّع من غاب
+    const gone = [...(d.absent || [])];
+    for (const n of (mine.absent || [])) {
+      if (order.includes(n) && !gone.includes(n)) gone.push(n);
+    }
+    if (gone.length === (d.absent || []).length) return d;
+    const next = { ...d, absent: gone };
+    return { ...next, winners: drawWinnersNow(next) };
+  });
+};
+
 const guard = (incoming, current, me) => {
   const out = { ...incoming };
 
@@ -694,8 +725,9 @@ const guard = (incoming, current, me) => {
   const wasQ = new Map((current?.questions || []).map((q) => [q.id, q]));
   out.questions = (out.questions || []).map((q) => {
     const was = wasQ.get(q.id);
+    if (!was) return q;
     // والمؤقّت معهما: هو إقفالٌ مؤجَّل، فحفظةٌ قديمة تُقدّمه فتقفل قبل وقته
-    return was ? { ...q, open: was.open, token: was.token, closesAt: was.closesAt } : q;
+    return { ...q, open: was.open, token: was.token, closesAt: was.closesAt, draws: drawsKeep(q, was) };
   });
   /**
    * ووجهتا الرابطين الثابتين: عنوانان منشوران، لا يُبدَّلان بحفظة.

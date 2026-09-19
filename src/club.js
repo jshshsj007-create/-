@@ -516,6 +516,9 @@ export const drawPoolMany = (questions, { pool = 'ok', odds = 'once', exclude = 
 /** من فاز في قرعاتِ هذي الأسئلة كلِّها. */
 export const pastWinnersMany = (questions) => (questions || []).flatMap(pastWinners);
 
+/** كم بديلًا يُسحب مع الفائزين. خمسةٌ تكفي يومًا، ولا تُثقل السجلّ. */
+export const SPARES = 5;
+
 /**
  * قرعةٌ على مجموعةٍ من الأسئلة. تُكتب في كلٍّ منها، فيراها من فتح أيًّا كان —
  * ولا تُكتب في واحدٍ فتضيع من البقيّة.
@@ -532,12 +535,22 @@ export const makeDrawMany = (questions, opts = {}, { id, now = Date.now(), by = 
    * ومع «مرةً لكل جواب» يُشال الفائزُ من الكيس كلِّه لا من سطرٍ واحد: وإلا
    * طلع اسمُه ثانيًا وثالثًا في القرعة نفسها لأن له عشرَ ورقات.
    */
-  const winners = [];
+  const order = [];
   let bag = [...names];
-  const want = Math.min(Math.max(1, Number(opts.count) || 1), new Set(bag.map(normalizeAnswer)).size);
-  for (let i = 0; i < want && bag.length; i++) {
+  const heads = new Set(bag.map(normalizeAnswer)).size;
+  const want = Math.min(Math.max(1, Number(opts.count) || 1), heads);
+  /**
+   * والبدلاء يُسحبون في النوبة نفسها.
+   *
+   * الفائز يُنادى فلا يجيب — غائبٌ عن اليوم — فيُسحب بدله. ولو سحبنا بدله
+   * حينها صارت القرعةُ تُعاد بعد ما بان الاسم، وهذا بابُ الشكّ كلِّه: «أعادها
+   * حتى طلع من يريد». فيُسحب الترتيبُ كلُّه قبل أن يُقرأ اسمٌ واحد، ويُكتب في
+   * السجلّ كما هو. فمن غاب نزل الذي يليه — وهو معلومٌ سلفًا، ما اختاره أحد.
+   */
+  const take = Math.min(heads, want + SPARES);
+  for (let i = 0; i < take && bag.length; i++) {
     const [w] = pickWinners(bag, 1, rand);
-    winners.push(w);
+    order.push(w);
     const key = normalizeAnswer(w);
     bag = bag.filter((n) => normalizeAnswer(n) !== key);
   }
@@ -547,9 +560,62 @@ export const makeDrawMany = (questions, opts = {}, { id, now = Date.now(), by = 
     odds, skipPast,
     poolSize: names.length,
     over: (questions || []).map((q) => q.id),
-    winners,
+    count: want,
+    order,
+    absent: [],
+    winners: order.slice(0, want),
   };
 };
+
+/**
+ * الفائزون الآن: أوائلُ الترتيب بعد طرح من غاب.
+ *
+ * وقرعةُ ما قبل البدلاء ما لها ترتيب، فتبقى فائزوها كما كُتبوا — السجلُّ
+ * القديم لا يُعاد حسابُه بقاعدةٍ ما كانت يوم سُحب.
+ */
+export const drawWinnersNow = (draw) => {
+  const order = Array.isArray(draw?.order) ? draw.order : null;
+  if (!order) return [...(draw?.winners || [])];
+  const gone = new Set((draw.absent || []).map((n) => normalizeAnswer(n)).filter(Boolean));
+  const want = Math.max(1, Number(draw.count) || (draw.winners || []).length || 1);
+  const out = [];
+  for (const n of order) {
+    if (out.length >= want) break;
+    if (gone.has(normalizeAnswer(n))) continue;
+    out.push(n);
+  }
+  return out;
+};
+
+/**
+ * «غاب» — يُنقل من الفائزين إلى الغائبين، وينزل البديلُ الذي يليه.
+ *
+ * ولا يُعلَّم إلا من هو فائزٌ الآن: وإلا صار زرًّا يُشيل به من شاء من كيسٍ
+ * ما خرج منه أصلًا.
+ */
+export const markAbsent = (draw, name) => {
+  const key = normalizeAnswer(name);
+  if (!key || !Array.isArray(draw?.order)) return draw;
+  if (!drawWinnersNow(draw).some((n) => normalizeAnswer(n) === key)) return draw;
+  const next = { ...draw, absent: [...(draw.absent || []), String(name).trim()] };
+  return { ...next, winners: drawWinnersNow(next) };
+};
+
+/** خلص الكيس: غاب من غاب وما بقي بديل، فالفائزون أقلُّ مما طُلب. */
+export const drawShort = (draw) => {
+  const want = Math.max(1, Number(draw?.count) || (draw?.winners || []).length || 1);
+  return Math.max(0, want - drawWinnersNow(draw).length);
+};
+
+/** تعليمُ الغياب يُكتب في كل سؤالٍ دخل القرعة، كما كُتبت هي. */
+export const applyAbsent = (data, drawId, name) => ({
+  ...data,
+  questions: (data?.questions || []).map((q) => (
+    (q.draws || []).some((d) => d.id === drawId)
+      ? { ...q, draws: q.draws.map((d) => (d.id === drawId ? markAbsent(d, name) : d)) }
+      : q
+  )),
+});
 
 /** القرعة المشتركة تُكتب في كل سؤالٍ دخل فيها. */
 export const applyDrawMany = (data, ids, draw) => {

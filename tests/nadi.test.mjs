@@ -7,6 +7,7 @@ import {
   qText, qError, questionView, validateAnswer, applyAnswer, LEAGUE, CUP,
   drawPool, pastWinners, pickWinners, makeDraw, applyDraw,
   publicQuestion, questionExpired, drawPoolMany, pastWinnersMany, makeDrawMany, applyDrawMany,
+  SPARES, drawWinnersNow, markAbsent, drawShort, applyAbsent,
   leagueRounds, matchOf, addRound, canDropRound, dropRound, LEAGUE_ROUNDS_MAX,
 } from '../src/club.js';
 
@@ -662,6 +663,92 @@ test('والسؤال يحمل أسماءَ من دخلوا معه، فتُعرف
   const d = makeDrawMany([qA, qB], { pool: 'ok', count: 1 }, { id: 'd', rand: () => 0 });
   assert.deepEqual(d.over, ['qa', 'qb']);
   assert.equal(d.odds, 'once');
+});
+
+/* ------------------------------ الغائب وبديله ------------------------------ */
+
+/** كيسٌ فيه عشرةٌ، فالبدلاء يسعون. */
+const ten = {
+  id: 'q10', text: 'ع', mode: 'open', answer: 'صح', alsoOk: [], options: [],
+  answers: Array.from({ length: 10 }, (_, i) => ans('و' + (i + 1), 'صح')),
+};
+/** سحبٌ معلومُ النتيجة: `rand` صفرٌ دائمًا، فيخرج أولُ الكيس كلَّ مرة. */
+const drawn = (opts = {}) => makeDrawMany([ten], { pool: 'ok', count: 1, ...opts }, { id: 'd', rand: () => 0 });
+
+test('الترتيب يُسحب كلُّه في النوبة نفسها: فائزٌ وخمسةُ بدلاء', () => {
+  const d = drawn();
+  assert.equal(d.count, 1);
+  assert.equal(d.order.length, 1 + SPARES);
+  assert.deepEqual(d.winners, d.order.slice(0, 1));
+  assert.deepEqual(d.absent, []);
+  assert.equal(new Set(d.order).size, d.order.length, 'ولا يتكرّر اسمٌ في الترتيب');
+});
+
+test('ومن غاب نزل الذي يليه — من الترتيب لا من سحبةٍ جديدة', () => {
+  const d = drawn();
+  const [first, second] = d.order;
+  const after = markAbsent(d, first);
+  assert.deepEqual(after.winners, [second]);
+  assert.deepEqual(after.absent, [first]);
+  assert.deepEqual(after.order, d.order, 'والترتيبُ ما يتغيّر');
+});
+
+test('وثلاثةٌ غابوا فالرابع ينزل', () => {
+  let d = drawn({ count: 2 });
+  assert.deepEqual(d.winners, d.order.slice(0, 2));
+  const keep = [...d.order];
+  d = markAbsent(d, keep[0]);
+  d = markAbsent(d, keep[1]);
+  d = markAbsent(d, keep[2]);
+  assert.deepEqual(d.winners, [keep[3], keep[4]]);
+  assert.equal(drawShort(d), 0);
+});
+
+test('وإن خلص الكيس نقص الفائزون ولا يُختلق أحد', () => {
+  // كيسٌ فيه اثنان: فائزٌ وبديلٌ واحد، فإن غابا فما بقي أحد
+  const two = { ...ten, answers: [ans('أ', 'صح'), ans('ب', 'صح')] };
+  let d = makeDrawMany([two], { pool: 'ok', count: 1 }, { id: 'd', rand: () => 0 });
+  assert.equal(d.order.length, 2, 'ما يُسحب إلا من في الكيس');
+  d = markAbsent(d, d.order[0]);
+  d = markAbsent(d, d.order[1]);
+  assert.deepEqual(d.winners, []);
+  assert.equal(drawShort(d), 1);
+});
+
+test('ولا يُعلَّم بالغياب إلا من هو فائزٌ الآن', () => {
+  const d = drawn();
+  assert.equal(markAbsent(d, d.order[3]), d, 'بديلٌ ما نزل بعد');
+  assert.equal(markAbsent(d, 'من لا اسم له في القرعة'), d);
+  const after = markAbsent(d, d.order[0]);
+  assert.equal(markAbsent(after, d.order[0]), after, 'ولا يُعلَّم مرتين');
+});
+
+test('ومن غاب ما فاز: يبقى في كيس القرعة الجاية', () => {
+  const d = markAbsent(drawn(), drawn().order[0]);
+  const q = { ...ten, draws: [d] };
+  assert.equal(pastWinners(q).includes(d.absent[0]), false, 'ما أخذ شيئًا فما يُستثنى');
+  assert.deepEqual(pastWinners(q), d.winners, 'والفائزُ وحده يُستثنى');
+});
+
+test('والبديلُ الذي ما نزل لا يُعدّ فائزًا', () => {
+  const d = drawn();
+  assert.equal(pastWinners({ ...ten, draws: [d] }).length, 1);
+});
+
+test('وقرعةُ ما قبل البدلاء تبقى كما كُتبت', () => {
+  const old = { id: 'd0', winners: ['سعد', 'فهد'] };
+  assert.deepEqual(drawWinnersNow(old), ['سعد', 'فهد']);
+  assert.equal(markAbsent(old, 'سعد'), old, 'ما لها ترتيبٌ يُنزل منه بديل');
+  assert.equal(drawShort(old), 0);
+});
+
+test('وتعليمُ الغياب يُكتب في كل سؤالٍ دخل القرعة', () => {
+  const d = makeDrawMany([qA, qB], { pool: 'ok', count: 1 }, { id: 'dx', rand: () => 0 });
+  const data = applyDrawMany({ questions: [qA, qB, { id: 'qc' }] }, ['qa', 'qb'], d);
+  const next = applyAbsent(data, 'dx', d.order[0]);
+  assert.deepEqual(next.questions[0].draws[0].winners, [d.order[1]]);
+  assert.deepEqual(next.questions[1].draws[0].winners, [d.order[1]]);
+  assert.equal(next.questions[2].draws, undefined);
 });
 
 console.log(`\n✅ ${passed} اختبارًا للنادي — التصحيح والدوري والبطولة وسؤال اليوم والقرعة\n`);

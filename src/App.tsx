@@ -32,6 +32,7 @@ import {
   weekRuns, programRuns, clubCounts, usedIn,
   answerVerdict, questionTally, Q_TEXTS, Q_ERRORS,
   drawPool, pastWinners, drawPoolMany, pastWinnersMany, makeDrawMany, applyDrawMany,
+  applyAbsent, drawShort,
 } from './club.js';
 import { cashRows, cashTotals, cashPayers, handoverRows, validHandover, applyHandover } from './cash.js';
 import {
@@ -64,7 +65,7 @@ const ROUND_ORD = ['الأولى', 'الثانية', 'الثالثة', 'الرا
 const ORDINALS_N = ['١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩', '١٠'];
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v8.9';
+const APP_VERSION = 'v9.0';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'القيمي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
@@ -3002,6 +3003,22 @@ export default function App() {
     if (queueRef.current) queueRef.current = merge3(baseRef.current, queueRef.current, r.body.data);
     adopt(r.body.data, r.body.rev);
     return r.body.draw;
+  };
+
+  /**
+   * «غاب» — الاسم خرج فائزًا وما جاء، فينزل بدله.
+   *
+   * ولا سحبَ جديد هنا: البديلُ من الترتيب الذي سُحب في الضغطة الأولى وكُتب
+   * قبل أن يُقرأ اسم. فهذي حفظةُ تعليمٍ لا قرعة — والخادم يُعيد حساب
+   * الفائزين من الترتيب نفسه، فما يكتب الجهازُ فائزًا بيده.
+   */
+  const markDrawAbsent = async (drawId, name) => {
+    const next = applyAbsent(data, drawId, name);
+    const q = (next.questions || []).find((x) => (x.draws || []).some((d) => d.id === drawId));
+    const draw = (q?.draws || []).find((d) => d.id === drawId) || null;
+    if (!draw) return null;
+    await save(next);
+    return draw;
   };
 
   /** أدوات المسابقة: اسم الأداة وكميتها (أقماع ٦، كورة ٢…). */
@@ -7862,11 +7879,19 @@ export default function App() {
                     <div className="text-sm font-semibold text-slate-700 mb-1">سجلّ القرعة</div>
                     <div className="divide-y divide-slate-100">
                       {draws.map((d) => (
-                        <div key={d.id} className="flex items-baseline justify-between gap-2 py-2">
-                          <div className="text-sm font-extrabold text-slate-800 truncate">{(d.winners || []).join(' · ')}</div>
-                          <div className="text-[10px] text-slate-400 shrink-0">
-                            {agoText(d.at)} · من {d.poolSize}{d.by ? ` · سحبها ${d.by}` : ''}
+                        <div key={d.id} className="py-2">
+                          <div className="flex items-baseline justify-between gap-2">
+                            <div className="text-sm font-extrabold text-slate-800 truncate">{(d.winners || []).join(' · ') || '—'}</div>
+                            <div className="text-[10px] text-slate-400 shrink-0">
+                              {agoText(d.at)} · من {d.poolSize}{d.by ? ` · سحبها ${d.by}` : ''}
+                            </div>
                           </div>
+                          {/* ومن نُودي فما جاء يبقى مكتوبًا: به يُعرف لماذا تبدّل الاسم */}
+                          {(d.absent || []).length > 0 && (
+                            <div className="text-[10.5px] text-slate-400 mt-0.5 leading-6">
+                              غاب فنزل بدله: {d.absent.join(' · ')}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -10473,7 +10498,8 @@ export default function App() {
         const heads = new Set(names.map((n) => n.trim().replace(/\s+/g, ' '))).size;
         const count = Math.min(Number(form.count) || 1, Math.max(1, heads));
         const start = async () => {
-          setForm((f) => ({ ...f, step: 'spin', reel: names, error: '' }));
+          // وقرعةٌ سابقةٌ في النافذة نفسها لا تترك أثرها على هذي
+          setForm((f) => ({ ...f, step: 'spin', reel: names, error: '', sealed: false, busy: false }));
           const [drawn] = await Promise.all([
             drawWinners(ids, { pool, odds, count, skipPast: Boolean(form.skipPast) }),
             // التقليب يكمل مشهده حتى لو رجع الخادم في لحظة
@@ -10500,6 +10526,28 @@ export default function App() {
           await new Promise((done) => setTimeout(done, 1800));
           setForm((f) => ({ ...f, step: 'done', at: (f.at || 1) + 1 }));
         };
+        /**
+         * «غاب» — يُنادى فلا يجيب، فينزل بدله.
+         *
+         * والتقليبُ هنا على البدلاء وحدهم لا على الكيس كلِّه: هؤلاء من يمكن
+         * أن ينزل، فلا نُري الأولاد أسماءً لا حظَّ لها في هذي اللحظة.
+         */
+        const absent = async (name) => {
+          const d = form.drawn;
+          if (!d?.id || form.busy) return;
+          const shown = new Set([...(d.winners || []), ...(d.absent || [])]);
+          const bench = (d.order || []).filter((n) => !shown.has(n));
+          setForm((f) => ({ ...f, busy: true, ...(bench.length ? { step: 'spin', reel: bench } : {}) }));
+          const [next] = await Promise.all([
+            markDrawAbsent(d.id, name),
+            new Promise((done) => setTimeout(done, bench.length ? 1500 : 0)),
+          ]);
+          if (!next) {
+            setForm((f) => ({ ...f, busy: false, step: 'done', error: 'ما انحفظ الغياب. تأكد من النت وجرّب.' }));
+            return;
+          }
+          setForm((f) => ({ ...f, busy: false, step: 'done', drawn: next, error: '' }));
+        };
         const pick = 'flex-1 text-center border rounded-lg py-2 text-sm font-semibold';
         const on = 'bg-brand-700 text-white border-brand-700';
         const off = 'bg-white border-slate-200 text-slate-500';
@@ -10515,30 +10563,63 @@ export default function App() {
 
         if (form.step === 'done' && form.drawn) {
           const win = form.drawn.winners || [];
-          const at = Math.min(Math.max(1, form.at || 1), win.length);
+          const want = Math.max(1, Number(form.drawn.count) || win.length || 1);
+          const gone = form.drawn.absent || [];
+          const at = Math.min(Math.max(1, form.at || 1), Math.max(1, win.length));
           const shown = win.slice(0, at);
-          const all = at >= win.length;
+          /*
+            خلص الكيس: غاب من غاب وما بقي بديل. فيُقال صريحًا — وإلا وقف
+            الشيخ ينتظر اسمًا لن يجيء.
+          */
+          const dry = drawShort(form.drawn) > 0 && at >= win.length;
+          // آخرُ ما خرج ينتظر جوابك: جاء أو ما جاء
+          const last = at >= win.length;
+          const all = form.sealed || dry;
           const share = `${question.text}\n\n🎉 ${win.join(' · ')}\nمن بين ${form.drawn.poolSize} ${form.drawn.pool === 'all' ? 'جاوبوا' : 'جاوبوا صح'}`;
+          const here = () => (last ? setForm({ ...form, sealed: true }) : reveal());
           return (
-            <Modal title={win.length > 1 ? `الفائزون (${at} من ${win.length})` : 'الفائز'} onClose={all ? closeModal : () => {}}>
+            <Modal title={want > 1 ? `الفائزون (${Math.min(at, win.length)} من ${want})` : 'الفائز'}
+              onClose={all ? closeModal : () => {}}>
               <div className="bg-brand-700 rounded-2xl py-6 px-4 text-center text-white">
-                <div className="text-3xl">🎉</div>
+                {/* ولا تهليلَ على كيسٍ خالٍ: ما خرج أحدٌ يُهنَّأ */}
+                <div className="text-3xl">{shown.length ? '🎉' : '🤲'}</div>
                 {/* المكشوفون يبقون فوق، وآخرُهم أبرزُهم — هو الذي خرج الآن */}
                 {shown.map((n, i) => (
                   <div key={n} className={i === shown.length - 1
                     ? 'text-[21px] font-extrabold mt-1.5 leading-8'
                     : 'text-[15px] font-bold mt-1 leading-6 text-brand-100'}>
-                    {win.length > 1 && <span className="text-brand-300 text-[13px] ml-1.5">{i + 1}.</span>}{n}
+                    {want > 1 && <span className="text-brand-300 text-[13px] ml-1.5">{i + 1}.</span>}{n}
                   </div>
                 ))}
+                {!shown.length && <div className="text-[15px] font-bold mt-1.5">ما بقي أحد</div>}
                 <div className="text-[11px] text-brand-200 mt-2">
                   من بين {form.drawn.poolSize} {form.drawn.pool === 'all' ? 'جاوبوا' : 'جاوبوا صح'}
                 </div>
               </div>
-              {!all ? (
-                <button className={btnPrimary + ' w-full mt-4'} onClick={reveal}>
-                  اسحب التالي ({at + 1} من {win.length})
-                </button>
+              {/* من نُودي فما جاء: يبقى مكتوبًا، فيُعرف لماذا تبدّل الاسم */}
+              {gone.length > 0 && (
+                <div className="text-[11px] text-slate-400 text-center mt-2.5 leading-6">
+                  غاب فنزل بدله: {gone.join(' · ')}
+                </div>
+              )}
+              {form.error && <div className="text-red-500 text-xs text-center mt-2">{form.error}</div>}
+              {dry ? (
+                <>
+                  <div className="text-[11px] text-slate-400 text-center mt-3 leading-6">
+                    ما بقي في الكيس أحد — خرج من خرج وغاب. والقرعة مكتوبة كما جرت.
+                  </div>
+                  <button className={btnPrimary + ' w-full mt-4'} onClick={closeModal}>تمام</button>
+                </>
+              ) : !all ? (
+                <>
+                  <button className={btnPrimary + ' w-full mt-4'} disabled={form.busy} onClick={here}>
+                    <Check size={16} /> حاضر{last ? '' : ` — واسحب التالي (${at + 1} من ${want})`}
+                  </button>
+                  <button className={btnGhost + ' w-full mt-1'} disabled={form.busy}
+                    onClick={() => absent(shown[shown.length - 1])}>
+                    {form.busy ? 'نسحب بدله…' : 'غائب · اسحب بدله'}
+                  </button>
+                </>
               ) : (
                 <>
                   <a className={btnGhostBox + ' w-full mt-3'} target="_blank" rel="noreferrer"
@@ -10914,6 +10995,8 @@ export default function App() {
                 };
                 /** المدى الثاني: نفس الحساب التلقائي، وأوجهه دائمًا أوجه. */
                 const x = val.extra;
+                /** والمراجعة والتثبيت يُسمَّعان من موضعين؛ والحفظ موضعٌ واحد يمضي. */
+                const twoSides = p.id === 'review' || p.id === 'tathbit';
                 const setExtra = (patch) => {
                   const next = { ...(x || {}), ...patch };
                   if (['from', 'to', 'fromAya', 'toAya'].some((k) => k in patch) && !next.pagesTouched) {
@@ -10967,14 +11050,18 @@ export default function App() {
                     {/*
                       الأصل موضع واحد، وبعضهم يسمّع من موضعين. فالزر رمادي صغير
                       ما يضغطه إلا صاحب الحالة، والبطاقة تبقى كما هي عند الباقين.
+
+                      وفُتح في التثبيت كما هو في المراجعة بطلب صاحب التطبيق:
+                      من يثبّت من موضعين في الجلسة الواحدة كمن يراجع منهما،
+                      والحساب والمتراكم والورقة تجمع المديَين لكل قسمٍ أصلًا.
                     */}
-                    {p.id === 'review' && !x && (
+                    {twoSides && !x && (
                       <button type="button" onClick={() => setExtra({ from: '', to: '' })}
                         className="text-[11px] font-semibold text-slate-400 hover:text-brand-700 mt-2.5">
                         + مدى ثانٍ
                       </button>
                     )}
-                    {p.id === 'review' && x && (
+                    {twoSides && x && (
                       <div className="mt-3 pt-3 border-t border-dashed border-slate-200">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-[11px] font-bold text-slate-500">المدى الثاني</span>
@@ -11000,13 +11087,20 @@ export default function App() {
                             value={x.toAya ?? ''} onChange={(e) => setExtra({ toAya: e.target.value })} placeholder="آية" />
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="text-[11px] text-slate-400 shrink-0">سمّع</span>
+                          {/* والمدى الثاني أوجهٌ دائمًا، فيُسمّى كما يُسمّى الأول في قسمه */}
+                          <span className="text-[11px] text-slate-400 shrink-0">{p.id === 'review' ? 'سمّع' : 'عدد الأوجه'}</span>
                           <input type="number" className={inputCls + ' text-center'} style={{ maxWidth: 90 }}
                             value={x.pages ?? ''} placeholder="0"
                             onChange={(e) => setExtra({ pages: e.target.value, pagesTouched: true, auto: false })} />
-                          <span className="text-[11px] text-slate-400">وجهًا</span>
+                          {p.id === 'review' && <span className="text-[11px] text-slate-400">وجهًا</span>}
                         </div>
                         {x.auto && <div className="text-[10.5px] text-slate-400 mt-1.5">محسوبة من المدى.</div>}
+                      </div>
+                    )}
+                    {/* والتثبيت من موضعين: مجموعُه يُقال هنا، فما يُجمع في الرأس */}
+                    {p.id !== 'review' && Number(x?.pages || 0) > 0 && (
+                      <div className="mt-2 bg-green-50 text-green-700 rounded-lg px-3 py-2 text-[11.5px] font-bold">
+                        {Number(val.pages || 0)} + {Number(x.pages)} = {partsText(Number(val.pages || 0) + Number(x.pages))}
                       </div>
                     )}
                     {/* رقم واحد ووحدته — والباقي يُحسب: كم يعني بالأوجه، وكم قطع من دورته */}
