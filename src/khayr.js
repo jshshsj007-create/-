@@ -244,20 +244,36 @@ export const seasonBrief = (rows, sessionsCount = 0) => {
 
 /* ---------------------- أقسام ورقة خيركم (PDF) ---------------------- */
 
-/** ورقةُ الجلسة: كلُّ طالبٍ سطرٌ بما سمّعه، ثم مجاميعُها. */
+/**
+ * ورقةُ الجلسة: جدولٌ كجدول الشاشة — الطالب ثم الأقسام الثلاثة ثم الملاحظة.
+ *
+ * وكانت سطورًا بنقاط، فسطرُ الطالب الواحد يلتفّ على سطرين فلا يُقارَن رقمٌ
+ * برقم. والورقةُ أوسعُ من الجوّال، فتسع الأعمدةَ ويُكتب المدى كاملًا.
+ */
 export const khayrSessionSections = (rows) => {
   const t = sessionTotals(rows);
   const out = [{
     title: 'الحضور',
     rows: [['الحاضرون', `${t.attended} من ${t.attended + t.absent}`, true]],
   }];
-  const lines = (rows || []).map((r) => {
-    if (!r.written) return `${r.student.name} — ما سُجّل`;
-    if (!r.present) return `${r.student.name} — غائب${r.due ? ` · عليه ${partsText(r.due)}` : ''}`;
-    const said = r.parts.map((p) => `${p.label} ${p.range || partsText(p.pages)}`).join(' · ');
-    return `${r.student.name} — ${said || 'حضر'}`;
+  const cols = [
+    { label: 'الطالب', w: 30 },
+    ...PARTS.map((p) => ({ label: p.label, w: 14, align: 'center' })),
+    { label: 'الملاحظات', w: 28 },
+  ];
+  const grid = (rows || []).map((r) => {
+    const name = { t: r.student.name, strong: true };
+    if (!r.written) return [name, { t: 'ما سُجّل بعد', span: 4, dim: true }];
+    if (!r.present) {
+      return [name,
+        { t: `غائب${r.due ? ` · حُمّل ${r.due}` : ''}`, span: 3, align: 'center' },
+        null, null, { t: r.note || '—', dim: !r.note }];
+    }
+    const at = (id) => (r.parts.find((p) => p.id === id)?.pages || 0);
+    return [name, ...PARTS.map((p) => ({ t: at(p.id) ? String(at(p.id)) : '—', align: 'center', dim: !at(p.id) })),
+      { t: r.note || '—', dim: !r.note }];
   });
-  if (lines.length) out.push({ title: 'ما سُمِّع', lines });
+  if (grid.length) out.push({ title: 'ما سُمِّع', cols, grid });
   const sum = PARTS.map((p) => (t[p.id] ? [p.label, partsText(t[p.id])] : null)).filter(Boolean);
   if (sum.length) out.push({ title: 'المجموع', rows: sum });
   return out;
@@ -291,12 +307,23 @@ export const khayrSeasonSections = (rows, { sessions = 0, brief = true } = {}) =
     }
     return out;
   }
+  /* والكاملُ جدولٌ كجدول تبويب التقرير حرفًا: عمودٌ لكلِّ ما فيه. */
   out.push({
     title: 'الطلاب',
-    lines: (rows || []).map((r) => `${r.student.name} — حضور ${r.attended}`
-      + `${r.absent ? ` · غياب ${r.absent}` : ''}`
-      + ` · مراجعة ${partsText(r.review)} · تثبيت ${partsText(r.tathbit)} · حفظ ${partsText(r.hifz)}`
-      + `${Number(r.carry) > 0 ? ` · متراكم ${partsText(r.carry)}` : ''}`),
+    cols: [
+      { label: 'الطالب', w: 30 },
+      { label: 'حضور', w: 10, align: 'center' },
+      { label: 'غياب', w: 10, align: 'center' },
+      ...PARTS.map((p) => ({ label: p.label, w: 12, align: 'center' })),
+      { label: 'متراكم', w: 14, align: 'center' },
+    ],
+    grid: (rows || []).map((r) => [
+      { t: r.student.name, strong: true },
+      { t: String(r.attended || 0), align: 'center', dim: !r.attended },
+      { t: String(r.absent || 0), align: 'center', dim: !r.absent },
+      ...PARTS.map((p) => ({ t: String(r[p.id] || 0), align: 'center', dim: !r[p.id] })),
+      { t: String(r.carry || 0), align: 'center', dim: !Number(r.carry), strong: Number(r.carry) > 0 },
+    ]),
   });
   return out;
 };

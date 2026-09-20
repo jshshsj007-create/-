@@ -15,7 +15,7 @@ import { STATES, TONES, studentState, stateCounts, stateOpts, NEAR, FAR } from '
 import { stamped, traceText, agoText, clockText } from './trace.js';
 import { checkAll, worst } from './watch.js';
 import { trashed, pruned, sortedTrash, leftText, kindLabel, TRASH_DAYS } from './trash.js';
-import { canWrite as canWritePerm } from './perms.js';
+import { canWrite as canWritePerm, READ_REPORTS } from './perms.js';
 import { conversion, people } from './visits.js';
 import { makeToken as makeSignupToken, packTotal, packSpan, splitLump, subsFor, TEXTS, CLOSED, waIntl, waLink, varNames, fieldsFor, dayLabel, mapHref, waGroupLink, placeOf, blocksSignup, DEFAULT_WA_TEMPLATE } from './signup.js';
 import { readImage, POSTER, GALLERY } from './img.js';
@@ -50,7 +50,7 @@ import { pushStatus, PUSH_TEXTS, HOME_STEPS, readEnv, currentSub, enablePush, di
 import {
   defaultReportFields, reportFields, allReportFields, fieldValue, replyOf,
   emptyReport, missingParts, reportReady, submitLabel, reportOf, dayReports,
-  mustReport, reportRoll, rollText, reportTable, reportTableLines, owedDays, dayNow, hijriKey, sameDate,
+  mustReport, reportRoll, rollText, reportTable, owedDays, dayNow, hijriKey, sameDate,
   noteOn, notesOn, notesOfDay, noteNames,
   NOTICE_SPANS, noticeLive, hasRead, noticesFor, markRead, readTally,
   supervisorsOf, toggleSupervisor, supervisorNames, unassigned, SUPERVISOR_MAX,
@@ -65,8 +65,9 @@ const ROUND_ORD = ['الأولى', 'الثانية', 'الثالثة', 'الرا
 const ORDINALS_N = ['١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩', '١٠'];
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
 /** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v9.2';
-const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات', 'النادي', 'القيمي', 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
+const APP_VERSION = 'v9.3';
+const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات',
+  'النادي', 'القيمي', READ_REPORTS, 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
 const OLD_CLUB_PERM = 'الإعداد (المسابقات)';
 const ROLES = ['مدير', 'مشرف برنامج', 'مسجل حضور', 'مسؤول النادي', 'معلّم خيركم', 'مسؤول فيض'];
@@ -928,6 +929,79 @@ function Field({ label, children, hint }) {
  * على الأولاد. ولو أوقفناه على «الفائز يظهر بعد لحظة» بلا تقليب، صارت القرعة
  * رقمًا يهبط على الشاشة لا حدثًا يُنتظر.
  */
+/**
+ * جدول «من كتب ماذا».
+ *
+ * يقرؤه اثنان: المديرُ في ملخّص اليوم، ومن أُعطي «قراءة تقارير اليوم» في
+ * شاشته. فبُني مرةً واحدة — ولو كُتب مرتين تفرّقا يومًا، فرأى أحدُهما عمودًا
+ * لا يراه الآخر.
+ *
+ * و`remind` للمدير وحده: القارئُ لا يُذكّر أحدًا، إنما يقرأ.
+ */
+function ReportTable({ tbl, onRead, remind, hint }) {
+  /*
+    ثلاثُ خاناتٍ أو أقلّ تسع شاشة الجوّال بلا سحب: الأعمدةُ بنسبها والنصُّ
+    مقتطع. وفوقها يُسحب — وأربعةُ أعمدةٍ في ٣٩٠ بكسل حروفٌ لا تُقرأ.
+  */
+  const wide = tbl.fields.length > 3;
+  const col = Math.floor(70 / Math.max(1, tbl.fields.length));
+  return (
+    <div className={`-mx-1 ${wide ? 'overflow-x-auto' : ''}`}>
+      <table className="w-full text-right"
+        style={wide ? { minWidth: 60 + tbl.fields.length * 130 } : { tableLayout: 'fixed' }}>
+        <thead>
+          <tr className="bg-slate-50">
+            <th className="px-2.5 py-2 text-[10.5px] font-extrabold text-slate-400 whitespace-nowrap"
+              style={wide ? undefined : { width: '30%' }}>الموظف</th>
+            {tbl.fields.map((f) => (
+              <th key={f.id} className="px-2.5 py-2 text-[10.5px] font-extrabold text-slate-400 whitespace-nowrap overflow-hidden text-ellipsis"
+                style={wide ? undefined : { width: `${col}%` }}>{f.label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {tbl.rows.map((r) => (
+            <tr key={r.user.id} className="border-t border-slate-50">
+              <td className="px-2.5 py-2 align-top overflow-hidden text-ellipsis">
+                {r.wrote ? (
+                  <button className="text-[12px] font-bold text-slate-800 whitespace-nowrap underline decoration-slate-200 underline-offset-4"
+                    onClick={() => onRead(r)}>
+                    {r.user.name}
+                  </button>
+                ) : (
+                  <span className="text-[12px] font-bold text-slate-800 whitespace-nowrap">{r.user.name}</span>
+                )}
+              </td>
+              {r.wrote ? tbl.fields.map((f, i) => {
+                const cell = r.cells[i];
+                const empty = !cell.text;
+                const none = /^لا\s*يوجد$/.test(cell.text.trim());
+                return (
+                  <td key={f.id} className={`px-2.5 py-2 text-[11.5px] align-top whitespace-nowrap overflow-hidden text-ellipsis ${none || empty ? 'text-slate-300' : 'text-slate-600'}`}
+                    style={wide ? { maxWidth: 150 } : undefined}>
+                    {cell.text || '—'}
+                  </td>
+                );
+              }) : (
+                <td colSpan={tbl.fields.length} className="px-2.5 py-2">
+                  <Badge tone="red">ما كتب تقريره</Badge>
+                  {remind && (
+                    <a className="inline-block mr-2 text-[11px] font-bold text-green-700 border border-green-200 rounded-lg px-2 py-1"
+                      target="_blank" rel="noreferrer" href={remind(r)}>ذكّره</a>
+                  )}
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="text-[10.5px] text-slate-400 mt-2 px-1 leading-6">
+        {hint || 'اضغط اسم الموظف لتقرأ تقريره كاملًا.'}
+      </div>
+    </div>
+  );
+}
+
 function DrawReel({ names }) {
   const [i, setI] = useState(0);
   useEffect(() => {
@@ -4672,6 +4746,12 @@ export default function App() {
   const sections = [
     // تقريره أول ما يراه: هو الشيء الوحيد الذي يُطالَب به كل يوم برنامج
     { id: 'dayReport', label: 'تقرير اليوم', desc: 'تقريرك عن يوم البرنامج', icon: ClipboardList, show: writesReport, badge: myOwed.length },
+    /*
+      وقراءةُ تقارير الفريق: بطاقةٌ مستقلّة لمن أُعطي صلاحيتها — نائبُ المدير
+      ومسؤولُ الجودة يُسألان عمّا جرى في اليوم. والمديرُ يقرؤها من ملخّص
+      اليوم في البرنامج، فلا تُكرَّر له بطاقةٌ ثانية.
+    */
+    { id: 'dayReportsRead', label: 'تقارير اليوم', desc: 'ما كتبه الفريق', icon: ClipboardList, show: !isAdmin && can(READ_REPORTS) },
     { id: 'programs', label: 'البرامج', desc: 'عرض وإدارة البرامج', icon: BookOpen, show: canAttend },
     { id: 'faid', label: 'فيض', desc: 'حسابات فيض والأرصدة', icon: Wallet, show: can('فيض - الإيرادات والمصروفات') },
     { id: 'competitions', label: 'النادي', desc: 'المسابقات والدوري وسؤال اليوم', icon: Trophy, show: can('النادي') },
@@ -5195,6 +5275,56 @@ export default function App() {
                 {submitLabel(cur, fields)}
               </button>
               {saved && <div className="text-[11px] text-slate-400 text-center mt-2">أرسلتَه {hijri(saved.at)} — وتعديلُك يحلّ محلّه.</div>}
+            </div>
+          );
+        })()}
+
+        {/* ------------------------ قراءة تقارير الفريق ------------------------ */}
+        {/*
+          من أُعطي «قراءة تقارير اليوم» يرى ما كتبه الفريق — ولا شيء غيره.
+
+          وشاشتُه يومُ البرنامج وحده، لا أسابيعُ ماضيةٌ ولا برامجُ أخرى: هو
+          يُسأل عن اليوم لا عن الموسم. ولا يربط ملاحظةً بطالب ولا يذكّر
+          أحدًا ولا يحذف — والخادمُ يردّ أي حفظةٍ تحاول، لا الشاشةُ وحدها.
+        */}
+        {view === 'dayReportsRead' && !isAdmin && can(READ_REPORTS) && (() => {
+          const days = owedDays(termPrograms, (pid, wid) => canSeeWeek(pid, wid), Date.now(), { max: 8 });
+          const pick = days.find((d) => d.week.id === reportDay) || days[0] || null;
+          if (!pick) {
+            return (
+              <div>
+                <h2 className="text-xl font-extrabold text-slate-800 mb-4">تقارير اليوم</h2>
+                <div className={cardCls + ' text-center text-slate-400 text-sm py-10'}>ما فيه يوم برنامجٍ الآن.</div>
+              </div>
+            );
+          }
+          const { program: pr, week: wk } = pick;
+          const tbl = reportTable(data, pr.id, wk.id, seesWeek);
+          return (
+            <div>
+              <h2 className="text-xl font-extrabold text-slate-800">تقارير اليوم</h2>
+              <div className="text-xs text-slate-400 mt-1 mb-4">{pr.name} — {wk.name}{wk.date ? ` · ${wk.date}` : ''}</div>
+              {days.length > 1 && (
+                <div className="flex gap-2 overflow-x-auto pb-1 mb-4">
+                  {days.map((d) => (
+                    <button key={d.week.id} onClick={() => setReportDay(d.week.id)}
+                      className={`shrink-0 px-3 py-2 rounded-full text-xs font-bold border ${d.week.id === wk.id ? 'bg-brand-700 text-white border-brand-700' : 'bg-white text-slate-600 border-slate-200'}`}>
+                      {d.week.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {!tbl.rows.length ? (
+                <div className={cardCls + ' text-center text-slate-400 text-sm py-10'}>ما فيه أحدٌ يُطالَب بتقريرٍ في هذا اليوم.</div>
+              ) : (
+                <div className={cardCls}>
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <h3 className="font-bold text-slate-700">من كتب ماذا</h3>
+                    <span className="text-xl font-extrabold text-brand-700">{rollText(tbl.roll)}</span>
+                  </div>
+                  <ReportTable tbl={tbl} onRead={(r) => { setForm({ reportId: r.reportId, userId: r.user.id }); setModal('readReport'); }} />
+                </div>
+              )}
             </div>
           );
         })()}
@@ -6874,70 +7004,13 @@ export default function App() {
                           {(() => {
                             const tbl = reportTable(data, program.id, week.id, seesWeek);
                             if (!tbl.rows.length) return null;
-                            /*
-                              ثلاثُ خاناتٍ أو أقلّ تسع شاشة الجوّال بلا سحب:
-                              الأعمدةُ بنسبها والنصُّ مقتطع. وفوقها يُسحب —
-                              وأربعةُ أعمدةٍ في ٣٩٠ بكسل حروفٌ لا تُقرأ.
-                            */
-                            const wide = tbl.fields.length > 3;
-                            const col = Math.floor(70 / Math.max(1, tbl.fields.length));
                             return (
-                              <div className={`-mx-1 ${wide ? 'overflow-x-auto' : ''}`}>
-                                <table className="w-full text-right"
-                                  style={wide ? { minWidth: 60 + tbl.fields.length * 130 } : { tableLayout: 'fixed' }}>
-                                  <thead>
-                                    <tr className="bg-slate-50">
-                                      <th className="px-2.5 py-2 text-[10.5px] font-extrabold text-slate-400 whitespace-nowrap"
-                                        style={wide ? undefined : { width: '30%' }}>الموظف</th>
-                                      {tbl.fields.map((f) => (
-                                        <th key={f.id} className="px-2.5 py-2 text-[10.5px] font-extrabold text-slate-400 whitespace-nowrap overflow-hidden text-ellipsis"
-                                          style={wide ? undefined : { width: `${col}%` }}>{f.label}</th>
-                                      ))}
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {tbl.rows.map((r) => (
-                                      <tr key={r.user.id} className="border-t border-slate-50">
-                                        <td className="px-2.5 py-2 align-top overflow-hidden text-ellipsis">
-                                          {r.wrote ? (
-                                            <button className="text-[12px] font-bold text-slate-800 whitespace-nowrap underline decoration-slate-200 underline-offset-4"
-                                              onClick={() => { setForm({ reportId: r.reportId, userId: r.user.id }); setModal('readReport'); }}>
-                                              {r.user.name}
-                                            </button>
-                                          ) : (
-                                            <span className="text-[12px] font-bold text-slate-800 whitespace-nowrap">{r.user.name}</span>
-                                          )}
-                                        </td>
-                                        {r.wrote ? tbl.fields.map((f, i) => {
-                                          const cell = r.cells[i];
-                                          const empty = !cell.text;
-                                          const none = /^لا\s*يوجد$/.test(cell.text.trim());
-                                          return (
-                                            <td key={f.id} className={`px-2.5 py-2 text-[11.5px] align-top whitespace-nowrap overflow-hidden text-ellipsis ${none || empty ? 'text-slate-300' : 'text-slate-600'}`}
-                                              style={wide ? { maxWidth: 150 } : undefined}>
-                                              {cell.text || '—'}
-                                            </td>
-                                          );
-                                        }) : (
-                                          <td colSpan={tbl.fields.length} className="px-2.5 py-2">
-                                            <Badge tone="red">ما كتب تقريره</Badge>
-                                            <a className="inline-block mr-2 text-[11px] font-bold text-green-700 border border-green-200 rounded-lg px-2 py-1"
-                                              target="_blank" rel="noreferrer"
-                                              href={r.user.phone
-                                                ? `https://wa.me/${waIntl(r.user.phone)}?text=${encodeURIComponent(`تقرير ${week.name} ما وصلني بعد.`)}`
-                                                : `https://wa.me/?text=${encodeURIComponent(`${r.user.name}: تقرير ${week.name} ما وصلني بعد.`)}`}>
-                                              ذكّره
-                                            </a>
-                                          </td>
-                                        )}
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                                <div className="text-[10.5px] text-slate-400 mt-2 px-1 leading-6">
-                                  اضغط اسم الموظف لتقرأ تقريره كاملًا وتربط ملاحظته بطالب.
-                                </div>
-                              </div>
+                              <ReportTable tbl={tbl}
+                                onRead={(r) => { setForm({ reportId: r.reportId, userId: r.user.id }); setModal('readReport'); }}
+                                remind={(r) => (r.user.phone
+                                  ? `https://wa.me/${waIntl(r.user.phone)}?text=${encodeURIComponent(`تقرير ${week.name} ما وصلني بعد.`)}`
+                                  : `https://wa.me/?text=${encodeURIComponent(`${r.user.name}: تقرير ${week.name} ما وصلني بعد.`)}`)}
+                                hint="اضغط اسم الموظف لتقرأ تقريره كاملًا وتربط ملاحظته بطالب." />
                             );
                           })()}
                         </div>
@@ -6978,8 +7051,8 @@ export default function App() {
                         return {
                           qiyami: qs, notes,
                           reports: roll && roll.total ? rollText(roll) : '',
-                          // وسطورُ الجدول تدخل الورقة: من كتب ماذا، لا كم عددُهم
-                          reportLines: isAdmin ? reportTableLines(reportTable(data, program.id, week.id, seesWeek)) : [],
+                          // والجدولُ نفسه يدخل الورقة: من كتب ماذا، لا كم عددُهم
+                          reportTable: isAdmin ? reportTable(data, program.id, week.id, seesWeek) : null,
                           summary: (names) => daySummary({
                             comps: runs?.competitions.length || 0, qiyami: qs, noteNames: notes, roll,
                           }, { names }),
@@ -8239,44 +8312,87 @@ export default function App() {
               <div className={emptyCls}>ما فيه طلاب بعد. أضفهم من تبويب «الطلاب».</div>
             ) : (
               <div className="space-y-2.5">
-                {khayr.students.map((st) => {
-                  const entry = khayrSession.entries?.[st.id];
-                  const before = carryBefore(st, khayrSession);
-                  const after = carryAfter(before, entry, st.wird?.hifz);
-                  return (
-                    <div key={st.id} className="bg-white rounded-2xl border border-slate-100 p-4 flex items-center gap-3">
-                      {/* يُفتح للمشاهد أيضًا: التفاصيل داخله، والمنع في النافذة لا في بابها */}
-                      <button className="flex-1 min-w-0 text-right"
-                        onClick={() => { setForm(khayrEntryForm(st, khayrSession)); setModal('khayrEntry'); }}>
-                        <span className="block font-bold text-slate-800">{st.name}</span>
-                        {/* موضعه يمشي معه: الشيخ ما يرجع للجلسة الماضية ليتذكّر وين وقف */}
-                        {!entry && stopText(stopsOf(st, khayr.sessions).hifz) && (
-                          <span className="block text-[11px] text-brand-700 font-semibold mt-0.5">
-                            وصل إلى: {stopText(stopsOf(st, khayr.sessions).hifz)}
-                          </span>
-                        )}
-                        <span className="block text-xs text-slate-400 mt-0.5">
-                          {!entry ? 'ما سُجّل بعد'
-                            : entry.present === false ? `غائب · حُمّل ${Number(entry.due || 0)} وجهًا`
-                              // `pagesOf` تجمع المدى الثاني، فالبطاقة تقول ما تقوله بقية الشاشات
-                              : PARTS.map((p) => `${p.label} ${pagesOf(entry, p.id)}`).join(' · ')}
-                        </span>
-                      </button>
-                      {entry && (
-                        <>
-                          <Badge tone={entry.present === false ? 'red' : after > before ? 'amber' : 'green'}>
-                            متراكم {after}
-                          </Badge>
-                          {editKhayr && (
-                            <button onClick={() => askConfirm(`مسح تسميع «${st.name}» في هذي الجلسة؟`, () => clearKhayrEntry(khayrSession.id, st.id))}
-                              className="text-slate-300 hover:text-red-500"><X size={16} /></button>
-                          )}
-                        </>
-                      )}
-                      {!entry && <ChevronLeft size={18} className="text-slate-300 shrink-0" />}
-                    </div>
-                  );
-                })}
+                {/*
+                  جدولٌ لا بطاقات.
+
+                  كانت البطاقةُ لكل طالب، فتقرأ أرقامَ الثلاثة في سطرٍ متّصل
+                  («مراجعة 11 · تثبيت 4 · حفظ 3») وتقارنها بغيرها بالعين. وطلب
+                  صاحبُ التطبيق جدولًا: الأعمدةُ فوق مرةً واحدة، والأسماءُ
+                  تحتها — فالعمودُ الواحد يُقرأ نازلًا، ويبين من قصّر في نظرة.
+                */}
+                <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+                  <table className="w-full text-right" style={{ tableLayout: 'fixed' }}>
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-400 text-[10.5px] font-extrabold">
+                        <th className="px-2 py-2" style={{ width: '30%' }}>الطالب</th>
+                        {PARTS.map((p) => (
+                          <th key={p.id} className="px-1 py-2 text-center" style={{ width: '14%' }}>{p.label}</th>
+                        ))}
+                        <th className="px-2 py-2" style={{ width: '28%' }}>الملاحظات</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {khayr.students.map((st) => {
+                        const entry = khayrSession.entries?.[st.id];
+                        const before = carryBefore(st, khayrSession);
+                        const after = carryAfter(before, entry, st.wird?.hifz);
+                        const note = String(entry?.note || '').trim();
+                        const stop = stopText(stopsOf(st, khayr.sessions).hifz);
+                        return (
+                          <tr key={st.id} className="border-t border-slate-50 align-middle">
+                            <td className="px-2 py-2 overflow-hidden">
+                              {/* يُفتح للمشاهد أيضًا: التفاصيل داخله، والمنع في النافذة لا في بابها */}
+                              <button className="text-right w-full"
+                                onClick={() => { setForm(khayrEntryForm(st, khayrSession)); setModal('khayrEntry'); }}>
+                                <span className="block text-[12.5px] font-extrabold text-slate-800 truncate underline decoration-slate-200 underline-offset-4">
+                                  {st.name}
+                                </span>
+                              </button>
+                              {/* والمتراكمُ تحت اسمه: دَينُ الحفظ يُعرف بنظرةٍ بلا فتح */}
+                              {entry && (
+                                <span className={`inline-block text-[9px] font-extrabold rounded px-1.5 py-px mt-1 ${
+                                  entry.present === false || after > before ? 'bg-red-50 text-red-700'
+                                    : after > 0 ? 'bg-amber-50 text-amber-700' : 'bg-green-50 text-green-700'}`}>
+                                  متراكم {after}
+                                </span>
+                              )}
+                            </td>
+                            {!entry ? (
+                              // ومن لم يُسجَّل بعدُ يُقال فيه ذلك: صفرٌ في خانته يُقرأ «حضر وما سمّع»
+                              <td colSpan={4} className="px-2 py-2 text-[11px] text-slate-300">
+                                ما سُجّل بعد{stop && <span className="text-brand-700 font-semibold"> · وصل إلى {stop}</span>}
+                              </td>
+                            ) : entry.present === false ? (
+                              <>
+                                <td colSpan={3} className="px-1 py-2 text-center text-[11.5px]">
+                                  <span className="text-red-700 font-extrabold">غائب</span>
+                                  {Number(entry.due || 0) > 0 && <span className="text-slate-300"> · حُمّل {Number(entry.due)}</span>}
+                                </td>
+                                <td className="px-2 py-2 text-[11.5px] text-slate-500 truncate">{note || <span className="text-slate-300">—</span>}</td>
+                              </>
+                            ) : (
+                              <>
+                                {PARTS.map((p) => {
+                                  // `pagesOf` تجمع المدى الثاني، فالجدول يقول ما تقوله بقية الشاشات
+                                  const n = pagesOf(entry, p.id);
+                                  return (
+                                    <td key={p.id} className={`px-1 py-2 text-center text-[13.5px] font-extrabold ${n ? 'text-slate-700' : 'text-slate-300'}`}>
+                                      {n || '—'}
+                                    </td>
+                                  );
+                                })}
+                                <td className="px-2 py-2 text-[11.5px] text-slate-500 truncate">{note || <span className="text-slate-300">—</span>}</td>
+                              </>
+                            )}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  <div className="text-[10.5px] text-slate-400 px-3 py-2 bg-slate-50/60 border-t border-slate-50 leading-6">
+                    الأرقام أوجهٌ سمّعها اليوم · والمتراكم دَينُ الحفظ. واضغط الاسم لتفتح تسميعه.
+                  </div>
+                </div>
                 {/*
                   تقريرُ الجلسة من الجلسة نفسها: الشيخ يُنهي التسميع وهو فيها،
                   فما يُخرجه يكون في يده لا في شاشةٍ أخرى يبحث عنها.
@@ -10233,7 +10349,12 @@ export default function App() {
                   <div className="bg-slate-50 rounded-xl px-3 py-2.5 text-[13.5px] text-slate-700 leading-8 whitespace-pre-wrap">
                     {val || '—'}
                   </div>
-                  {val.trim() && (
+                  {/*
+                    والربطُ للمدير وحده — صارت النافذةُ تُفتح لمن أُعطي «قراءة
+                    تقارير اليوم»، وما كُتب في سجلّ ولدٍ يبقى معه، فلا يكتبه
+                    إلا من يُسأل عنه.
+                  */}
+                  {val.trim() && isAdmin && (
                     <button className={btnGhostBox + ' w-full mt-2'}
                       onClick={() => setForm({ ...form, noteText: val, picked: [], error: '' }) || setModal('linkNote')}>
                       <Plus size={15} /> اربطها بطالب
@@ -11202,7 +11323,23 @@ export default function App() {
 
             </fieldset>
             {editKhayr
-              ? <div className="flex gap-2"><button className={btnPrimary + ' flex-1'} onClick={saveKhayrEntry}>حفظ التسميع</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
+              ? (
+                <>
+                  <div className="flex gap-2"><button className={btnPrimary + ' flex-1'} onClick={saveKhayrEntry}>حفظ التسميع</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
+                  {/*
+                    ومسحُ التسميع هنا بعد أن صارت الشاشةُ جدولًا: كان زرًّا
+                    في البطاقة، ولا يسع الجدولَ عمودٌ لأجله. وهو موضعُه
+                    الأصحّ: من فتح تسميعه هو من يمسحه.
+                  */}
+                  {khayrSession.entries?.[form.studentId] && (
+                    <button className="w-full text-[11.5px] font-bold text-red-400 hover:text-red-600 mt-3"
+                      onClick={() => askConfirm(`مسح تسميع «${st.name}» في هذي الجلسة؟`,
+                        () => { clearKhayrEntry(khayrSession.id, form.studentId); closeModal(); })}>
+                      امسح تسميعه في هذي الجلسة
+                    </button>
+                  )}
+                </>
+              )
               : (
                 <>
                   <div className="text-[11px] text-slate-400 text-center mb-3">للقراءة فقط.</div>
@@ -12812,7 +12949,7 @@ function WeekReport({ week, accounts, canMoney, programName, term, club, extra =
           school: L.school(week), faid: L.faid(week),
         } : null,
         club,
-        qiyami: qs, notes, reports: extra?.reports || '', reportLines: names ? (extra?.reportLines || []) : [],
+        qiyami: qs, notes, reports: extra?.reports || '', reportTable: names ? (extra?.reportTable || null) : null,
       }, { logo: LOGO_MARK_WHITE, team: TEAM_NAME, stamp: hijri(Date.now()) });
       const how = await shareFile(blob, sheetFileName(week.date), `تقرير ${week.name}`);
       setShared(how === 'downloaded' ? 'نزلت الورقة' : '');

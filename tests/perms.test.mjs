@@ -1,6 +1,6 @@
 /** قاعدة «من يقرأ ومن يكتب» — يقرأها الجوال والخادم معًا. */
 import assert from 'node:assert/strict';
-import { isAdmin, allowed, canWrite } from '../src/perms.js';
+import { isAdmin, allowed, canWrite, readsReports, READ_REPORTS } from '../src/perms.js';
 
 let passed = 0;
 const test = (name, fn) => { fn(); passed++; console.log('  ✓ ' + name); };
@@ -40,6 +40,29 @@ test('والقيد على صلاحيةٍ لا يمسّ أختها', () => {
 test('وبلا مستخدم لا شيء', () => {
   assert.equal(allowed(null, 'خيركم'), false);
   assert.equal(canWrite(undefined, 'خيركم'), false);
+});
+
+/* ------------------------ قراءة تقارير اليوم ------------------------ */
+
+test('ومن أُعطي «قراءة تقارير اليوم» قرأها، ومن لا فلا', () => {
+  assert.equal(readsReports({ role: 'مشرف برنامج', permissions: [READ_REPORTS] }), true);
+  assert.equal(readsReports({ role: 'مشرف برنامج', permissions: ['الأسابيع والحضور'] }), false);
+  assert.equal(readsReports(null), false);
+});
+
+/** وكتابةُ التقرير غيرُ قراءته: من يُطالَب بتقريره لا يرى تقارير زملائه. */
+test('وهي غيرُ كتابته — الواحدةُ لا تجرّ الأخرى', () => {
+  const writer = { role: 'مشرف برنامج', permissions: ['الأسابيع والحضور'] };
+  assert.equal(readsReports(writer), false, 'يكتب ولا يقرأ');
+  const reader = { role: 'مسجل حضور', permissions: [READ_REPORTS] };
+  assert.equal(readsReports(reader), true);
+  assert.equal(allowed(reader, 'الأسابيع والحضور'), false, 'يقرأ ولا تُفتح له البرامج');
+  assert.equal(allowed(reader, 'أولياء الأمور'), false);
+  assert.equal(allowed(reader, 'فيض - الإيرادات والمصروفات'), false);
+});
+
+test('والمديرُ يقرؤها بلا إعطاء — هو من يسأل عنها', () => {
+  assert.equal(readsReports(admin), true);
 });
 
 console.log(`\n✅ ${passed} اختبارًا للصلاحيات — يقرأ ولا يكتب`);

@@ -24,3 +24,15 @@ export const allowed = (u, perm) => isAdmin(u) || (u?.permissions || []).include
  */
 export const canWrite = (u, perm) =>
   allowed(u, perm) && (isAdmin(u) || !(u?.readOnly || []).includes(perm));
+
+/**
+ * صلاحيةُ قراءة تقارير اليوم.
+ *
+ * غيرُ كتابتها: من يقف مع الأولاد يُطالَب بتقريره (`mustReport`)، وهذي تُعطى
+ * لمن تريد أن يقرأ ما كتبه الفريق — نائبُك أو مسؤولُ الجودة. ولا تفتح له
+ * شيئًا غيرها: لا برامجَ ولا مشتركين ولا مالًا.
+ *
+ * والمديرُ يقرؤها بلا إعطاء، فهو من يسأل عنها أصلًا.
+ */
+export const READ_REPORTS = 'قراءة تقارير اليوم';
+export const readsReports = (u) => allowed(u, READ_REPORTS);

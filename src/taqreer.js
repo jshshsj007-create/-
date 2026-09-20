@@ -258,19 +258,6 @@ export const reportTable = (data, programId, weekId, sees, { cut = 42 } = {}) =>
   return { fields, rows, roll };
 };
 
-/**
- * وسطورُه في الورقة: اسمٌ ثم ما كتبه في كل خانة.
- *
- * و«لا يوجد» تسقط: على الشاشة تُرمَّد فيمرّ عليها البصر، وفي الورقة تُقرأ
- * كأنها خبر. والورقةُ تقول ما جرى، لا ما لم يجرِ.
- */
-const NONE = /^لا\s*يوجد$/;
-export const reportTableLines = (table) => (table?.rows || []).map((r) => {
-  if (!r.wrote) return `${r.user.name} — ما كتب تقريره`;
-  const said = (r.cells || []).filter((c) => c.text && !NONE.test(c.text.trim())).map((c) => c.text).join(' · ');
-  return `${r.user.name} — ${said || '—'}`;
-});
-
 /** «٣ من ٥» — وبالأرقام اللاتينية لأن بقيّة التطبيق كذلك. */
 export const rollText = (roll) => `${roll.done.length} من ${roll.total}`;
 

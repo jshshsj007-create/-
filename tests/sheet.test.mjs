@@ -184,6 +184,63 @@ test('ولا يُرجَع فارغًا بلا أقسام', () => {
   assert.deepEqual(paginate(null, 800), [[]]);
 });
 
+/* ------------------------------ جدول التقارير ------------------------------ */
+
+const tbl = {
+  fields: [{ id: 'comp', label: 'المسابقة' }, { id: 'league', label: 'الدوري' }],
+  rows: [
+    { user: { id: 'b', name: 'عبدالله' }, wrote: true,
+      cells: [{ text: 'أقمنا الكنز…', full: 'أقمنا الكنز المفقود بعد الفسحة' }, { text: 'لا يوجد', full: 'لا يوجد' }] },
+    { user: { id: 'c', name: 'سعود' }, wrote: false, cells: [] },
+  ],
+};
+
+test('صندوق التقارير يصير جدولًا بأعمدة التقرير نفسها', () => {
+  const s = sheetSections({ reports: '1 من 2', reportTable: tbl });
+  const box = s.find((x) => x.title === 'تقارير الموظفين');
+  assert.deepEqual(box.cols.map((c) => c.label), ['الموظف', 'المسابقة', 'الدوري']);
+  assert.equal(box.rows[0][1], '1 من 2', 'والعدّاد فوقه كما كان');
+  assert.equal(box.grid.length, 2);
+});
+
+test('وتأخذ الخليّة نصَّ صاحبها كاملًا لا مقتطعًا — الورقة أوسع من الجوّال', () => {
+  const box = sheetSections({ reportTable: tbl }).find((x) => x.title === 'تقارير الموظفين');
+  assert.equal(box.grid[0][1].t, 'أقمنا الكنز المفقود بعد الفسحة');
+  assert.ok(!box.grid[0][1].t.includes('…'));
+});
+
+test('ومن لم يكتب يمتدّ سطرُه على الأعمدة', () => {
+  const box = sheetSections({ reportTable: tbl }).find((x) => x.title === 'تقارير الموظفين');
+  assert.equal(box.grid[1][0].t, 'سعود');
+  assert.equal(box.grid[1][1].t, 'ما كتب تقريره');
+  assert.equal(box.grid[1][1].span, 2, 'يمتدّ على الخانتين');
+});
+
+test('و«لا يوجد» تُرمَّد ولا تُمحى — قالها فيُكتب أنه قالها', () => {
+  const box = sheetSections({ reportTable: tbl }).find((x) => x.title === 'تقارير الموظفين');
+  assert.equal(box.grid[0][2].t, 'لا يوجد');
+  assert.equal(box.grid[0][2].dim, true);
+});
+
+test('وبلا جدولٍ يبقى العدّاد وحده، وبلا الاثنين لا صندوق', () => {
+  const only = sheetSections({ reports: '3 من 5' }).find((x) => x.title === 'تقارير الموظفين');
+  assert.equal(only.rows[0][1], '3 من 5');
+  assert.equal(only.grid, undefined);
+  assert.equal(sheetSections({ students: 3 }).length, 1);
+});
+
+/** والجدولُ يُقاس مع ترويسته: صفٌّ زائدٌ في كل صفحة. */
+test('والجدول الطويل يُشقّ، وترويستُه تُعاد فوق تتمّته', () => {
+  const grid = Array.from({ length: 40 }, (_, i) => [{ t: 'طالب ' + (i + 1) }, { t: String(i) }]);
+  const cols = [{ label: 'الطالب', w: 60 }, { label: 'حفظ', w: 40 }];
+  const pages = paginate([{ title: 'الطلاب', cols, grid }], 700);
+  assert.ok(pages.length > 1, 'انقسم');
+  assert.equal(pages[1][0].title, 'الطلاب — تتمة');
+  assert.deepEqual(pages[1][0].cols, cols, 'والأعمدة معه، فما تُقرأ أرقامٌ بلا عناوين');
+  const all = pages.flatMap((pg) => pg.flatMap((sec) => sec.grid || []));
+  assert.equal(all.length, 40, 'ولا يسقط صفّ');
+});
+
 /* ------------------------------ شقّ السطر ------------------------------ */
 
 /** قياسٌ مصطنع: كل حرفٍ عشرة — يكفي لاختبار المنطق بلا كانفاس. */

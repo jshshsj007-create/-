@@ -9,7 +9,7 @@
  */
 import { getStore } from '@netlify/blobs';
 import crypto from 'node:crypto';
-import { isAdmin, allowed, canWrite } from '../../src/perms.js';
+import { isAdmin, allowed, canWrite, readsReports } from '../../src/perms.js';
 import { programFor, publicView, validateSubmission, applySubmission, normalizeSubmission, rateLimited, waIntl, isReceipt, closureOf, makeToken as makeSignupToken } from '../../src/signup.js';
 import { questionView, validateAnswer, applyAnswer, answersRateLimited, makeDrawMany, applyDrawMany, drawWinnersNow } from '../../src/club.js';
 import { dedupeByPhone, remapParticipants } from '../../src/people.js';
@@ -418,8 +418,14 @@ const strip = (data, me) => {
    *
    * لأن فيها ملاحظاتٍ على أولاد بأسمائهم، وكاتبُها كتبها لمن يطالبه بها لا
    * لزملائه. والمديرُ يقرأ الجميع، فهو من يسأل عنها.
+   *
+   * ومن أُعطي «قراءة تقارير اليوم» يقرؤها كذلك: نائبُ المدير ومسؤولُ الجودة
+   * يُسألان عمّا جرى في اليوم. وهي صلاحيةُ قراءةٍ وحدها — الكتابةُ يردّها
+   * `guard` تحت، فلا يعدّل أحدٌ تقرير غيره.
    */
-  if (!isAdmin(me)) out.dayReports = (data?.dayReports || []).filter((r) => r.userId === me?.id);
+  if (!isAdmin(me) && !readsReports(me)) {
+    out.dayReports = (data?.dayReports || []).filter((r) => r.userId === me?.id);
+  }
   /**
    * صندوق المحذوفات يحمل سجلات كاملة — أهالي وطلابًا وتسميعًا. لو أرسلناه
    * للكل، صار بابًا خلفيًا يتجاوز كل ما حجبناه فوق. فهو للمدير وحده،

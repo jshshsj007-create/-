@@ -136,7 +136,7 @@ const loadImage = (src) => new Promise((resolve) => {
  * ويُطوى ما غاب: من لا صلاحية له في المال لا يرى قسمًا فارغًا، ومن لم يُقم
  * شيئًا من النادي لا يرى عنوانه.
  */
-export const sheetSections = ({ students, present, enrolled, money, club, qiyami, notes, reports, reportLines } = {}) => {
+export const sheetSections = ({ students, present, enrolled, money, club, qiyami, notes, reports, reportTable } = {}) => {
   const out = [];
   const who = [];
   if (students != null) who.push(['الطلاب المسجلون', fmt(students)]);
@@ -182,15 +182,30 @@ export const sheetSections = ({ students, present, enrolled, money, club, qiyami
   }
 
   /*
-    تقارير الموظفين: العدّاد ثم سطرٌ لكل واحدٍ بما كتبه — فالورقة تقول من
-    عمل ماذا، لا كم عددُ من كتب.
+    تقارير الموظفين: العدّاد ثم جدولُ «من كتب ماذا» بأعمدة التقرير نفسها.
+
+    وكانت سطورًا يُرصّ فيها ما كتبه الواحدُ متّصلًا، فلا يُعرف أين انتهت
+    خانةٌ وبدأت أخرى. والورقةُ واسعةٌ فيُكتب النصُّ كاملًا، بلا الاقتطاع
+    الذي تفرضه شاشةُ الجوّال.
   */
-  const rl = (reportLines || []).map((x) => clean(x)).filter(Boolean);
-  if (reports || rl.length) {
+  const fields = reportTable?.fields || [];
+  const trows = reportTable?.rows || [];
+  if (reports || trows.length) {
+    const share = fields.length ? Math.floor(74 / fields.length) : 74;
     out.push({
       title: 'تقارير الموظفين',
       ...(reports ? { rows: [['كتبوا تقرير اليوم', clean(reports), true]] } : {}),
-      ...(rl.length ? { lines: rl } : {}),
+      ...(trows.length && fields.length ? {
+        cols: [{ label: 'الموظف', w: 26 }, ...fields.map((f) => ({ label: f.label, w: share }))],
+        grid: trows.map((r) => {
+          const name = { t: r.user?.name || '', strong: true };
+          if (!r.wrote) return [name, { t: 'ما كتب تقريره', span: fields.length, dim: true }];
+          return [name, ...fields.map((f, i) => {
+            const v = clean(r.cells?.[i]?.full);
+            return { t: v || '—', dim: !v || /^لا\s*يوجد$/.test(v) };
+          })];
+        }),
+      } : {}),
     });
   }
   return out;
@@ -220,8 +235,29 @@ export const wrapLine = (measure, s, max) => {
   if (cur) out.push(cur);
   return out.map((t, i) => ({ t, cont: i > 0 }));
 };
+/**
+ * جدولٌ في الورقة: أعمدةٌ فوق مرةً واحدة، وصفوفٌ تحتها.
+ *
+ * والورقةُ أولى به من الشاشة: عرضُها A4 يسع خمسةَ أعمدةٍ مرتاحةً، فيُقرأ
+ * العمودُ نازلًا ويبين من قصّر في نظرة. وكانت الأسماءُ سطورًا بنقاطٍ
+ * يلتفّ الواحد منها على سطرين، فلا يُقارَن رقمٌ برقم.
+ *
+ * `cols` أعمدةٌ بنسبها: `{ label, w, align }`. و`grid` صفوفُها، والخليّة
+ * نصٌّ أو `{ t, span, align, dim }`.
+ */
+const GRID_H = 46;
+/**
+ * ارتفاعُ صفّ الجدول.
+ *
+ * والصفُّ يعلو بما فيه: تقريرُ الموظف سطرانِ أو ثلاثة، فلو قُصّ ليسع سطرًا
+ * واحدًا ضاع نصفُ خبره — والورقةُ تُرسل لمجلس الإدارة لتُقرأ لا لتُعدّ.
+ * و`_h` يُحسب في `paperSheet` بعد قياس الكانفاس، ويُقرأ هنا وفي التقسيم.
+ */
+const rowH = (row) => Math.max(1, Number(row?._h) || 1) * GRID_H;
+const gridHeight = (grid) => (grid || []).reduce((a, r) => a + rowH(r), GRID_H);
 const secHeight = (sec) => HEAD_H + (sec.rows?.length || 0) * ROW_H
-  + (sec.lines?.length || 0) * LINE_H + TAIL + GAP;
+  + (sec.lines?.length || 0) * LINE_H
+  + (sec.grid ? gridHeight(sec.grid) : 0) + TAIL + GAP;
 
 /**
  * تقسيمُ الأقسام على صفحات.
@@ -234,28 +270,42 @@ export const paginate = (sections, room) => {
   let page = [], left = room;
   const flush = () => { if (page.length) pages.push(page); page = []; left = room; };
   for (const sec of sections || []) {
-    let rows = sec.rows || [], lines = sec.lines || [], first = true;
+    let rows = sec.rows || [], lines = sec.lines || [], grid = sec.grid || null, first = true;
     for (;;) {
-      const need = HEAD_H + rows.length * ROW_H + lines.length * LINE_H + TAIL + GAP;
+      const gridH = grid ? gridHeight(grid) : 0;
+      const need = HEAD_H + rows.length * ROW_H + lines.length * LINE_H + gridH + TAIL + GAP;
       if (need <= left) {
-        page.push({ ...sec, rows, lines, title: first ? sec.title : `${sec.title} — تتمة` });
+        page.push({ ...sec, rows, lines, ...(grid ? { grid } : {}), title: first ? sec.title : `${sec.title} — تتمة` });
         left -= need;
         break;
       }
       // كم صفًّا يسع بعد العنوان والذيل؟
       const body = left - HEAD_H - TAIL - GAP;
       const fitRows = Math.max(0, Math.min(rows.length, Math.floor(body / ROW_H)));
-      const after = body - fitRows * ROW_H;
+      let after = body - fitRows * ROW_H;
       const fitLines = Math.max(0, Math.min(lines.length, Math.floor(after / LINE_H)));
+      after -= fitLines * LINE_H;
+      /*
+        وصفُّ الترويسة يُحسب مع الجدول في كل صفحة: تُعاد فوق التتمّة، وإلا
+        قرأ من قلب الورقةَ أرقامًا بلا عناوين.
+      */
+      let fitGrid = 0;
+      if (grid) {
+        let room2 = after - GRID_H;   // صفُّ الترويسة أولًا
+        for (const r of grid) { if (room2 < rowH(r)) break; room2 -= rowH(r); fitGrid++; }
+      }
       // ما يسع سطرين على الأقل لا يستحقّ صفحةً مشقوقة — نبدأ صفحةً جديدة
-      if (fitRows + fitLines < 2) { flush(); continue; }
+      if (fitRows + fitLines + fitGrid < 2) { flush(); continue; }
       page.push({
         ...sec, rows: rows.slice(0, fitRows), lines: lines.slice(0, fitLines),
+        ...(grid ? { grid: grid.slice(0, fitGrid) } : {}),
         title: first ? sec.title : `${sec.title} — تتمة`,
       });
-      rows = rows.slice(fitRows); lines = lines.slice(fitLines); first = false;
+      rows = rows.slice(fitRows); lines = lines.slice(fitLines);
+      if (grid) grid = grid.slice(fitGrid);
+      first = false;
       flush();
-      if (!rows.length && !lines.length) break;
+      if (!rows.length && !lines.length && !(grid && grid.length)) break;
     }
   }
   flush();
@@ -334,10 +384,28 @@ export const paperSheet = async ({ team: teamName, sub = '', title = '', date = 
     // والخطُّ يضيق أبطأ من المسافة: الفراغ يُختصر قبل الحرف
     const F = (v) => Math.round(v * Math.max(0.84, shrink));
 
+    /**
+     * قصُّ النصّ ليسع خليّته — للعناوين وحدها.
+     *
+     * والوزنُ يدخل القياس: الغليظُ أعرضُ من الرفيع، فلو قِسنا بالرفيع ورسمنا
+     * بالغليظ خرج العنوانُ عن عموده ودخل في جاره. وقعت في «الطلاب —
+     * ملاحظات سلوكية» على الورقة.
+     */
+    const clip = (s, max, size, weight = 400) => {
+      c.font = `${weight} ${size}px ${FONT}`;
+      let t = clean(s);
+      if (!t || c.measureText(t).width <= max) return t;
+      while (t.length > 1 && c.measureText(`${t}…`).width > max) t = t.slice(0, -1);
+      return `${t}…`;
+    };
+
     for (const sec of secs) {
       const rows = sec.rows || [];
       const lines = sec.lines || [];
-      const h = S(HEAD_H) + rows.length * S(ROW_H) + lines.length * S(LINE_H) + S(TAIL);
+      const grid = sec.grid || null;
+      const cols = sec.cols || [];
+      const h = S(HEAD_H) + rows.length * S(ROW_H) + lines.length * S(LINE_H)
+        + (grid ? gridHeight(grid) / GRID_H * S(GRID_H) : 0) + S(TAIL);
       box(PAD, y, PAGE.w - PAD * 2, h, 22, '#f8fafc', '#e8eef6');
       text(sec.title, PAGE.w - PAD - 32, y + S(42), { size: F(27), weight: 800, color: NAVY });
       let ry = y + S(HEAD_H);
@@ -352,6 +420,65 @@ export const paperSheet = async ({ team: teamName, sub = '', title = '', date = 
         text(cont ? t : `• ${t}`, PAGE.w - PAD - 32 - (cont ? 26 : 0), ry + S(LINE_H) / 2,
           { size: F(24), color: cont ? '#475569' : '#334155' });
         ry += S(LINE_H);
+      }
+      /* الجدول: ترويسةٌ ثم صفوف */
+      if (grid) {
+        const left = PAD + 28;
+        const right = PAGE.w - PAD - 28;
+        const wide = right - left;
+        const total = cols.reduce((a, col) => a + (Number(col.w) || 0), 0) || 1;
+        // مواضعُ الأعمدة من اليمين: الأولُ أيمنُها، كما تُقرأ
+        const edges = [];
+        let at = right;
+        for (const col of cols) { const w = (Number(col.w) || 0) / total * wide; edges.push({ col, r: at, w }); at -= w; }
+        /** خليّةٌ بسطرٍ أو أكثر، تُرسم من وسط صفّها فتستوي الأسطرُ حوله. */
+        const cell = (it, e, size, top, tall) => {
+          const span = Math.max(1, Number(it.span) || 1);
+          // الخليّةُ الممتدّة تأخذ عرضَ ما تحتها من أعمدة («غائب» يمتدّ على الثلاثة)
+          const i = edges.indexOf(e);
+          const w = edges.slice(i, i + span).reduce((a, x) => a + x.w, 0);
+          const align = it.align || e.col.align || 'right';
+          const pad = 10;
+          const rows2 = it.lines || [clip(it.t, w - pad * 2, size, it.strong ? 800 : 400)];
+          const x = align === 'center' ? e.r - w / 2 : align === 'left' ? e.r - w + pad : e.r - pad;
+          const lead = S(GRID_H);
+          // الأسطرُ في وسط ارتفاع الصفّ، فالرقمُ يحاذي أولَ سطرٍ من جاره الطويل
+          const start = top + (tall * lead - rows2.length * lead) / 2 + lead / 2;
+          rows2.forEach((t, k) => {
+            if (!t) return;
+            text(t, x, start + k * lead, {
+              size, align: align === 'center' ? 'center' : align === 'left' ? 'left' : 'right',
+              color: it.dim ? '#94a3b8' : (it.strong ? '#0f172a' : '#334155'),
+              weight: it.strong ? 800 : 400,
+            });
+          });
+        };
+        // ترويسةٌ رماديّة، وتحتها خطّ
+        const hy = ry;
+        box(left, hy, wide, S(GRID_H), 0, '#eef2f7', '');
+        edges.forEach((e) => cell({ t: e.col.label, align: e.col.align, dim: true, strong: true },
+          e, F(20), hy, 1));
+        ry += S(GRID_H);
+        for (const line of grid) {
+          const tall = Math.max(1, Number(line._h) || 1);
+          let skip = 0;
+          edges.forEach((e, i) => {
+            if (skip > 0) { skip--; return; }
+            const v = line[i];
+            if (v === undefined || v === null) return;
+            const it = typeof v === 'string' || typeof v === 'number' ? { t: String(v) } : v;
+            skip = Math.max(1, Number(it.span) || 1) - 1;
+            cell(it, e, F(23), ry, tall);
+          });
+          ry += tall * S(GRID_H);
+          // فاصلٌ رفيع بين الصفوف — يُقرأ العمودُ نازلًا بلا أن تتوه العين
+          c.strokeStyle = '#e8eef6';
+          c.lineWidth = 1;
+          c.beginPath();
+          c.moveTo(left, ry);
+          c.lineTo(right, ry);
+          c.stroke();
+        }
       }
       y += h + S(GAP);
     }
@@ -384,9 +511,41 @@ export const paperSheet = async ({ team: teamName, sub = '', title = '', date = 
   meas.direction = 'rtl';
   const maxLine = PAGE.w - PAD * 2 - 64 - 26;
   const width = (s) => meas.measureText(s).width;
-  const wrapped = (sections || []).map((sec) => (sec.lines?.length
-    ? { ...sec, lines: sec.lines.flatMap((l) => wrapLine(width, l, maxLine)) }
-    : sec));
+  /**
+   * وخلايا الجدول تُلفّ كذلك، فيعلو الصفُّ بما فيه.
+   *
+   * ثلاثةُ أسطرٍ حدٌّ: ما زاد عليها تقريرٌ لا خليّة، وصفٌّ بعشرة أسطرٍ يبتلع
+   * الصفحة ويُفقد الجدولَ شكلَه — فيُقصّ عندها وحدها.
+   */
+  const CELL_MAX = 3;
+  const inner = PAGE.w - PAD * 2 - 56;
+  const fitGridCells = (sec) => {
+    const cols = sec.cols || [];
+    const total = cols.reduce((a, col) => a + (Number(col.w) || 0), 0) || 1;
+    const widths = cols.map((col) => (Number(col.w) || 0) / total * inner);
+    meas.font = `400 23px ${FONT}`;
+    const grid = sec.grid.map((row) => {
+      let tall = 1;
+      const out = row.map((v, i) => {
+        if (v === undefined || v === null) return v;
+        const it = typeof v === 'string' || typeof v === 'number' ? { t: String(v) } : v;
+        const span = Math.max(1, Number(it.span) || 1);
+        const w = widths.slice(i, i + span).reduce((a, x) => a + x, 0) - 20;
+        const parts = wrapLine(width, it.t, w).map((x) => x.t).slice(0, CELL_MAX);
+        tall = Math.max(tall, parts.length || 1);
+        return { ...it, lines: parts.length ? parts : [''] };
+      });
+      out._h = tall;
+      return out;
+    });
+    return { ...sec, grid };
+  };
+  const wrapped = (sections || []).map((sec) => {
+    let s = sec;
+    if (s.lines?.length) s = { ...s, lines: s.lines.flatMap((l) => wrapLine(width, l, maxLine)) };
+    if (s.grid?.length && s.cols?.length) s = fitGridCells(s);
+    return s;
+  });
   const pages = fit ? [wrapped] : paginate(wrapped, room);
   const shots = [];
   for (let k = 0; k < pages.length; k++) shots.push(await drawPage(pages[k], k, pages.length));

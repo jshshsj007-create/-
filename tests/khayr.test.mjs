@@ -243,19 +243,26 @@ test('المختصر: أعدادٌ ونسبة، وأسماءٌ في موضعين
   assert.deepEqual(b.owing.map((x) => x.name), ['فهد'], 'ومن عليه متراكم وحده');
 });
 
-test('وأقسام الورقة: المختصر بلا قائمة الطلاب، والكامل بها', () => {
+test('وأقسام الورقة: المختصر بلا جدول الطلاب، والكامل به', () => {
   const brief = khayrSeasonSections(seasonRows, { sessions: 5, brief: true });
   const full = khayrSeasonSections(seasonRows, { sessions: 5, brief: false });
-  assert.ok(!brief.some((s) => s.title === 'الطلاب'));
-  assert.ok(full.some((s) => s.title === 'الطلاب'));
-  assert.equal(full.at(-1).lines.length, 2);
-  assert.ok(full.at(-1).lines[1].includes('متراكم'));
+  assert.ok(!brief.some((s) => s.title === 'الطلاب'), 'المختصر يُرفع للمجلس، فلا أسماءَ فيه إلا موضعيهما');
+  const box = full.at(-1);
+  assert.equal(box.title, 'الطلاب');
+  assert.deepEqual(box.cols.map((c) => c.label), ['الطالب', 'حضور', 'غياب', 'مراجعة', 'تثبيت', 'حفظ', 'متراكم']);
+  assert.equal(box.grid.length, 2);
+  assert.equal(box.grid[0][0].t, 'سعد');
 });
 
-test('وورقةُ الجلسة فيها الحضور وما سُمِّع والمجموع', () => {
+test('وورقةُ الجلسة جدولٌ: الأقسام الثلاثة ثم الملاحظة', () => {
   const secs = khayrSessionSections(sessionRows(sStudents, oneSession));
   assert.deepEqual(secs.map((s) => s.title), ['الحضور', 'ما سُمِّع', 'المجموع']);
-  assert.ok(secs[1].lines.some((l) => l.includes('تركي — ما سُجّل')));
+  const box = secs[1];
+  assert.deepEqual(box.cols.map((c) => c.label), ['الطالب', 'مراجعة', 'تثبيت', 'حفظ', 'الملاحظات']);
+  // ومن لم يُسجَّل يمتدّ سطرُه، فما يُقرأ صفرًا كأنه حضر وما سمّع
+  const na = box.grid.find((g) => g[0].t === 'تركي');
+  assert.equal(na[1].t, 'ما سُجّل بعد');
+  assert.equal(na[1].span, 4);
 });
 
 console.log(`\n✅ ${passed} اختبارًا لخيركم\n`);

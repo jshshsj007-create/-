@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import {
   defaultReportFields, reportFields, allReportFields, fieldValue,
   emptyReport, missingParts, reportReady, submitLabel, replyOf,
-  reportOf, dayReports, mustReport, reportRoll, rollText, reportTable, reportTableLines,
+  reportOf, dayReports, mustReport, reportRoll, rollText, reportTable,
   hijriKey, sameDate, dayNow, dateRank, owedDays,
   noteOn, notesOn, notesOfDay, noteNames,
   NOTICE_SPANS, noticeLive, hasRead, noticesFor, markRead, readTally,
@@ -202,19 +202,11 @@ test('وإن حُذفت خانةٌ سقط عمودُها', () => {
   assert.equal(t.rows[0].cells.length, 2);
 });
 
-test('وسطورُ الورقة: من كتب ماذا، ومن لم يكتب يُقال فيه', () => {
-  const lines = reportTableLines(reportTable(tblData, 'p1', 'w1', null, { cut: 100 }));
-  assert.equal(lines[0], 'عبدالله — أقمنا الكنز المفقود بعد الفسحة، وحضره أربعةٌ وعشرون طالبًا · سعد تأخّر');
-  assert.ok(!lines[0].includes('لا يوجد'), 'و«لا يوجد» ما تدخل الورقة');
-  assert.equal(lines[1], 'سعود — ما كتب تقريره');
-});
-
-test('ومن كتب «لا يوجد» في كلّها لا يبقى سطرُه فارغًا', () => {
-  const lines = reportTableLines(reportTable({
-    ...tblData,
-    dayReports: [{ id: 'r9', userId: 'b', programId: 'p1', weekId: 'w1', values: { comp: 'لا يوجد', league: 'لا يوجد', notes: 'لا يوجد' } }],
-  }, 'p1', 'w1'));
-  assert.equal(lines[0], 'عبدالله — —');
+test('والنصُّ الكاملُ يمشي مع المقتطع، فالورقةُ تأخذه بلا قصّ', () => {
+  const t = reportTable(tblData, 'p1', 'w1', null, { cut: 20 });
+  assert.notEqual(t.rows[0].cells[0].text, t.rows[0].cells[0].full);
+  assert.equal(t.rows[0].cells[0].full, tblData.dayReports[0].values.comp);
+  assert.equal(t.rows[0].cells[2].full, 'سعد تأخّر');
 });
 
 /* -------------------------------- يوم البرنامج -------------------------------- */
