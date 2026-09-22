@@ -130,6 +130,34 @@ export const enablePush = async ({ key, send }) => {
   }
 };
 
+/**
+ * إصلاحُ اشتراكٍ ضاع وإذنُه قائم.
+ *
+ * الإذنُ يبقى في المتصفّح ولو ذهب الاشتراك — وذهابُه يقع: يُلغى عاملُ
+ * الخدمة (كنّا نفعلها في «تحديث»)، أو يُبطل المتصفّحُ الاشتراكَ من نفسه بعد
+ * طول هجر. فيُعاد هنا بلا سؤالٍ ولا ضغطة: `requestPermission` لا يُستدعى،
+ * والمتصفّح لا يعرض شيئًا لمن أَذِن مرة.
+ *
+ * ولا يُعاد لمن لم يأذن، ولا لمن منع: ذاك قرارُه، ولا يُلتفّ عليه.
+ */
+export const healPush = async ({ key, send }) => {
+  const env = readEnv();
+  if (!env.supported || env.permission !== 'granted') return false;
+  if (await currentSub()) return false;
+  const reg = await swReady();
+  if (!reg) return false;
+  try {
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: b64ToBytes(key),
+    });
+    await send(sub.toJSON());
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 /** الإيقاف: يشيل هذا الجهاز وحده. */
 export const disablePush = async ({ send }) => {
   const sub = await currentSub();

@@ -46,7 +46,7 @@ import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 import PdfFirstPage from './pdfview.jsx';
 import { say } from './adad.js';
 import { weekReport } from './report.js';
-import { pushStatus, PUSH_TEXTS, HOME_STEPS, readEnv, currentSub, enablePush, disablePush } from './notify.js';
+import { pushStatus, PUSH_TEXTS, HOME_STEPS, readEnv, currentSub, enablePush, disablePush, healPush } from './notify.js';
 import {
   defaultReportFields, reportFields, allReportFields, fieldValue, replyOf,
   emptyReport, missingParts, reportReady, submitLabel, reportOf, dayReports,
@@ -64,8 +64,8 @@ const ROUND_ORD = ['الأولى', 'الثانية', 'الثالثة', 'الرا
 /** أرقام خانات التقرير — عربيةٌ كما يقرؤها صاحبها. */
 const ORDINALS_N = ['١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩', '١٠'];
 /** يظهر في شاشة البداية والإعدادات: يعرّفك أي نسخة تشوف. */
-/** رقم مجرّد بلا وصف: الموظف يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
-const APP_VERSION = 'v9.3';
+/** رقم مجرّد بلا وصف: القائد يعرف أي نسخة عنده، وما يعرف وش تغيّر فيها. */
+const APP_VERSION = 'v9.4';
 const PERMS = ['البرامج', 'الأسابيع والحضور', 'المصروفات والتقارير', 'فيض - الإيرادات والمصروفات',
   'النادي', 'القيمي', READ_REPORTS, 'خيركم', 'السفرات', 'أولياء الأمور', 'المستخدمون والصلاحيات'];
 /** الصلاحية كانت باسم «الإعداد (المسابقات)» ثم اتّسعت للنادي كله. */
@@ -532,7 +532,7 @@ const defaultData = () => ({
    * يُخفى في الشاشة بل لا يُرسل من الخادم أصلًا لمن لا يملكها.
    */
   qiyami: [],
-  /** تقرير كل موظفٍ عن يومه: ثلاث خانات، ومن كتبها ومتى. */
+  /** تقرير كل قائدٍ عن يومه: ثلاث خانات، ومن كتبها ومتى. */
   dayReports: [],
   /** ملاحظةٌ على طالبٍ بعينه — يربطها المديرُ من التقرير فتدخل سجلّه. */
   studentNotes: [],
@@ -952,7 +952,7 @@ function ReportTable({ tbl, onRead, remind, hint }) {
         <thead>
           <tr className="bg-slate-50">
             <th className="px-2.5 py-2 text-[10.5px] font-extrabold text-slate-400 whitespace-nowrap"
-              style={wide ? undefined : { width: '30%' }}>الموظف</th>
+              style={wide ? undefined : { width: '30%' }}>القائد</th>
             {tbl.fields.map((f) => (
               <th key={f.id} className="px-2.5 py-2 text-[10.5px] font-extrabold text-slate-400 whitespace-nowrap overflow-hidden text-ellipsis"
                 style={wide ? undefined : { width: `${col}%` }}>{f.label}</th>
@@ -996,7 +996,7 @@ function ReportTable({ tbl, onRead, remind, hint }) {
         </tbody>
       </table>
       <div className="text-[10.5px] text-slate-400 mt-2 px-1 leading-6">
-        {hint || 'اضغط اسم الموظف لتقرأ تقريره كاملًا.'}
+        {hint || 'اضغط اسم القائد لتقرأ تقريره كاملًا.'}
       </div>
     </div>
   );
@@ -1385,7 +1385,7 @@ function SupervisorPicker({ users, value = [], helper = '', onChange, onHelper, 
               {u.name}{on(u.id) ? ' ✕' : ''}
             </button>
           ))}
-          {!staff.length && <span className="text-xs text-slate-400">ما فيه حسابات موظفين بعد.</span>}
+          {!staff.length && <span className="text-xs text-slate-400">ما فيه حسابات قادة بعد.</span>}
         </div>
       </Field>
       <Field label="ومن ساعدهم وليس له حساب — اختياري" hint="يظهر اسمه في السجلّ والورقة، ولا يُطالَب بتقرير.">
@@ -1629,7 +1629,7 @@ export default function App() {
   const [faidFilter, setFaidFilter] = useState('الكل'); // فلترة عمليات فيض حسب النوع
   const [faidScope, setFaidScope] = useState('term');    // موسمك، كل المواسم، أو بلا موسم
   const [unpaidScope, setUnpaidScope] = useState('term'); // «ما دفع»: هذا الموسم أو كلها
-  const [scopeOpen, setScopeOpen] = useState([]);        // البرامج المفتوحة في قائمة أيام الموظف
+  const [scopeOpen, setScopeOpen] = useState([]);        // البرامج المفتوحة في قائمة أيام القائد
   const [scopeQuery, setScopeQuery] = useState('');
   const [scopeOld, setScopeOld] = useState(false);       // يعرض مواسم سابقة كذلك
   const [faidTab, setFaidTab] = useState('txns');        // العمليات أو التحليل
@@ -1718,6 +1718,31 @@ export default function App() {
   const queueRef = useRef(null);  // آخر حالة تنتظر الحفظ
   const busyRef = useRef(false);
   const cloudOn = cloudMode === 'cloud';
+
+  /**
+   * إصلاحُ اشتراكٍ ضاع وإذنُه قائم — بلا ضغطةٍ من صاحبه.
+   *
+   * كان «تحديث» يُلغي عاملَ الخدمة فيموت الاشتراكُ معه، فيعود القائدُ يجد
+   * «فعّلها» بعد كلّ نشرة. أُصلح المصدرُ في `hardReload`، وهذا يُصلح من
+   * انكسر عنده قبلَ الإصلاح: يُعاد اشتراكُه أولَ ما يفتح التطبيق.
+   *
+   * ولا يُسأل ولا يُزعَج: من أَذِن مرةً لا يعرض له المتصفّح شيئًا، ومن لم
+   * يأذن أو منع لا يُمسّ قرارُه.
+   */
+  useEffect(() => {
+    if (!cloudOn || !currentUser || !sess.current.token) return undefined;
+    let dead = false;
+    (async () => {
+      const k = await api('push_key', { token: sess.current.token });
+      if (dead || !k.body?.key) return;
+      const healed = await healPush({
+        key: k.body.key,
+        send: (sub) => api('push_sub', { token: sess.current.token, sub }),
+      });
+      if (healed && !dead) setPush((p) => ({ ...p, status: pushStatus({ ...readEnv(), subscribed: true }) }));
+    })();
+    return () => { dead = true; };
+  }, [cloudOn, currentUser?.id]);
 
   /** تبنّي نسخة جاية من الخادم كما هي. */
   const adopt = useCallback((serverData, rev) => {
@@ -4629,7 +4654,7 @@ export default function App() {
               <>
                 <h2 className="font-bold text-lg text-slate-800 mb-1">أهلًا! نبدأ بحسابك أنت</h2>
                 <div className="text-sm text-slate-400 mb-5">
-                  أنشئ حساب المدير — بصلاحيات كاملة. بعدها تقدر تضيف الموظفين وتحدد صلاحياتهم،
+                  أنشئ حساب المدير — بصلاحيات كاملة. بعدها تقدر تضيف القادة وتحدد صلاحياتهم،
                   ويشتغلون معك على نفس البيانات من أجهزتهم.
                 </div>
                 <button className={btnPrimary + ' w-full'}
@@ -4760,8 +4785,8 @@ export default function App() {
     { id: 'khayrMe', label: 'خيركم', desc: 'سجلّك في التسميع', icon: BookMarked, show: !!myKhayrStudent },
     { id: 'trips', label: 'السفرات', desc: 'الرحلات وحساباتها', icon: Plane, show: can('السفرات') },
     { id: 'guardians', label: 'المشتركين', desc: 'الطلاب وأولياء أمورهم', icon: UsersIcon, show: canGuardians },
-    // الملاحظات السلوكية يراها الموظفون كلهم — لأنهم كلهم يتعاملون مع الطلاب
-    { id: 'studentNotes', label: 'ملاحظات الطلاب', desc: 'السلوكية، لكل الموظفين', icon: StickyNote, show: isAdmin || writesReport },
+    // الملاحظات السلوكية يراها القادة كلهم — لأنهم كلهم يتعاملون مع الطلاب
+    { id: 'studentNotes', label: 'ملاحظات الطلاب', desc: 'السلوكية، لكل القادة', icon: StickyNote, show: isAdmin || writesReport },
     { id: 'notices', label: 'التنبيهات', desc: 'تكتبها للفريق أو لواحد', icon: Megaphone, show: isAdmin },
     { id: 'reports', label: 'التقارير', desc: 'التقارير والإحصائيات', icon: FileText, show: canMoney },
     { id: 'settings', label: 'الإعدادات', desc: 'المستخدمون والصلاحيات', icon: Settings, show: isAdmin },
@@ -4892,7 +4917,7 @@ export default function App() {
     /**
      * «ملخّص اليوم» لا «تقرير اليوم».
      *
-     * لأن «تقرير اليوم» صار اسمًا لشيءٍ آخر: ما يكتبه كلُّ موظفٍ عن يومه.
+     * لأن «تقرير اليوم» صار اسمًا لشيءٍ آخر: ما يكتبه كلُّ قائدٍ عن يومه.
      * واسمان لشيئين مختلفين خيرٌ من اسمٍ واحد يُسأل عنه كل مرة.
      */
     ...(canMoney ? [{ id: 'report', label: 'ملخّص اليوم' }] : []),
@@ -5178,7 +5203,7 @@ export default function App() {
 
         {/* ------------------------------ تقرير اليوم ------------------------------ */}
         {/*
-          يكتبه كلُّ موظفٍ عن يومه: ثلاث خانات لا يُرسَل إلا بها كلِّها.
+          يكتبه كلُّ قائدٍ عن يومه: ثلاث خانات لا يُرسَل إلا بها كلِّها.
 
           و«لا يوجد» تُكتب بيده — لأن الفرق بين «قال: لم يكن» و«ترك الخانة»
           هو الفرق بين تقريرٍ وصمت. ولا يرى تقارير زملائه: كتبها لمن يطالبه
@@ -5331,7 +5356,7 @@ export default function App() {
 
         {/* --------------------------- ملاحظات الطلاب --------------------------- */}
         {/*
-          يراها الموظفون كلُّهم — «لأن الموظفين كلهم يتعاملون مع الطلاب».
+          يراها القادة كلُّهم — «لأن القادة كلهم يتعاملون مع الطلاب».
 
           وهي شاشةٌ مستقلة عن قاعدة الأهالي عن قصد: فيها اسمُ الولد وملاحظتُه
           ومن كتبها، ولا شيء غير ذلك — لا جوّال وليّ أمرٍ ولا حالةٌ صحية.
@@ -5343,7 +5368,7 @@ export default function App() {
           return (
             <div>
               <h2 className="text-xl font-extrabold text-slate-800 mb-1">ملاحظات الطلاب</h2>
-              <div className="text-xs text-slate-400 mb-4">السلوكية — يراها كل الموظفين، ويربطها المدير من التقارير.</div>
+              <div className="text-xs text-slate-400 mb-4">السلوكية — يراها كل القادة، ويربطها المدير من التقارير.</div>
               {rows.length > 6 && (
                 <div className="relative mb-4">
                   <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" />
@@ -5473,7 +5498,7 @@ export default function App() {
                         </div>
                         <div className="text-[13.5px] text-slate-700 leading-8 whitespace-pre-wrap">{n.text}</div>
                         <div className="text-[11px] text-slate-400 mt-2">
-                          {n.to ? `إلى ${data.users.find((u) => u.id === n.to)?.name || 'موظف'}` : 'للجميع'} · {hijri(n.at)}
+                          {n.to ? `إلى ${data.users.find((u) => u.id === n.to)?.name || 'قائد'}` : 'للجميع'} · {hijri(n.at)}
                           {n.days ? ` · ينتهي بعد ${say(n.days, 'day')}` : ' · لا ينتهي'}
                         </div>
                         {/*
@@ -5517,7 +5542,7 @@ export default function App() {
         {/* ------------------------------ قائمة البرامج ------------------------------ */}
         {view === 'programs' && (
           <div>
-            {/* العدّادات للمدير وحده: الموظف يشتغل على يومه، لا على حجم الموسم */}
+            {/* العدّادات للمدير وحده: القائد يشتغل على يومه، لا على حجم الموسم */}
             {isAdmin && (
               <div className="grid grid-cols-2 gap-3 mb-4">
                 <MiniStat label="برامج الترم" value={termPrograms.length} icon={BookOpen} />
@@ -6968,7 +6993,7 @@ export default function App() {
                   return (
                   <>
                   {/*
-                    تقارير الموظفين عن هذا اليوم.
+                    تقارير القادة عن هذا اليوم.
 
                     للمدير وحده: هو من يطالب بها ويقرؤها. ومنها يربط الملاحظة
                     بسجلّ الطالب — بيده هو، لأن ما يُكتب في سجلّ ولدٍ يبقى معه.
@@ -6997,7 +7022,7 @@ export default function App() {
 
                             القائمةُ كانت تقول من كتب ومن لم يكتب، ولا تقول
                             ماذا كتب. وسؤالُ صاحب التطبيق من أوّل يوم: «أعرف
-                            موظف عبدالله أقام مسابقة ودوري» — وهذا يجيبه في
+                            قائد عبدالله أقام مسابقة ودوري» — وهذا يجيبه في
                             سطر. وأعمدتُه خاناتُ التقرير كما ضبطها، فإن حذف
                             خانةً سقط عمودُها.
                           */}
@@ -7010,7 +7035,7 @@ export default function App() {
                                 remind={(r) => (r.user.phone
                                   ? `https://wa.me/${waIntl(r.user.phone)}?text=${encodeURIComponent(`تقرير ${week.name} ما وصلني بعد.`)}`
                                   : `https://wa.me/?text=${encodeURIComponent(`${r.user.name}: تقرير ${week.name} ما وصلني بعد.`)}`)}
-                                hint="اضغط اسم الموظف لتقرأ تقريره كاملًا وتربط ملاحظته بطالب." />
+                                hint="اضغط اسم القائد لتقرأ تقريره كاملًا وتربط ملاحظته بطالب." />
                             );
                           })()}
                         </div>
@@ -8663,7 +8688,7 @@ export default function App() {
                   <div className={cardCls}>
                     <div className="text-sm font-bold text-slate-800 mb-1">خانات تقرير اليوم</div>
                     <div className="text-xs text-slate-400 leading-6">
-                      ما يكتبه كل موظف آخر يوم البرنامج. تضيف وتحذف وترتّب، وتجعل الخانة إجبارية أو اختيارية.
+                      ما يكتبه كل قائد آخر يوم البرنامج. تضيف وتحذف وترتّب، وتجعل الخانة إجبارية أو اختيارية.
                       والإجبارية لا يُرسَل التقرير بدونها — ومن لا شيء عنده يكتب «لا يوجد».
                     </div>
                   </div>
@@ -8703,7 +8728,7 @@ export default function App() {
                     <div className={cardCls}>
                       <div className="text-xs font-bold text-slate-500 mb-2">خانات محذوفة</div>
                       <div className="text-[11px] text-slate-400 mb-3 leading-6">
-                        ما عادت تظهر للموظفين، وما كُتب فيها باقٍ في تقارير الأيام الماضية. وتقدر ترجعها.
+                        ما عادت تظهر للقادة، وما كُتب فيها باقٍ في تقارير الأيام الماضية. وتقدر ترجعها.
                       </div>
                       {gone.map((f) => (
                         <div key={f.id} className="flex items-center justify-between gap-2 py-2 border-t border-slate-50">
@@ -10318,9 +10343,9 @@ export default function App() {
       )}
 
       {/*
-        قراءة تقرير موظفٍ عن يومه، ومنه يُربط ما كتبه بسجلّ صاحبه.
+        قراءة تقرير قائدٍ عن يومه، ومنه يُربط ما كتبه بسجلّ صاحبه.
 
-        والربط بيد المدير وحده — هكذا أرادها صاحب التطبيق: يكتبها الموظف
+        والربط بيد المدير وحده — هكذا أرادها صاحب التطبيق: يكتبها القائد
         نصًّا، ولا تدخل سجلَّ ولدٍ إلا بعد أن يقرأها مَن يقرأ.
       */}
       {modal === 'readReport' && (() => {
@@ -10328,7 +10353,7 @@ export default function App() {
         if (!r) return null;
         const who = data.users.find((u) => u.id === r.userId);
         return (
-          <Modal title={`تقرير ${who?.name || 'موظف'}`} onClose={closeModal} wide>
+          <Modal title={`تقرير ${who?.name || 'قائد'}`} onClose={closeModal} wide>
             <div className="text-[11px] text-slate-400 mb-4">{hijri(r.at)}</div>
             {/*
               كلُّ الخانات تُقرأ — حتى المحذوفة منها — لأن ما كُتب في يومه
@@ -10469,10 +10494,10 @@ export default function App() {
       {modal === 'editQiyami' && (
         <Modal title={form.id ? 'تعديل القيمي' : 'قيمي جديد'} onClose={closeModal} wide>
           {/*
-            الملقي يُكتب اسمه، ولا تُعرض قائمةُ الموظفين.
+            الملقي يُكتب اسمه، ولا تُعرض قائمةُ القادة.
 
             طلبها صاحبُ التطبيق صريحةً: «تشيل الخيارات بحيث ما يطلع له
-            الموظفين، فقط كتابة». وقد يكون الملقي ضيفًا أو طالبًا، فالقائمةُ
+            القادة، فقط كتابة». وقد يكون الملقي ضيفًا أو طالبًا، فالقائمةُ
             تحصره في الفريق بلا سبب.
           */}
           <Field label="الملقي — إجباري">

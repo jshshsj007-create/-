@@ -6,7 +6,7 @@
  * صمت.
  */
 import assert from 'node:assert/strict';
-import { pushStatus, PUSH_TEXTS, HOME_STEPS, b64ToBytes } from '../src/notify.js';
+import { pushStatus, PUSH_TEXTS, HOME_STEPS, b64ToBytes, healPush } from '../src/notify.js';
 import { noticeTargets } from '../netlify/lib/push.mjs';
 
 let passed = 0;
@@ -72,5 +72,77 @@ test('وتنبيهُ الواحد يصله وحده', () => {
 test('ولا يصل كاتبَه — يكتبه لا ينتظره', () => {
   assert.deepEqual(noticeTargets({ id: 'n1', by: 'b', to: '' }, users), ['c']);
 });
+
+/* ---------------- إصلاحُ اشتراكٍ ضاع وإذنُه قائم ---------------- */
+
+/**
+ * وقعت في الحقيقة: «تحديث» كان يُلغي عاملَ الخدمة، والاشتراكُ يعيش داخله
+ * فيموت معه. فيبقى الإذنُ في المتصفّح والاشتراكُ ذاهبًا — وهذي الحالُ
+ * التي تُصلَح هنا بلا أن يضغط صاحبُها شيئًا.
+ */
+const world = ({ permission = 'granted', sub = null, subscribe } = {}) => {
+  const sent = [];
+  const nav = {
+    serviceWorker: {
+      register: async () => ({ pushManager: { subscribe: subscribe || (async () => ({ toJSON: () => ({ endpoint: 'e' }) })) } }),
+      ready: Promise.resolve({ pushManager: { subscribe: subscribe || (async () => ({ toJSON: () => ({ endpoint: 'e' }) })) } }),
+      getRegistration: async () => ({ pushManager: { getSubscription: async () => sub } }),
+    },
+    maxTouchPoints: 0,
+    userAgent: 'Mozilla/5.0 (Linux; Android 13)',
+  };
+  const had = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: nav });
+  globalThis.Notification = { permission };
+  globalThis.window = {
+    matchMedia: () => ({ matches: false }), navigator: nav,
+    PushManager: function PM() {}, Notification: globalThis.Notification,
+  };
+  globalThis.PushManager = globalThis.window.PushManager;
+  return {
+    sent,
+    done: () => {
+      delete globalThis.window; delete globalThis.Notification; delete globalThis.PushManager;
+      if (had) Object.defineProperty(globalThis, 'navigator', had); else delete globalThis.navigator;
+    },
+  };
+};
+
+await (async () => {
+  {
+    const w = world({ permission: 'granted', sub: null });
+    const sent = [];
+    const got = await healPush({ key: 'BLAH', send: async (s) => sent.push(s) });
+    assert.equal(got, true, 'أُعيد الاشتراك');
+    assert.equal(sent.length, 1, 'ووصل الخادمَ');
+    w.done(); passed++; console.log('  ✓ إذنٌ قائمٌ واشتراكٌ ضائع: يُعاد بصمت');
+  }
+  {
+    const w = world({ permission: 'granted', sub: { endpoint: 'e' } });
+    const got = await healPush({ key: 'BLAH', send: async () => {} });
+    assert.equal(got, false, 'اشتراكُه قائم، فما فيه ما يُصلَح');
+    w.done(); passed++; console.log('  ✓ ومن اشتراكُه قائمٌ لا يُمَسّ');
+  }
+  {
+    const w = world({ permission: 'default', sub: null });
+    const sent = [];
+    const got = await healPush({ key: 'BLAH', send: async (s) => sent.push(s) });
+    assert.equal(got, false);
+    assert.equal(sent.length, 0, 'ولا يُسأل من لم يأذن');
+    w.done(); passed++; console.log('  ✓ ومن لم يأذن لا يُزعَج');
+  }
+  {
+    const w = world({ permission: 'denied', sub: null });
+    const got = await healPush({ key: 'BLAH', send: async () => {} });
+    assert.equal(got, false, 'المنعُ قرارُه، ولا يُلتفّ عليه');
+    w.done(); passed++; console.log('  ✓ ومن منع يبقى ممنوعًا');
+  }
+  {
+    const w = world({ permission: 'granted', sub: null, subscribe: async () => { throw new Error('no'); } });
+    const got = await healPush({ key: 'BLAH', send: async () => {} });
+    assert.equal(got, false, 'ويسقط بهدوء لا برمي');
+    w.done(); passed++; console.log('  ✓ وإن تعثّر المتصفّح ما انكسرت الشاشة');
+  }
+})();
 
 console.log(`\n✅ ${passed} اختبارًا لإشعار الجوّال\n`);

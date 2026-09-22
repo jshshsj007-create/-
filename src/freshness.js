@@ -32,6 +32,16 @@ export const isStale = (running, published) =>
 /**
  * إعادة تحميل تتجاوز المحفوظ. تفريغ Cache Storage يلزم للتطبيق المثبّت
  * على الشاشة الرئيسية، وإلا رجع لنفس النسخة القديمة.
+ *
+ * **ولا يُلغى عاملُ الخدمة هنا.**
+ *
+ * كان يُلغى — كُتب ذلك ليقتل عاملَ خدمةٍ مخزِّنًا يُبقي النسخة القديمة عند
+ * الناس. لكن اشتراكَ الإشعارات يعيش **داخل** تسجيل العامل، فإلغاؤه يقتله
+ * معه. فكان القادة يفعّلون إشعاراتهم، ثم تصدر نسخةٌ فيضغطون «تحديث»،
+ * فيضيع اشتراكُهم وتعود البطاقة تقول «فعّلها» — بعد كل نشرة.
+ *
+ * وعاملُنا لا يخزّن شيئًا أصلًا (لا `fetch` فيه ولا `caches`)، فإلغاؤه لا
+ * يُفيد في الطزاجة شيئًا، وتفريغُ المخزن وحده هو الذي كان يعمل.
  */
 export const hardReload = async () => {
   try {
@@ -40,9 +50,5 @@ export const hardReload = async () => {
       await Promise.all(keys.map((k) => caches.delete(k)));
     }
   } catch { /* المتصفح ما يسمح — نكمل */ }
-  try {
-    const regs = await navigator.serviceWorker?.getRegistrations?.();
-    await Promise.all((regs || []).map((r) => r.unregister()));
-  } catch { /* ما فيه service worker */ }
   location.reload();
 };

@@ -172,7 +172,7 @@ const tblData = {
   ],
 };
 
-test('صفٌّ لكل موظف، وأعمدتُه خاناتُ التقرير', () => {
+test('صفٌّ لكل قائد، وأعمدتُه خاناتُ التقرير', () => {
   const t = reportTable(tblData, 'p1', 'w1');
   assert.deepEqual(t.fields.map((f) => f.id), ['comp', 'league', 'notes']);
   assert.deepEqual(t.rows.map((r) => r.user.id), ['b', 'c'], 'من كتب أولًا ثم من لم يكتب');

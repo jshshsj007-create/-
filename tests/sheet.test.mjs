@@ -113,7 +113,7 @@ test('صناديق الورقة الثلاثة الجديدة، بترتيبها
     notes: ['سعد العتيبي', 'فهد الزهراني'],
     reports: '5 من 5',
   });
-  assert.deepEqual(s.map((x) => x.title), ['الحضور', 'النادي', 'القيمي', 'ملاحظات سلوكية', 'تقارير الموظفين']);
+  assert.deepEqual(s.map((x) => x.title), ['الحضور', 'النادي', 'القيمي', 'ملاحظات سلوكية', 'تقارير القادة']);
   assert.deepEqual(s[2].rows[0], ['برّ الوالدين', 'ماجد الدوسري']);
   assert.equal(s[3].rows[0][1], '2');
   assert.ok(s[3].lines[0].includes('سعد العتيبي · فهد الزهراني'));
@@ -197,33 +197,33 @@ const tbl = {
 
 test('صندوق التقارير يصير جدولًا بأعمدة التقرير نفسها', () => {
   const s = sheetSections({ reports: '1 من 2', reportTable: tbl });
-  const box = s.find((x) => x.title === 'تقارير الموظفين');
-  assert.deepEqual(box.cols.map((c) => c.label), ['الموظف', 'المسابقة', 'الدوري']);
+  const box = s.find((x) => x.title === 'تقارير القادة');
+  assert.deepEqual(box.cols.map((c) => c.label), ['القائد', 'المسابقة', 'الدوري']);
   assert.equal(box.rows[0][1], '1 من 2', 'والعدّاد فوقه كما كان');
   assert.equal(box.grid.length, 2);
 });
 
 test('وتأخذ الخليّة نصَّ صاحبها كاملًا لا مقتطعًا — الورقة أوسع من الجوّال', () => {
-  const box = sheetSections({ reportTable: tbl }).find((x) => x.title === 'تقارير الموظفين');
+  const box = sheetSections({ reportTable: tbl }).find((x) => x.title === 'تقارير القادة');
   assert.equal(box.grid[0][1].t, 'أقمنا الكنز المفقود بعد الفسحة');
   assert.ok(!box.grid[0][1].t.includes('…'));
 });
 
 test('ومن لم يكتب يمتدّ سطرُه على الأعمدة', () => {
-  const box = sheetSections({ reportTable: tbl }).find((x) => x.title === 'تقارير الموظفين');
+  const box = sheetSections({ reportTable: tbl }).find((x) => x.title === 'تقارير القادة');
   assert.equal(box.grid[1][0].t, 'سعود');
   assert.equal(box.grid[1][1].t, 'ما كتب تقريره');
   assert.equal(box.grid[1][1].span, 2, 'يمتدّ على الخانتين');
 });
 
 test('و«لا يوجد» تُرمَّد ولا تُمحى — قالها فيُكتب أنه قالها', () => {
-  const box = sheetSections({ reportTable: tbl }).find((x) => x.title === 'تقارير الموظفين');
+  const box = sheetSections({ reportTable: tbl }).find((x) => x.title === 'تقارير القادة');
   assert.equal(box.grid[0][2].t, 'لا يوجد');
   assert.equal(box.grid[0][2].dim, true);
 });
 
 test('وبلا جدولٍ يبقى العدّاد وحده، وبلا الاثنين لا صندوق', () => {
-  const only = sheetSections({ reports: '3 من 5' }).find((x) => x.title === 'تقارير الموظفين');
+  const only = sheetSections({ reports: '3 من 5' }).find((x) => x.title === 'تقارير القادة');
   assert.equal(only.rows[0][1], '3 من 5');
   assert.equal(only.grid, undefined);
   assert.equal(sheetSections({ students: 3 }).length, 1);

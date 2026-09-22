@@ -182,7 +182,7 @@ export const sheetSections = ({ students, present, enrolled, money, club, qiyami
   }
 
   /*
-    تقارير الموظفين: العدّاد ثم جدولُ «من كتب ماذا» بأعمدة التقرير نفسها.
+    تقارير القادة: العدّاد ثم جدولُ «من كتب ماذا» بأعمدة التقرير نفسها.
 
     وكانت سطورًا يُرصّ فيها ما كتبه الواحدُ متّصلًا، فلا يُعرف أين انتهت
     خانةٌ وبدأت أخرى. والورقةُ واسعةٌ فيُكتب النصُّ كاملًا، بلا الاقتطاع
@@ -193,10 +193,10 @@ export const sheetSections = ({ students, present, enrolled, money, club, qiyami
   if (reports || trows.length) {
     const share = fields.length ? Math.floor(74 / fields.length) : 74;
     out.push({
-      title: 'تقارير الموظفين',
+      title: 'تقارير القادة',
       ...(reports ? { rows: [['كتبوا تقرير اليوم', clean(reports), true]] } : {}),
       ...(trows.length && fields.length ? {
-        cols: [{ label: 'الموظف', w: 26 }, ...fields.map((f) => ({ label: f.label, w: share }))],
+        cols: [{ label: 'القائد', w: 26 }, ...fields.map((f) => ({ label: f.label, w: share }))],
         grid: trows.map((r) => {
           const name = { t: r.user?.name || '', strong: true };
           if (!r.wrote) return [name, { t: 'ما كتب تقريره', span: fields.length, dim: true }];
@@ -249,7 +249,7 @@ const GRID_H = 46;
 /**
  * ارتفاعُ صفّ الجدول.
  *
- * والصفُّ يعلو بما فيه: تقريرُ الموظف سطرانِ أو ثلاثة، فلو قُصّ ليسع سطرًا
+ * والصفُّ يعلو بما فيه: تقريرُ القائد سطرانِ أو ثلاثة، فلو قُصّ ليسع سطرًا
  * واحدًا ضاع نصفُ خبره — والورقةُ تُرسل لمجلس الإدارة لتُقرأ لا لتُعدّ.
  * و`_h` يُحسب في `paperSheet` بعد قياس الكانفاس، ويُقرأ هنا وفي التقسيم.
  */
@@ -514,10 +514,12 @@ export const paperSheet = async ({ team: teamName, sub = '', title = '', date = 
   /**
    * وخلايا الجدول تُلفّ كذلك، فيعلو الصفُّ بما فيه.
    *
-   * ثلاثةُ أسطرٍ حدٌّ: ما زاد عليها تقريرٌ لا خليّة، وصفٌّ بعشرة أسطرٍ يبتلع
-   * الصفحة ويُفقد الجدولَ شكلَه — فيُقصّ عندها وحدها.
+   * ولا تُقصّ: طلبها صاحبُ التطبيق صريحةً — «ابيه كامل الملاحظات ما يتعدّى
+   * أو يعطي نصّ». وكان الحدُّ ثلاثةَ أسطرٍ ثم تُقطع بنقاط، فيذهب نصفُ خبر
+   * القائد إلى المجلس. والحدُّ الآن صفحةٌ كاملة — لا لتجميلٍ بل لأن صفًّا
+   * أطولَ من الورقة لا يُرسم أصلًا ولا يُقسَّم.
    */
-  const CELL_MAX = 3;
+  const CELL_MAX = Math.max(3, Math.floor(((PAGE.h - 130) - (190 + 90 + 40 + 50) - HEAD_H - TAIL - GAP) / GRID_H) - 1);
   const inner = PAGE.w - PAD * 2 - 56;
   const fitGridCells = (sec) => {
     const cols = sec.cols || [];
@@ -546,7 +548,13 @@ export const paperSheet = async ({ team: teamName, sub = '', title = '', date = 
     if (s.grid?.length && s.cols?.length) s = fitGridCells(s);
     return s;
   });
-  const pages = fit ? [wrapped] : paginate(wrapped, room);
+  /*
+    والضغطُ له حدّ (ثُلثان، فما دونه حروفٌ لا تُقرأ). فإن لم تسع الصفحةَ ولو
+    ضاقت، قُسّمت على صفحات ولو طُلب `fit` — وورقةٌ مقصوصٌ ذيلُها أسوأ من
+    ورقتين. وقعت قبلُ حين صارت الأقسامُ سبعة، وتعود كلّما طال تقريرُ قائد.
+  */
+  const natural = wrapped.reduce((a, sec) => a + secHeight(sec), 0);
+  const pages = (fit && natural <= room / 0.66) ? [wrapped] : paginate(wrapped, room);
   const shots = [];
   for (let k = 0; k < pages.length; k++) shots.push(await drawPage(pages[k], k, pages.length));
   const pdf = pdfFromJpegs(shots, { width: PAGE.w, height: PAGE.h, title: fileTitle || title });
