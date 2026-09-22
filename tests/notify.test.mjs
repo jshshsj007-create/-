@@ -8,6 +8,7 @@
 import assert from 'node:assert/strict';
 import { pushStatus, PUSH_TEXTS, HOME_STEPS, b64ToBytes, healPush } from '../src/notify.js';
 import { noticeTargets } from '../netlify/lib/push.mjs';
+import { mustReport } from '../src/taqreer.js';
 
 let passed = 0;
 const test = (name, fn) => { fn(); passed++; console.log('  ✓ ' + name); };
@@ -71,6 +72,23 @@ test('وتنبيهُ الواحد يصله وحده', () => {
 
 test('ولا يصل كاتبَه — يكتبه لا ينتظره', () => {
   assert.deepEqual(noticeTargets({ id: 'n1', by: 'b', to: '' }, users), ['c']);
+});
+
+/**
+ * ومن لا يُطالَب بتقريرٍ يصله التنبيه — وهذي التي أوقعتنا.
+ *
+ * كانت بطاقةُ التفعيل معلّقةً بشرط **كتابة التقرير**، فمن رُفعت عنه
+ * المطالبة اختفت بطاقتُه فما قدر يفعّلها، وهو يصله التنبيه على كل حال.
+ * فالقاعدة: من يستقبله يقدر يفعّله. ويُحرس هنا لأنه الطرف المحسوب.
+ */
+test('ويصل من لا يُطالَب بتقرير — فبطاقةُ التفعيل تُعرض له', () => {
+  const team = [
+    { id: 'a', role: 'مدير', status: 'نشط' },
+    // لا يُطالَب بتقرير، ولا صلاحيةَ أسابيعَ ولا نادٍ — ومع ذلك يصله
+    { id: 'z', role: 'مسجل حضور', status: 'نشط', noReport: true, permissions: ['القيمي'] },
+  ];
+  assert.deepEqual(noticeTargets({ id: 'n1', by: 'a', to: '' }, team), ['z']);
+  assert.equal(mustReport(team[1]), false, 'وهو غيرُ مطالَبٍ بتقريره');
 });
 
 /* ---------------- إصلاحُ اشتراكٍ ضاع وإذنُه قائم ---------------- */
