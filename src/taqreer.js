@@ -335,6 +335,22 @@ export const noticeLive = (n, ms) => {
 export const hasRead = (n, userId) => (n?.reads || []).some((r) => r.userId === userId);
 
 /**
+ * أقصى من يُختار بالاسم لتنبيهٍ واحد. زيادةٌ على ثلاثة عناده أقرب لتنبيه
+ * الفريق كله، فيُختار «الكل» بدل ما يُنقر اسمٌ اسمًا.
+ */
+export const NOTICE_TO_MAX = 3;
+
+/**
+ * من وُجّه إليهم التنبيه بأسمائهم: دائمًا مصفوفة، ولو كان `to` القديم نصًّا
+ * واحدًا (من قبل أن يصير الاختيار متعددًا). والفاضية تعني «للكل».
+ */
+export const noticeTargets = (n) => {
+  const to = n?.to;
+  if (!to) return [];
+  return Array.isArray(to) ? to.filter(Boolean) : [to];
+};
+
+/**
  * ما يظهر لهذا المستخدم الآن: الحيُّ الموجَّه إليه أو إلى الكل، وما لم يقرأه.
  *
  * والأقدم أولًا — فما مضى عليه وقتٌ أحقُّ أن يُقرأ قبل أن يموت.
@@ -350,7 +366,10 @@ export const noticesFor = (data, user, ms) => {
   const id = typeof user === 'string' ? user : user?.id;
   if (!id || (typeof user === 'object' && user?.role === 'مدير')) return [];
   return (data?.notices || [])
-    .filter((n) => n.by !== id && noticeLive(n, ms) && !hasRead(n, id) && (!n.to || n.to === id))
+    .filter((n) => {
+      const targets = noticeTargets(n);
+      return n.by !== id && noticeLive(n, ms) && !hasRead(n, id) && (!targets.length || targets.includes(id));
+    })
     .slice()
     .sort((a, b) => (a.at || 0) - (b.at || 0));
 };
@@ -375,8 +394,9 @@ export const replyOf = (n, userId) => String((n?.reads || []).find((r) => r.user
  * التطبيق: تنبيهٌ لواحدٍ لا يُقال فيه «قرأه ١ من ٥».
  */
 export const readTally = (n, users) => {
+  const targets = noticeTargets(n);
   const pool = (users || []).filter((u) => u.role !== 'مدير' && u.status !== 'غير نشط'
-    && (!n?.to || u.id === n.to));
+    && (!targets.length || targets.includes(u.id)));
   const read = pool.filter((u) => hasRead(n, u.id));
   const unread = pool.filter((u) => !hasRead(n, u.id));
   return { read, unread, text: `قرأه ${read.length} من ${pool.length}` };

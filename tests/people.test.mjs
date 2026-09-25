@@ -50,20 +50,22 @@ test('اختلاف الهمزة والتاء المربوطة ما يفرّق ا
   assert.equal(normalizeName('  عبدالله   العتيبي '), 'عبدالله العتيبي');
 });
 
-test('الاسم المختصر يطابق الكامل، والمختلف لا', () => {
-  assert.equal(sameName('سعد', 'سعد محمد العتيبي'), true);
-  assert.equal(sameName('سعد محمد', 'سعد محمد العتيبي'), true);
+test('الاسم كاملًا هو الفيصل — الناقص لا يطابق', () => {
+  // كان الاسم الأول وحده يكفي، فاندمج به «محمد قاسم» مع «محمد خالد» —
+  // فصار الاسم كاملًا هو الفيصل، والناقص شخصٌ آخر حتى يُكتب كاملًا
+  assert.equal(sameName('سعد', 'سعد محمد العتيبي'), false, 'ناقصٌ لا يطابق الكامل');
+  assert.equal(sameName('سعد محمد العتيبي', 'سعد محمد العتيبي'), true);
   assert.equal(sameName('محمد بن سعد', 'محمد سعد'), true); // «بن» ما تفرّق
   assert.equal(sameName('سعد', 'سعود'), false);
-  assert.equal(sameName('سعد محمد', 'محمد سعد'), false);   // الاسم الأول يفرّق
+  assert.equal(sameName('سعد محمد', 'محمد سعد'), false);   // الترتيب يفرّق
   assert.equal(sameName('', 'سعد'), false);
 });
 
-test('النقص في النسب ما يفرّق، والاسم الأول يفرّق', () => {
-  // الاسم الأول هو الولد، والباقي نسبٌ يشترك فيه الإخوة
-  assert.equal(sameName('محمد', 'محمد سعد'), true, 'النسب ناقص');
-  assert.equal(sameName('محمد القاسم', 'محمد فهد القاسم'), true, 'ناقص من الوسط');
-  assert.equal(sameName('سعد', 'محمد سعد'), false, 'اسمٌ أول مختلف = ولد آخر');
+test('النقص في النسب يفرّق الآن — ولو تشارك الاسم الأول', () => {
+  // «محمد قاسم» و«محمد خالد» كانا يندمجان باسمهما الأول، وهما ولدان مختلفان
+  assert.equal(sameName('محمد', 'محمد سعد'), false, 'النسب ناقص = غير متطابق');
+  assert.equal(sameName('محمد القاسم', 'محمد فهد القاسم'), false, 'ناقص من الوسط كذلك');
+  assert.equal(sameName('سعد', 'محمد سعد'), false);
   assert.equal(sameName('سعد محمد', 'محمد سعد'), false, 'الترتيب يفرّق');
   assert.equal(sameName('عمر', 'محمد سعد'), false);
 });
@@ -112,11 +114,11 @@ test('الاسم يُكمَّل لولي أمر موجود بلا اسم', () =>
 
 /* ------------------- القاعدة: الاسم الأول + جوال ولي الأمر ------------------- */
 
-test('الاسم الناقص نسبًا هو نفس الولد', () => {
-  assert.equal(sameName('محمد سعد فهد', 'محمد فهد'), true);
+test('الاسم الناقص نسبًا ولدٌ آخر حتى يُكتب كاملًا', () => {
+  assert.equal(sameName('محمد سعد فهد', 'محمد فهد'), false);
   assert.equal(sameName('محمد سعد فهد', 'محمد سعد فهد'), true);
-  assert.equal(sameName('محمد سعد فهد', 'محمد'), true);
-  assert.equal(sameName('محمد سعد فهد', 'محمد القاسم'), true, 'الأب واحد فما عنده محمدان');
+  assert.equal(sameName('محمد سعد فهد', 'محمد'), false);
+  assert.equal(sameName('محمد سعد فهد', 'محمد القاسم'), false, 'الاسم الأول وحده ما يكفي');
 });
 
 test('الأخ باسم أول مختلف يبقى أخًا', () => {
@@ -140,7 +142,7 @@ test('«ال» التعريف و«بن» ما تفرّقان', () => {
 /* ------------------- الجوال مفتاح فريد لا يقبل التكرار ------------------- */
 
 test('سجلّان بنفس الجوال يتوحّدان، والأخ يبقى', () => {
-  // نفس حالة المستخدم: ولي أمر انكتب مرتين، ومحمد كذلك، ومبارك أخوه
+  // نفس حالة المستخدم: ولي أمر انكتب مرتين، ومحمد باسمٍ مطابق تمامًا، ومبارك أخوه
   const db = {
     guardians: [
       { id: 'g1', name: 'سعد', phone: '557821586', createdAt: 1 },
@@ -148,7 +150,7 @@ test('سجلّان بنفس الجوال يتوحّدان، والأخ يبقى'
     ],
     students: [
       { id: 's1', guardianId: 'g1', name: 'محمد سعد فهد', age: 10, createdAt: 1 },
-      { id: 's2', guardianId: 'g2', name: 'محمد فهد', school: 'الرواد', createdAt: 2 },
+      { id: 's2', guardianId: 'g2', name: 'محمد سعد فهد', school: 'الرواد', createdAt: 2 },
       { id: 's3', guardianId: 'g2', name: 'مبارك سعد فهد', createdAt: 3 },
     ],
   };
@@ -212,15 +214,16 @@ test('ثلاثة سجلات بنفس الجوال تتوحّد كلها', () => 
       { id: 'g3', phone: '+966551111111', createdAt: 3 },
     ],
     students: [
-      { id: 's1', guardianId: 'g1', name: 'محمد سعد', createdAt: 1 },
-      { id: 's2', guardianId: 'g2', name: 'محمد', createdAt: 2 },
-      { id: 's3', guardianId: 'g3', name: 'محمد سعد فهد', createdAt: 3 },
+      { id: 's1', guardianId: 'g1', name: 'محمد سعد فهد', createdAt: 1 },
+      { id: 's2', guardianId: 'g2', name: 'محمد سعد فهد', createdAt: 2 },
+      { id: 's3', guardianId: 'g3', name: 'محمد سعد فهد', school: 'الرواد', createdAt: 3 },
     ],
   };
   const r = dedupeByPhone(db);
   assert.equal(r.guardians.length, 1);
-  assert.equal(r.students.length, 1, 'محمد واحد');
-  assert.equal(r.students[0].name, 'محمد سعد فهد', 'والأطول نسبًا يفوز');
+  assert.equal(r.students.length, 1, 'محمد واحد — اسمهم مطابق تمامًا');
+  assert.equal(r.students[0].name, 'محمد سعد فهد');
+  assert.equal(r.students[0].school, 'الرواد', 'معلومة الأخير انضافت');
 });
 
 test('القاعدة الفاضية ما تطيح', () => {
@@ -235,13 +238,13 @@ test('القاعدة الفاضية ما تطيح', () => {
 test('سجّل، ثم رجع بعد أسبوع وسجّل نفس الابن → ولي أمر واحد وابن واحد', () => {
   const first = upsertRegistration(db0, {
     guardian: { name: 'محمد العتيبي', phone: '0551234567' },
-    kids: [{ name: 'سعد', age: 10, school: 'الرواد' }],
+    kids: [{ name: 'سعد محمد', age: 10, school: 'الرواد' }],
   });
   assert.equal(first.guardians.length, 1);
   assert.equal(first.students.length, 1);
   assert.equal(first.guardianIsNew, true);
 
-  // بعد أسبوع، وبصيغة جوال ثانية واسم أطول
+  // بعد أسبوع، وبصيغة جوال ثانية، وبنفس اسم الابن كاملًا
   const second = upsertRegistration({ ...first, newId: db0.newId }, {
     guardian: { name: 'محمد العتيبي', phone: '+966 55 123 4567' },
     kids: [{ name: 'سعد محمد', age: 10 }],
@@ -296,11 +299,17 @@ test('التسجيل الثاني يكمّل المعلومة الناقصة و�
   assert.equal(b.guardian.name, 'محمد', 'اسم ولي الأمر ما ينمسح');
 });
 
-test('الاسم الأطول يفوز لما يكتبه كاملًا في المرة الثانية', () => {
-  const a = upsertRegistration(db0, { guardian: { phone: '0551234567' }, kids: [{ name: 'سعد' }] });
+test('نفس الابن باسمٍ مطابق تمامًا في المرة الثانية يبقى واحدًا', () => {
+  const a = upsertRegistration(db0, { guardian: { phone: '0551234567' }, kids: [{ name: 'سعد محمد العتيبي' }] });
   const b = upsertRegistration({ ...a, newId: db0.newId }, { guardian: { phone: '0551234567' }, kids: [{ name: 'سعد محمد العتيبي' }] });
   assert.equal(b.students.length, 1);
   assert.equal(b.students[0].name, 'سعد محمد العتيبي');
+});
+
+test('اسمٌ ناقصٌ في المرة الثانية ينزل ابنًا آخر — لا يُخمَّن أنه نفس الأول', () => {
+  const a = upsertRegistration(db0, { guardian: { phone: '0559876543' }, kids: [{ name: 'سعد محمد العتيبي' }] });
+  const b = upsertRegistration({ ...a, newId: db0.newId }, { guardian: { phone: '0559876543' }, kids: [{ name: 'سعد' }] });
+  assert.equal(b.students.length, 2, 'أسلم من دمجٍ يخلط بين إخوة');
 });
 
 test('الأسماء الفاضية تُتجاهل ولا تنشئ سجلات وهمية', () => {
@@ -332,7 +341,9 @@ test('أولياء أمور مختلفون فعلًا ما يظهرون كتكر
 
 /* ---------------- ابنان تحت نفس ولي الأمر وهما واحد ---------------- */
 
-test('سجّل «محمد سعد فهد» ثم «محمد فهد» بنفس الجوال → ابن واحد', () => {
+test('سجّل «محمد سعد فهد» ثم كتبه ناقصًا «محمد فهد» بنفس الجوال → ابنان', () => {
+  // كان النسب الناقص يُقبل اختصارًا فيُدمَج، فاندمج به «محمد قاسم» مع
+  // «محمد خالد» في التطبيق الحقيقي — فصار الاسم كاملًا هو الفيصل وحده
   const a = upsertRegistration(db0, {
     guardian: { phone: '0557821586' }, kids: [{ name: 'محمد سعد فهد', age: 10 }],
   });
@@ -340,12 +351,10 @@ test('سجّل «محمد سعد فهد» ثم «محمد فهد» بنفس ال
     guardian: { phone: '0557821586' }, kids: [{ name: 'محمد فهد', age: 10 }],
   });
   assert.equal(b.guardians.length, 1);
-  assert.equal(b.students.length, 1, 'ما ينضاف ابن ثاني');
-  assert.equal(b.students[0].name, 'محمد سعد فهد', 'والأكمل نسبًا يفوز');
+  assert.equal(b.students.length, 2, 'اسمان غير متطابقين = ابنان، حتى تحت نفس الجوال');
 });
 
 test('اسمٌ أول مختلف تحت نفس الجوال يبقى أخًا', () => {
-  // «سعد» ليس اختصارًا لـ«محمد سعد» — هو اسمٌ أول آخر، فقد يكون أخاه
   const a = upsertRegistration(db0, {
     guardian: { phone: '0557821587' }, kids: [{ name: 'محمد سعد فهد' }],
   });
@@ -363,12 +372,11 @@ test('الأخوان الحقيقيان ما ينخلطان', () => {
   assert.equal(a.students.length, 2, 'اسمان مختلفان = ابنان');
 });
 
-test('المكرر الموجود من قبل يظهر كاشتباه تحت نفس ولي الأمر', () => {
-  // بيانات قديمة: نفس الولد سُجّل مرتين بنسبٍ ناقص
+test('اسمان متطابقان تحت نفس ولي الأمر يظهران كاشتباه', () => {
   const db = {
     guardians: [{ id: 'g1', name: 'سعد فهد', phone: '557821586' }],
     students: [
-      { id: 's1', guardianId: 'g1', name: 'محمد فهد', age: 10 },
+      { id: 's1', guardianId: 'g1', name: 'محمد سعد فهد', age: 10 },
       { id: 's2', guardianId: 'g1', name: 'محمد سعد فهد', age: 10, school: 'الرواد' },
     ],
   };
@@ -378,7 +386,21 @@ test('المكرر الموجود من قبل يظهر كاشتباه تحت ن�
   assert.equal(dups[0].guardian.id, 'g1');
 });
 
-test('دمج الابنين يوحّدهما ويكمّل الناقص', () => {
+test('نسبٌ ناقص وحده ما يظهر كاشتباه بعد الآن — الاسم كاملًا هو الفيصل', () => {
+  // «محمد فهد» و«محمد سعد فهد» قد يكونان نفس الولد أو ولدين، والتخمين هو ما
+  // كسر الثقة: فلا يُعرضان كاشتباهٍ إلا بتطابق الاسم كاملًا
+  const db = {
+    guardians: [{ id: 'g1', name: 'سعد فهد', phone: '557821586' }],
+    students: [
+      { id: 's1', guardianId: 'g1', name: 'محمد فهد', age: 10 },
+      { id: 's2', guardianId: 'g1', name: 'محمد سعد فهد', age: 10, school: 'الرواد' },
+    ],
+  };
+  assert.deepEqual(findDuplicates(db.guardians, db.students), []);
+});
+
+test('دمج الابنين يدويًا يوحّدهما ويكمّل الناقص', () => {
+  // الدمج قرارٌ يدويٌّ من صاحب التطبيق، لا يلزمه أن يكون الاسمان متطابقين
   const db = {
     guardians: [{ id: 'g1', name: 'سعد فهد', phone: '557821586' }],
     students: [
@@ -395,7 +417,6 @@ test('دمج الابنين يوحّدهما ويكمّل الناقص', () => {
   assert.equal(kid.school, 'الرواد', 'ومعلومة الثاني انضافت');
   assert.equal(kid.health, 'حساسية');
   assert.equal(m.remap.s2, 's1', 'وتسجيلاته القديمة تتبعه');
-  assert.deepEqual(findDuplicates(db.guardians, m.students), [], 'وما عاد فيه اشتباه');
 });
 
 test('دمج طالب في نفسه ما يغيّر شيئًا', () => {

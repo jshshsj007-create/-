@@ -52,7 +52,7 @@ import {
   emptyReport, missingParts, reportReady, submitLabel, reportOf, dayReports,
   mustReport, reportRoll, rollText, reportTable, owedDays, dayNow, hijriKey, sameDate,
   noteOn, notesOn, notesOfDay, noteNames,
-  NOTICE_SPANS, noticeLive, hasRead, noticesFor, markRead, readTally,
+  NOTICE_SPANS, NOTICE_TO_MAX, noticeTargets, noticeLive, hasRead, noticesFor, markRead, readTally,
   supervisorsOf, toggleSupervisor, supervisorNames, unassigned, SUPERVISOR_MAX,
   qiyamiMissing, qiyamiReady, qiyamiOfDay, videoEmbed, daySummary,
 } from './taqreer.js';
@@ -2956,10 +2956,11 @@ export default function App() {
   const saveNotice = () => {
     const text = String(form.text || '').trim();
     if (!text) { setForm({ ...form, error: 'اكتب نصّ التنبيه' }); return; }
+    // form.to مصفوفة معرّفات؛ فاضية تعني «للكل»
     save({
       ...data,
       notices: [...(data.notices || []),
-        { id: uid(), text, to: form.to || '', days: Number(form.days || 0), by: effectiveUser?.id || '', at: Date.now(), reads: [] }],
+        { id: uid(), text, to: Array.isArray(form.to) ? form.to : [], days: Number(form.days || 0), by: effectiveUser?.id || '', at: Date.now(), reads: [] }],
     });
     closeModal();
   };
@@ -4965,7 +4966,7 @@ export default function App() {
             <div className="bg-brand-50 border border-brand-100 rounded-xl p-4 mb-5">
               <div className="text-brand-800 font-semibold leading-8 whitespace-pre-wrap">{myNotices[0].text}</div>
               <div className="text-[11px] text-slate-400 mt-2">
-                {myNotices[0].to ? 'لك وحدك' : 'للجميع'} · {hijri(myNotices[0].at)}
+                {noticeTargets(myNotices[0]).length ? 'موجَّه إليك' : 'للجميع'} · {hijri(myNotices[0].at)}
               </div>
             </div>
             {/*
@@ -5418,7 +5419,7 @@ export default function App() {
             <div>
               <div className="flex items-center justify-between mb-4 gap-3">
                 <h2 className="text-xl font-extrabold text-slate-800">التنبيهات</h2>
-                <button className={btnPrimary} onClick={() => { setForm({ to: '', text: '', days: 3 }); setModal('newNotice'); }}>
+                <button className={btnPrimary} onClick={() => { setForm({ to: [], text: '', days: 3 }); setModal('newNotice'); }}>
                   <Plus size={16} /> تنبيه جديد
                 </button>
               </div>
@@ -5506,20 +5507,29 @@ export default function App() {
                             className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 size={15} /></button>
                         </div>
                         <div className="text-[13.5px] text-slate-700 leading-8 whitespace-pre-wrap">{n.text}</div>
-                        <div className="text-[11px] text-slate-400 mt-2">
-                          {n.to ? `إلى ${data.users.find((u) => u.id === n.to)?.name || 'قائد'}` : 'للجميع'} · {hijri(n.at)}
-                          {n.days ? ` · ينتهي بعد ${say(n.days, 'day')}` : ' · لا ينتهي'}
-                        </div>
+                        {(() => {
+                          const targets = noticeTargets(n);
+                          const names = targets.map((id) => data.users.find((u) => u.id === id)?.name).filter(Boolean);
+                          return (
+                            <div className="text-[11px] text-slate-400 mt-2">
+                              {targets.length ? `إلى ${names.join('، ') || 'قائد'}` : 'للجميع'} · {hijri(n.at)}
+                              {n.days ? ` · ينتهي بعد ${say(n.days, 'day')}` : ' · لا ينتهي'}
+                            </div>
+                          );
+                        })()}
                         {/*
                           والواتساب لمن لم يفعّل الإشعارات: يصله حيث هو فعلًا.
                           والإرسالُ بيدك لا بيد التطبيق — إرسالٌ تلقائيّ عبر
                           واتساب يحتاج حسابَ أعمالٍ باشتراكٍ شهري، ولا يستحقّه
-                          تنبيهٌ للفريق.
+                          تنبيهٌ للفريق. ولمّا كان المرسَل إليهم أكثر من واحد
+                          ما فيه رقمٌ واحد يُفتح عليه، فيُفتح واتساب بلا رقم
+                          فيختار المرسِل بنفسه.
                         */}
                         <a className="inline-flex items-center gap-1.5 mt-2.5 text-[11.5px] font-bold text-green-700 border border-green-200 rounded-lg px-2.5 py-1.5"
                           target="_blank" rel="noreferrer"
                           href={(() => {
-                            const who = n.to ? data.users.find((u) => u.id === n.to) : null;
+                            const targets = noticeTargets(n);
+                            const who = targets.length === 1 ? data.users.find((u) => u.id === targets[0]) : null;
                             const txt = encodeURIComponent(n.text || '');
                             return who?.phone ? `https://wa.me/${waIntl(who.phone)}?text=${txt}` : `https://wa.me/?text=${txt}`;
                           })()}>
@@ -10541,14 +10551,20 @@ export default function App() {
 
       {modal === 'newNotice' && (
         <Modal title="تنبيه جديد" onClose={closeModal}>
-          <Field label="إلى مَن">
+          <Field label="إلى مَن" hint={`اختر إلى ${say(NOTICE_TO_MAX, ['شخص', 'شخصين', 'أشخاص', 'شخصًا'])} بالاسم، أو اتركه على «الكل».`}>
             <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={() => setForm({ ...form, to: '' })}
-                className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${!form.to ? 'bg-brand-700 text-white border-brand-700' : 'bg-white text-slate-600 border-slate-200'}`}>الكل</button>
-              {data.users.filter((u) => u.role !== 'مدير' && u.status !== 'غير نشط').map((u) => (
-                <button key={u.id} type="button" onClick={() => setForm({ ...form, to: u.id })}
-                  className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${form.to === u.id ? 'bg-brand-700 text-white border-brand-700' : 'bg-white text-slate-600 border-slate-200'}`}>{u.name}</button>
-              ))}
+              <button type="button" onClick={() => setForm({ ...form, to: [] })}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${!(form.to || []).length ? 'bg-brand-700 text-white border-brand-700' : 'bg-white text-slate-600 border-slate-200'}`}>الكل</button>
+              {data.users.filter((u) => u.role !== 'مدير' && u.status !== 'غير نشط').map((u) => {
+                const picked = (form.to || []).includes(u.id);
+                // بعد الحدّ يُعطَّل من لم يُختر بعد — يُفرَغ باختيار غيره لا بالتكديس
+                const atMax = !picked && (form.to || []).length >= NOTICE_TO_MAX;
+                return (
+                  <button key={u.id} type="button" disabled={atMax}
+                    onClick={() => setForm({ ...form, to: picked ? form.to.filter((id) => id !== u.id) : [...(form.to || []), u.id] })}
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold border disabled:opacity-30 ${picked ? 'bg-brand-700 text-white border-brand-700' : 'bg-white text-slate-600 border-slate-200'}`}>{u.name}</button>
+                );
+              })}
             </div>
           </Field>
           <Field label="النص">

@@ -380,20 +380,20 @@ test('سجّل مرة، ثم رجع بعد أسبوع وسجّل — ما يتك
   const v = publicView(d, d.programs[0]);
   const first = applySubmission(d, d.programs[0], v, goodBody, { newId, now: 1000 });
 
-  // بعد أسبوع، بصيغة جوال ثانية واسم أطول، ولأسبوع ثالث
+  // بعد أسبوع، بصيغة جوال ثانية وبنفس اسم الابن كاملًا، ولأسبوع ثالث
   const d2 = first.data;
   d2.programs[0].signup.openWeeks = ['w1', 'w2', 'w3'];
   const v2 = publicView(d2, d2.programs[0]);
   const second = applySubmission(d2, d2.programs[0], v2, {
     answers: { gName: 'محمد', gPhone: '+966 55 123 4567', age: '10' },
-    kids: [{ name: 'سعد محمد', age: '10', days: ['w3'] }],
+    kids: [{ name: 'سعد', age: '10', days: ['w3'] }],
     accountId: 'cash',
   }, { newId, now: 2000 });
 
   assert.equal(second.data.guardians.length, 1, 'ولي أمر واحد');
   assert.equal(second.data.students.length, 1, 'وابن واحد');
   assert.equal(second.data.programs[0].weeks[2].participants.length, 1, 'والتسجيل الجديد وصل');
-  assert.equal(second.data.students[0].name, 'سعد محمد', 'والاسم الأطول فاز');
+  assert.equal(second.data.students[0].name, 'سعد');
 });
 
 test('يسجّل ابنه الثاني في نفس الطلب', () => {
