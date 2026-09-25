@@ -1,6 +1,6 @@
 /** حراسة باب الدخول: عدّ المحاولات الفاشلة. */
 import assert from 'node:assert/strict';
-import { loginBlocked, noteFail, clearFails, PER_USER, PER_IP, PER_ALL, WINDOW } from '../src/login.js';
+import { loginBlocked, noteFail, clearFails, recordLogin, LOGIN_HISTORY, PER_USER, PER_IP, PER_ALL, WINDOW } from '../src/login.js';
 
 let passed = 0;
 const test = (name, fn) => { fn(); passed++; console.log('  ✓ ' + name); };
@@ -85,6 +85,21 @@ test('وحدُّ الحساب الواحد يبقى فوق الكل: من طُو
 test('والمصدر يُكتب مع المحاولة، وبلاه ما يُكتب مفتاحٌ فاضٍ', () => {
   assert.equal(noteFail([], 'saad', 1, 'ip9')[0].ip, 'ip9');
   assert.equal('ip' in noteFail([], 'saad', 1)[0], false);
+});
+
+/* ------------------------------ آخر دخلات المستخدم ------------------------------ */
+
+test('كل دخولٍ ناجحٍ يُسجَّل في المقدّمة', () => {
+  const l1 = recordLogin([], 1000);
+  assert.deepEqual(l1, [1000]);
+  const l2 = recordLogin(l1, 2000);
+  assert.deepEqual(l2, [2000, 1000]);
+});
+
+test('لا يُحفظ أكثر من ثلاثةٍ — الأقدم يسقط', () => {
+  const l = recordLogin([300, 200, 100], 400);
+  assert.equal(l.length, LOGIN_HISTORY);
+  assert.deepEqual(l, [400, 300, 200]);
 });
 
 console.log(`\n✅ ${passed} اختبارًا لحراسة باب الدخول`);

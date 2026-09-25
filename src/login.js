@@ -68,3 +68,16 @@ export const noteFail = (recent, username, now = Date.now(), from = '') =>
 /** ودخولٌ ناجح يمحو أثر صاحبه وحده. */
 export const clearFails = (recent, username) =>
   (recent || []).filter((e) => e.u !== norm(username));
+
+/* ------------------------------ آخر دخلات المستخدم ------------------------------ */
+
+/**
+ * كم دخلةً تُحفظ لكل مستخدم — سألني صاحب التطبيق: «متى دخل فلان آخر
+ * ثلاث مرات؟». ثلاثٌ تكفي لمعرفة انتظامه بلا أن يتضخّم سجلُّ كل مستخدم
+ * بمرور السنين.
+ */
+export const LOGIN_HISTORY = 3;
+
+/** يضيف دخلةً ناجحةً في المقدّمة، ويُبقي آخر LOGIN_HISTORY وحدها. */
+export const recordLogin = (logins, now = Date.now(), limit = LOGIN_HISTORY) =>
+  [now, ...(logins || [])].slice(0, limit);

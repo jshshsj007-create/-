@@ -15,7 +15,7 @@ import { questionView, validateAnswer, applyAnswer, answersRateLimited, makeDraw
 import { dedupeByPhone, remapParticipants } from '../../src/people.js';
 import { runBackup, backupStatus, readSnapshot, writeUndo, UNDO } from '../lib/backup.mjs';
 import { hash, verify, isHashed } from '../lib/password.mjs';
-import { loginBlocked, noteFail, clearFails } from '../../src/login.js';
+import { loginBlocked, noteFail, clearFails, recordLogin } from '../../src/login.js';
 import { countVisit, dayKey } from '../../src/visits.js';
 import { moneyChanged, moneyRows, moneyMissing, moneySum, blindMoney, restoreMoney } from '../../src/money.js';
 import { vapid, saveSub, dropSub, subsOf, whoHasPush, notifyNewNotices } from '../lib/push.mjs';
@@ -1037,12 +1037,15 @@ export default async (req) => {
     if (u.status === 'غير نشط') return json({ error: 'inactive' }, 403);
 
     // كلمةٌ قديمة صريحة: تُعمّى في أول دخولٍ بها، بلا أن يشعر صاحبها
+    // وكل دخولٍ ناجحٍ يُسجَّل بختمه — ثلاثةٌ فقط، ليُعرف انتظام كل مستخدم
     const r = await commit((d) => {
       const cleared = clearFails(loginBlocked(d.loginLog, entered, now, from).recent, entered);
-      if (!pass.upgraded && cleared.length === (d.loginLog || []).length) return null;
-      const data = pass.upgraded
-        ? { ...d.data, users: d.data.users.map((x) => (x.id === u.id ? { ...x, password: pass.upgraded } : x)) }
-        : d.data;
+      const data = {
+        ...d.data,
+        users: d.data.users.map((x) => (x.id === u.id
+          ? { ...x, ...(pass.upgraded ? { password: pass.upgraded } : {}), logins: recordLogin(x.logins, now) }
+          : x)),
+      };
       return { doc: { ...d, data, loginLog: cleared } };
     }, doc);
     const fresh = r.doc || doc;

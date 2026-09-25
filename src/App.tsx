@@ -52,7 +52,7 @@ import {
   emptyReport, missingParts, reportReady, submitLabel, reportOf, dayReports,
   mustReport, reportRoll, rollText, reportTable, owedDays, dayNow, hijriKey, sameDate,
   noteOn, notesOn, notesOfDay, noteNames,
-  NOTICE_SPANS, NOTICE_TO_MAX, noticeTargets, noticeLive, hasRead, noticesFor, markRead, readTally,
+  NOTICE_SPANS, noticeTargets, noticeLive, hasRead, noticesFor, markRead, readTally,
   supervisorsOf, toggleSupervisor, supervisorNames, unassigned, SUPERVISOR_MAX,
   qiyamiMissing, qiyamiReady, qiyamiOfDay, videoEmbed, daySummary,
 } from './taqreer.js';
@@ -8856,12 +8856,13 @@ export default function App() {
                   <div className={emptyCls}>لا يوجد مستخدمون بعد. الصلاحيات تُدار من هنا فقط، ولا تتكرر عند تغيير الترم.</div>
                 ) : (
                   <div className="bg-white rounded-2xl border border-slate-100 overflow-x-auto">
-                    <table className="w-full text-sm min-w-[760px]">
+                    <table className="w-full text-sm min-w-[900px]">
                       <thead className="bg-slate-50 text-slate-500 text-xs"><tr>
                         <th className="text-right px-4 py-3 font-medium">اسم المستخدم</th>
                         <th className="text-right px-4 py-3 font-medium">الدور</th>
                         <th className="text-right px-4 py-3 font-medium">الصلاحيات</th>
                         <th className="text-right px-4 py-3 font-medium">نطاق الأيام</th>
+                        <th className="text-right px-4 py-3 font-medium">آخر ٣ دخلات</th>
                         <th className="text-right px-4 py-3 font-medium">الحالة</th>
                         <th className="text-right px-4 py-3 font-medium"></th>
                       </tr></thead>
@@ -8875,6 +8876,11 @@ export default function App() {
                             <td className="px-4 py-3"><Badge tone="brand">{u.role}</Badge></td>
                             <td className="px-4 py-3"><div className="flex flex-wrap gap-1">{u.permissions.length ? u.permissions.map((p) => <Badge key={p} tone="slate">{p}</Badge>) : <span className="text-slate-300 text-xs">-</span>}</div></td>
                             <td className="px-4 py-3">{u.accessScope === 'limited' ? <Badge tone="amber">{(u.allowedWeeks || []).length} محدد</Badge> : <Badge tone="slate">الكل</Badge>}</td>
+                            <td className="px-4 py-3 text-[11.5px] text-slate-500">
+                              {(u.logins || []).length
+                                ? u.logins.map((t) => agoText(t)).join(' · ')
+                                : <span className="text-slate-300">لم يدخل بعد</span>}
+                            </td>
                             <td className="px-4 py-3"><Badge tone={u.status === 'نشط' ? 'green' : 'slate'}>{u.status}</Badge></td>
                             <td className="px-4 py-3 text-left whitespace-nowrap">
                               <button onClick={() => { setForm({ ...u, password: '' }); setModal('editUser'); }} className="text-slate-300 hover:text-brand-600 align-middle"><Pencil size={14} /></button>
@@ -10551,18 +10557,16 @@ export default function App() {
 
       {modal === 'newNotice' && (
         <Modal title="تنبيه جديد" onClose={closeModal}>
-          <Field label="إلى مَن" hint={`اختر إلى ${say(NOTICE_TO_MAX, ['شخص', 'شخصين', 'أشخاص', 'شخصًا'])} بالاسم، أو اتركه على «الكل».`}>
+          <Field label="إلى مَن" hint="اختر بالاسم من تبيه، أي عدد، أو اتركه على «الكل».">
             <div className="flex flex-wrap gap-2">
               <button type="button" onClick={() => setForm({ ...form, to: [] })}
                 className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${!(form.to || []).length ? 'bg-brand-700 text-white border-brand-700' : 'bg-white text-slate-600 border-slate-200'}`}>الكل</button>
               {data.users.filter((u) => u.role !== 'مدير' && u.status !== 'غير نشط').map((u) => {
                 const picked = (form.to || []).includes(u.id);
-                // بعد الحدّ يُعطَّل من لم يُختر بعد — يُفرَغ باختيار غيره لا بالتكديس
-                const atMax = !picked && (form.to || []).length >= NOTICE_TO_MAX;
                 return (
-                  <button key={u.id} type="button" disabled={atMax}
+                  <button key={u.id} type="button"
                     onClick={() => setForm({ ...form, to: picked ? form.to.filter((id) => id !== u.id) : [...(form.to || []), u.id] })}
-                    className={`px-3 py-1.5 rounded-full text-xs font-semibold border disabled:opacity-30 ${picked ? 'bg-brand-700 text-white border-brand-700' : 'bg-white text-slate-600 border-slate-200'}`}>{u.name}</button>
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${picked ? 'bg-brand-700 text-white border-brand-700' : 'bg-white text-slate-600 border-slate-200'}`}>{u.name}</button>
                 );
               })}
             </div>
