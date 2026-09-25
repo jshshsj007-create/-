@@ -1435,6 +1435,26 @@ export default async (req) => {
   if (op === 'pull') {
     // العدّاد يمشي بلا رفع رقم النسخة، فيُرسل حتى مع «ما تغيّر شيء»
     const visits = await visitsFor(doc);
+    /**
+     * فتحُ التطبيق بجلسةٍ محفوظة دخولٌ أيضًا — لا يقلّ عن كتابة كلمة المرور.
+     * وعلامتُه `sinceRev = -1`، وهي ما يُرسله التطبيق أول ما يُفتح، لا كل
+     * سحبةٍ دوريةٍ بعدها (تلك تُرسل رقم نسختها الحالي). فمن بقي داخلًا
+     * أيامًا بجلسته القديمة يُسجَّل له دخولٌ كل مرة يفتح فيها التطبيق من
+     * جديد، لا مرةً واحدة يوم كتب كلمته أول مرة ثم اختفى من السجلّ.
+     */
+    if (Number(body.sinceRev) === -1) {
+      const r = await commit((d) => ({
+        doc: {
+          ...d,
+          data: {
+            ...d.data,
+            users: (d.data.users || []).map((x) => (x.id === me.id ? { ...x, logins: recordLogin(x.logins, Date.now()) } : x)),
+          },
+        },
+      }), doc);
+      const fresh = r.doc || doc;
+      return json({ ok: true, rev: fresh.rev, data: strip(fresh.data, me), visits });
+    }
     if (Number(body.sinceRev) === doc.rev) return json({ ok: true, rev: doc.rev, unchanged: true, visits });
     return json({ ok: true, rev: doc.rev, data: strip(doc.data, me), visits });
   }
