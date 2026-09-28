@@ -122,6 +122,16 @@ const FONT = "'Tajawal', system-ui, -apple-system, 'Segoe UI', sans-serif";
 const PAGE = { w: 1240, h: 1754 };
 const PAD = 90;
 
+/**
+ * مهلةُ تحويل الصفحة لصورة.
+ *
+ * وقعت هذه على جوّالٍ: `canvas.toBlob` ما نادى استدعاءه أبدًا — لا نجاحًا
+ * ولا خطأ — فبقي الزرُّ «يجهّز» للأبد، وصاحبُه يظنّ التطبيق عَلِق. وهي نفس
+ * عِلّة الشبكة التي عولجت في `cloud.js`: انتظارٌ صامتٌ بلا مهلة. فصار
+ * الصمتُ بعد هذي المدّة خطأً واضحًا يُعاد منه المحاولة، لا عَلَقًا أبديًّا.
+ */
+const TOBLOB_TIMEOUT = 15000;
+
 const loadImage = (src) => new Promise((resolve) => {
   if (!src) { resolve(null); return; }
   const img = new Image();
@@ -496,7 +506,11 @@ export const paperSheet = async ({ team: teamName, sub = '', title = '', date = 
     if (total > 1) text(`${k + 1} / ${total}`, PAD, foot, { size: 20, color: '#94a3b8', align: 'left', dir: 'ltr' });
 
     const jpeg = await new Promise((resolve, reject) => {
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('ما تولّدت الورقة'))), 'image/jpeg', 0.92);
+      const bell = setTimeout(() => reject(new Error('طال تجهيز الورقة — جرّب مرة ثانية')), TOBLOB_TIMEOUT);
+      canvas.toBlob((b) => {
+        clearTimeout(bell);
+        b ? resolve(b) : reject(new Error('ما تولّدت الورقة'));
+      }, 'image/jpeg', 0.92);
     });
     return new Uint8Array(await jpeg.arrayBuffer());
   };
