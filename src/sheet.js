@@ -122,16 +122,6 @@ const FONT = "'Tajawal', system-ui, -apple-system, 'Segoe UI', sans-serif";
 const PAGE = { w: 1240, h: 1754 };
 const PAD = 90;
 
-/**
- * مهلةُ تحويل الصفحة لصورة.
- *
- * وقعت هذه على جوّالٍ: `canvas.toBlob` ما نادى استدعاءه أبدًا — لا نجاحًا
- * ولا خطأ — فبقي الزرُّ «يجهّز» للأبد، وصاحبُه يظنّ التطبيق عَلِق. وهي نفس
- * عِلّة الشبكة التي عولجت في `cloud.js`: انتظارٌ صامتٌ بلا مهلة. فصار
- * الصمتُ بعد هذي المدّة خطأً واضحًا يُعاد منه المحاولة، لا عَلَقًا أبديًّا.
- */
-const TOBLOB_TIMEOUT = 15000;
-
 const loadImage = (src) => new Promise((resolve) => {
   if (!src) { resolve(null); return; }
   const img = new Image();
@@ -505,14 +495,20 @@ export const paperSheet = async ({ team: teamName, sub = '', title = '', date = 
     text(`أُصدر من تطبيق ${team}${stamp ? ` · ${stamp}` : ''}`, PAGE.w / 2, foot, { size: 20, color: '#94a3b8', align: 'center' });
     if (total > 1) text(`${k + 1} / ${total}`, PAD, foot, { size: 20, color: '#94a3b8', align: 'left', dir: 'ltr' });
 
-    const jpeg = await new Promise((resolve, reject) => {
-      const bell = setTimeout(() => reject(new Error('طال تجهيز الورقة — جرّب مرة ثانية')), TOBLOB_TIMEOUT);
-      canvas.toBlob((b) => {
-        clearTimeout(bell);
-        b ? resolve(b) : reject(new Error('ما تولّدت الورقة'));
-      }, 'image/jpeg', 0.92);
-    });
-    return new Uint8Array(await jpeg.arrayBuffer());
+    /**
+     * `toDataURL` لا `toBlob` — عمدًا.
+     *
+     * `toBlob` تنادي استدعاءها من طابورٍ غير متزامن، وعلى بعض الجوّالات ما
+     * تنادي أصلًا: لا نجاحًا ولا خطأ، فبقيت مهلتُنا فوق تنتظر حدثًا لن يجيء
+     * حتى تنتهي هي أيضًا — تعليقٌ بلبوس مهلة. و`toDataURL` أقدم ومتزامنة:
+     * تُرجع فورًا على نفس الخيط، فما فيها فجوةٌ يُعلَّق فيها أصلًا.
+     */
+    const base64 = canvas.toDataURL('image/jpeg', 0.92).split(',')[1] || '';
+    const bin = atob(base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    if (!bytes.length) throw new Error('ما تولّدت الورقة');
+    return bytes;
   };
 
   const room = (PAGE.h - 130) - (190 + 90 + 40 + 50);
