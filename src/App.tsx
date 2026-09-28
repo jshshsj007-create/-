@@ -24,7 +24,7 @@ import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.j
 import { DAY_NAMES, EVERY_DAY, hourLabel, scheduleOf, scheduleText } from './schedule.js';
 import { readTheme, writeTheme, applyTheme, readHideMoney, writeHideMoney } from './theme.js';
 import {
-  nextRef, yearOf, defaultReceipt, REC_FIELDS, recOn, receiptPngBlob, receiptFileName, hijri, shareFile,
+  nextRef, yearOf, defaultReceipt, REC_FIELDS, recOn, receiptPngBlob, receiptFileName, hijri, shareFile, shareText,
 } from './receipt.js';
 import {
   LEAGUE, CUP, leagueFixtures, leagueTable, cupBracket, champion,
@@ -3521,23 +3521,7 @@ export default function App() {
    */
   const downloadQr = async () => {
     const blob = await qrPngBlob(publicUrl);
-    const file = new File([blob], 'faydh-qr.png', { type: 'image/png' });
-    if (navigator.canShare?.({ files: [file] })) {
-      try {
-        await navigator.share({ files: [file], title: 'باركود التسجيل' });
-        return;
-      } catch (e) {
-        if (e?.name === 'AbortError') return; // ألغاها بنفسه
-      }
-    }
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'faydh-qr.png';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    await shareFile(blob, 'faydh-qr.png', 'باركود التسجيل');
   };
 
   /** نص من نصوص الصفحة. الفاضي معناه «شِله»، فنفرّق بين المكتوب والمتروك. */
@@ -4468,7 +4452,7 @@ export default function App() {
     const title = `خيركم — ${khayrScope === 'all' ? 'كل المواسم' : `الترم ${data.currentTerm} ${data.currentYear} هـ`}`;
     const text = khayrReportText(khayrRows(khayr.students, scopedKhayrSessions, khayr.sessions), title);
     try {
-      if (navigator.share) { await navigator.share({ title, text }); return; }
+      if (navigator.share) { await shareText({ title, text }); return; }
       await navigator.clipboard.writeText(text);
       setKhayrMsg('اننسخ التقرير، الصقه وين ما تبي');
     } catch {
@@ -4530,7 +4514,7 @@ export default function App() {
     const title = `خيركم — جلسة ${khayrSession?.date || ''}`;
     const text = sessionReportText(rows, { title, date: khayrSession?.date || '' });
     try {
-      if (navigator.share) { await navigator.share({ title, text }); return; }
+      if (navigator.share) { await shareText({ title, text }); return; }
       await navigator.clipboard.writeText(text);
       setKhayrMsg('اننسخ تقرير الجلسة، الصقه وين ما تبي');
     } catch {
@@ -12779,7 +12763,7 @@ function SeasonsReport({ programs, terms, onBack, onOpenSeason, onOpenProgram })
   const share = async () => {
     const text = seasonsReportText(rows, title);
     try {
-      if (navigator.share) { await navigator.share({ title, text }); return; }
+      if (navigator.share) { await shareText({ title, text }); return; }
       await navigator.clipboard.writeText(text);
       setCopied('اننسخ التقرير، الصقه وين ما تبي');
     } catch {
@@ -13017,7 +13001,7 @@ function WeekReport({ week, accounts, canMoney, programName, term, club, extra =
   const share = async () => {
     const text = weekReportText(week, programName, canMoney, { term, club, summary });
     try {
-      if (navigator.share) { await navigator.share({ title: `تقرير ${week.name}`, text }); return; }
+      if (navigator.share) { await shareText({ title: `تقرير ${week.name}`, text }); return; }
       await navigator.clipboard.writeText(text);
       setShared('اننسخ التقرير، الصقه وين ما تبي');
     } catch {

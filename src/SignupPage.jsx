@@ -7,7 +7,7 @@ import { Check, AlertTriangle, Plus, X, Copy, Upload, MessageCircle, Share2, Map
 import { api } from './cloud.js';
 import { FaydhLogo, TEAM_NAME } from './logo.jsx';
 import { isValidPhone } from './people.js';
-import { dataUrlBlob } from './receipt.js';
+import { dataUrlBlob, shareText } from './receipt.js';
 import { say } from './adad.js';
 import PdfFirstPage from './pdfview.jsx';
 import { validateSubmission, dueFor, totalDue, isGuardianField, packageOf, coversAll, daysOf, RECEIPT_TYPES, RECEIPT_MAX, txt, TEXTS, CLOSED, CLOSED_WHY, waLink, fillTemplate, signupVars } from './signup.js';
@@ -352,7 +352,7 @@ function ShareButton({ title, label }) {
     const url = typeof location === 'undefined' ? '' : location.href;
     const text = `${title}\n${url}`;
     try {
-      if (navigator.share) { await navigator.share({ title, text: title, url }); return; }
+      if (navigator.share) { await shareText({ title, text: title, url }); return; }
       await navigator.clipboard.writeText(text);
       setSaid('اننسخ الرابط — الصقه وين ما تبي');
     } catch {

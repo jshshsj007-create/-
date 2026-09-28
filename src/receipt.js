@@ -290,10 +290,29 @@ export const dataUrlBlob = (raw) => {
 };
 
 /**
+ * مهلةُ لوحة المشاركة.
+ *
+ * `navigator.share` يعلّق أحيانًا — بملفٍّ أو بنصٍّ سواء — على بعض أجهزة
+ * أندرويد: لا تُفتح اللوحة ولا يُرفض الوعد، صمتٌ لا قرار. ومثل تحويل
+ * الصورة، صمتٌ بلا مهلة يُقرأ تعليقًا.
+ */
+const SHARE_TIMEOUT = 15000;
+
+/**
+ * مشاركةُ نصٍّ محروسةٌ بمهلة — تُستعمل بدل `navigator.share` المباشرة في
+ * كل مكانٍ يشارك نصًّا، فيبقى الحارسُ واحدًا لا يُنسى في موضعٍ ويُذكر في آخر.
+ */
+export const shareText = (payload) => Promise.race([
+  navigator.share(payload),
+  new Promise((_, reject) => setTimeout(() => reject(new Error('طالت لوحة المشاركة')), SHARE_TIMEOUT)),
+]);
+
+/**
  * يعطي الملفَّ لصاحب الجهاز.
  *
  * على الجوال لوحة المشاركة: منها يحفظه في الصور أو يرسله في واتساب مباشرة،
- * وهذا المقصود من الورقة أصلًا. وعلى ما سواها ينزل ملفًّا.
+ * وهذا المقصود من الورقة أصلًا. وعلى ما سواها ينزل ملفًّا — ومن لم يُجب
+ * لوحةُ المشاركة خلال المهلة كذلك، فما يقف الزرّ بلا شيء.
  *
  * والوصلة تدخل الصفحة قبل ضغطها: بعض المتصفّحات تتجاهل وصلةً ما هي فيها.
  * ولا نستعمل `data:` عنوانًا — سفاري لا يحترم طلب التحميل معه فما ينزل شيء.
@@ -302,10 +321,11 @@ export const shareFile = async (blob, name, title) => {
   const file = new File([blob], name, { type: blob.type || 'image/png' });
   if (navigator.canShare?.({ files: [file] })) {
     try {
-      await navigator.share({ files: [file], title });
+      await shareText({ files: [file], title });
       return 'shared';
     } catch (e) {
       if (e?.name === 'AbortError') return 'cancelled'; // ألغاها بنفسه
+      // غير ذلك — تعليقٌ أو خطأ غير متوقع: ننزّل الملف بدل ما يقف بلا شيء
     }
   }
   const url = URL.createObjectURL(blob);
