@@ -3624,7 +3624,12 @@ export default function App() {
    * معلّقة (فما تدخل إيراد أسبوعٍ ما صار) لكنها تُعلَّم «مدفوع مقدّمًا»، لأن
    * «ينتظر تأكيدك» كذبٌ على مالٍ في يدك.
    */
-  const clearPendingFlag = (pred) => save({
+  /**
+   * ومن حضر وقت ما تؤكّد مبلغه يُحضَّر معه في نفس الضغطة — `attend` تسمّي
+   * صفّه بعينه (لا إخوته المدفوعين مقدّمًا)، فلا تحتاج تؤكّد هنا ثم تدوّر
+   * عليه في قائمة الحضور لتحضّره.
+   */
+  const clearPendingFlag = (pred, attend = null) => save({
     ...data,
     programs: data.programs.map((p) => {
       if (p.id !== program.id) return p;
@@ -3633,12 +3638,18 @@ export default function App() {
       (p.participants || []).forEach(scan);
       (p.weeks || []).forEach((w) => (w.participants || []).forEach(scan));
       const fix = (part) => {
-        if (pred(part)) return { ...part, pending: false, prepaid: false, confirmedAt: Date.now() };
+        if (pred(part)) {
+          const done = { ...part, pending: false, prepaid: false, confirmedAt: Date.now() };
+          return attend?.partId === part.id && !isGrouped ? { ...done, attendance: 'حاضر' } : done;
+        }
         if (part.pending && part.ref && paidRefs.has(part.ref)) return { ...part, prepaid: true };
         return part;
       };
       return {
         ...p,
+        ...(attend && isGrouped ? {
+          attendance: { ...(p.attendance || {}), [attend.weekId]: { ...((p.attendance || {})[attend.weekId] || {}), [attend.partId]: 'حاضر' } },
+        } : {}),
         participants: (p.participants || []).map(fix),
         weeks: (p.weeks || []).map((w) => ({ ...w, participants: (w.participants || []).map(fix) })),
       };
@@ -3800,6 +3811,9 @@ export default function App() {
   };
 
   const confirmPending = (partId) => clearPendingFlag((part) => part.id === partId);
+  /** تأكيدٌ وتحضيرٌ في ضغطةٍ واحدة — لمن يحضر وقت ما تؤكّد مبلغه. */
+  const confirmAndAttend = (partId, weekId = selectedWeekId) =>
+    clearPendingFlag((part) => part.id === partId, { partId, weekId });
   /** والكل مثل الواحد: صفٌّ من كل تسجيل، وإخوته تتبعه بالرقم نفسه. */
   const confirmAllPending = () => {
     const reps = new Set(signupPending(program).map((g) => g.part.id));
@@ -6832,6 +6846,7 @@ export default function App() {
                   canConfirm={canConfirmPending}
                   locked={week.status === 'مغلق'}
                   onConfirm={(p) => confirmPending(p.id)}
+                  onConfirmAttend={(p) => confirmAndAttend(p.id, week.id)}
                   onConfirmAll={() => confirmMany(visibleDayWaiting)}
                   onReceipt={(p) => { setForm({ receipt: p.receipt, who: p.name }); setModal('viewReceipt'); }}
                   onDrop={(p) => askDropPending(p, week.name, null)}
@@ -6985,6 +7000,7 @@ export default function App() {
                       canConfirm={canConfirmPending}
                       locked={ledgerLocked}
                       onConfirm={(p) => confirmPending(p.id)}
+                      onConfirmAttend={(p) => confirmAndAttend(p.id, week.id)}
                       onConfirmAll={() => confirmMany(visibleWaiting)}
                       onReceipt={(p) => { setForm({ receipt: p.receipt, who: p.name }); setModal('viewReceipt'); }}
                       onDrop={(p) => askDropPending(p, isGrouped ? 'البرنامج' : week.name,
@@ -12243,7 +12259,7 @@ function WaitingChip({ count }) {
  * قائمة الحضور، وتأكيد وصول مبلغه ينقله فوق فورًا — بلا ما تطلع من الشاشة
  * ولا تنشغل عن التحضير.
  */
-function WaitingList({ items, accounts, canMoney, canConfirm = canMoney, locked, onConfirm, onConfirmAll, onReceipt, onDrop, arrearsOf, arrearsText, hidden = 0 }) {
+function WaitingList({ items, accounts, canMoney, canConfirm = canMoney, locked, onConfirm, onConfirmAttend, onConfirmAll, onReceipt, onDrop, arrearsOf, arrearsText, hidden = 0 }) {
   // ما فيه منتظر أصلًا: نختفي. حجبهم البحثُ: نبقى ونقول ذلك — وإلا ظنّ إنه ما فيه أحد
   if (!items.length && !hidden) return null;
   const accountName = (id) => accounts.find((a) => a.id === id)?.name || 'بلا حساب';
@@ -12300,8 +12316,12 @@ function WaitingList({ items, accounts, canMoney, canConfirm = canMoney, locked,
             <div key={p.id}
               className={`rounded-xl border p-3 ${late.length ? 'border-red-200 bg-red-50' : old ? 'border-orange-200 bg-orange-50' : 'border-amber-100 bg-white'}`}>
               <div className="flex gap-3">
-                {/* الإيصال ظاهر لا مخبّى خلف زر: القرار يُؤخذ عليه */}
-                {canMoney && (
+                {/*
+                  الإيصال ظاهر لا مخبّى خلف زر: القرار يُؤخذ عليه. ومن
+                  عنده صلاحية التأكيد وحدها يراه هو الآخر — بلا الورقة ما
+                  يؤكّد شيئًا، يُصدّق بلا دليل.
+                */}
+                {(canMoney || canConfirm) && (
                   <button type="button" onClick={() => p.receipt && onReceipt?.(p)}
                     className="w-14 h-[4.5rem] rounded-lg overflow-hidden shrink-0 border border-slate-200 bg-white flex items-center justify-center">
                     {!p.receipt ? (
@@ -12337,11 +12357,18 @@ function WaitingList({ items, accounts, canMoney, canConfirm = canMoney, locked,
                     لتسجيل غيره، ويبقى للمالي كما كان.
                   */}
                   {(canMoney || canConfirm) && (
-                    <div className="flex gap-1.5 mt-2">
+                    <div className="flex flex-wrap gap-1.5 mt-2">
                       <button onClick={() => onConfirm(p)} disabled={locked}
                         className="flex-1 bg-green-600 text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center justify-center gap-1 disabled:opacity-40">
                         <Check size={14} /> وصل
                       </button>
+                      {/* من حضر وقت ما تؤكّد مبلغه — ضغطةٌ تغنيك عن تحضيره بعدها من قائمةٍ ثانية */}
+                      {onConfirmAttend && (
+                        <button onClick={() => onConfirmAttend(p)} disabled={locked}
+                          className="flex-1 bg-green-50 border border-green-200 text-green-700 text-xs font-bold px-3 py-2 rounded-lg flex items-center justify-center gap-1 disabled:opacity-40">
+                          <Check size={14} /> وصل وحضر
+                        </button>
+                      )}
                       {canMoney && (
                         <button onClick={() => onDrop?.(p)} disabled={locked}
                           className="flex-1 bg-white border border-red-200 text-red-600 text-xs font-bold px-3 py-2 rounded-lg flex items-center justify-center gap-1 disabled:opacity-40">

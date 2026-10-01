@@ -441,14 +441,16 @@ const strip = (data, me) => {
 const seesMoney = (me) => allowed(me, 'المصروفات والتقارير') || allowed(me, 'فيض - الإيرادات والمصروفات');
 
 /**
- * صلاحيةُ التأكيد: نطاقٌ محدودٌ وحقلٌ واحد — من أُعطيها دون المال كلِّه
- * يرى «ينتظر تأكيدك» ويضغط «وصل»، ولا يرى مبلغًا ولا حسابًا. وهي لا تُعطى
+ * صلاحيةُ التأكيد: نطاقٌ محدودٌ وحقلان — من أُعطيها دون المال كلِّه يرى
+ * «ينتظر تأكيدك» ويضغط «وصل»، ولا يرى مبلغًا ولا حسابًا. ويرى الإيصالَ معها:
+ * بلا الورقة التي حوّل بها لا يؤكّد شيئًا — يُصدّق بلا دليل. وهي لا تُعطى
  * إلا لمن ضُيّق وصولُه بأيامٍ بعينها، فلا تمنح من فُتح له كل شيء أصلًا.
  */
 const seesPending = (me) => seesMoney(me) || (me?.accessScope === 'limited' && Boolean(me?.canConfirm));
 
-/** الحقول التي تبقى بعد الحجب — `pending` وحده لمن أُعطي صلاحية التأكيد. */
-const moneyFieldsFor = (me) => (seesPending(me) ? PART_MONEY.filter((k) => k !== 'pending') : PART_MONEY);
+/** الحقول التي تبقى بعد الحجب — pending والإيصال وحدهما لمن أُعطي صلاحية التأكيد. */
+const CONFIRM_SEES = ['pending', 'receipt', 'receiptNo'];
+const moneyFieldsFor = (me) => (seesPending(me) ? PART_MONEY.filter((k) => !CONFIRM_SEES.includes(k)) : PART_MONEY);
 
 /* ---------------------------- حارس المحو ---------------------------- */
 /**
