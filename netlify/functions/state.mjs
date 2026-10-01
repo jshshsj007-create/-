@@ -17,7 +17,7 @@ import { runBackup, backupStatus, readSnapshot, writeUndo, UNDO } from '../lib/b
 import { hash, verify, isHashed } from '../lib/password.mjs';
 import { loginBlocked, noteFail, clearFails, recordLogin } from '../../src/login.js';
 import { countVisit, dayKey } from '../../src/visits.js';
-import { moneyChanged, moneyRows, moneyMissing, moneySum, blindMoney, restoreMoney } from '../../src/money.js';
+import { moneyChanged, moneyRows, moneyMissing, moneySum, blindMoney, restoreMoney, PART_MONEY } from '../../src/money.js';
 import { vapid, saveSub, dropSub, subsOf, whoHasPush, notifyNewNotices } from '../lib/push.mjs';
 import { TRASH_DAYS } from '../../src/trash.js';
 
@@ -433,12 +433,22 @@ const strip = (data, me) => {
    */
   if (!allowed(me, 'المستخدمون والصلاحيات')) out.trash = [];
   // والمال: من ليست عنده صلاحيتُه لا يصله منه شيء — لا يُخفى في الشاشة، بل لا يُرسل
-  if (!seesMoney(me)) return blindMoney(out);
+  if (!seesMoney(me)) return blindMoney(out, moneyFieldsFor(me));
   return out;
 };
 
 /** صلاحيةُ المال: أيٌّ من البابين يفتحه، وسواهما لا يراه. */
 const seesMoney = (me) => allowed(me, 'المصروفات والتقارير') || allowed(me, 'فيض - الإيرادات والمصروفات');
+
+/**
+ * صلاحيةُ التأكيد: نطاقٌ محدودٌ وحقلٌ واحد — من أُعطيها دون المال كلِّه
+ * يرى «ينتظر تأكيدك» ويضغط «وصل»، ولا يرى مبلغًا ولا حسابًا. وهي لا تُعطى
+ * إلا لمن ضُيّق وصولُه بأيامٍ بعينها، فلا تمنح من فُتح له كل شيء أصلًا.
+ */
+const seesPending = (me) => seesMoney(me) || (me?.accessScope === 'limited' && Boolean(me?.canConfirm));
+
+/** الحقول التي تبقى بعد الحجب — `pending` وحده لمن أُعطي صلاحية التأكيد. */
+const moneyFieldsFor = (me) => (seesPending(me) ? PART_MONEY.filter((k) => k !== 'pending') : PART_MONEY);
 
 /* ---------------------------- حارس المحو ---------------------------- */
 /**
@@ -757,7 +767,7 @@ const guard = (incoming, current, me) => {
   // والصندوق لا يُمحى بحفظة — لا من قائدٍ ولا من مدير
   out.trash = trashKeep(incoming, current);
   // وما حُجب عنه من المال يُردّ، وإلا محته حفظةُ حضورٍ من جهازٍ ما رآه
-  return seesMoney(me) ? out : restoreMoney(out, current);
+  return seesMoney(me) ? out : restoreMoney(out, current, moneyFieldsFor(me));
 };
 
 /**

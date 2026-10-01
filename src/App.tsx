@@ -715,7 +715,7 @@ export function migrate(loaded) {
   });
   // الدخول صار باسم مستخدم وكلمة مرور بدل «اختر اسمك + رمز»؛ نحوّل المستخدمين القدامى
   d.users = (d.users || []).map((u, i) => {
-    const user = { accessScope: 'all', allowedWeeks: [], permissions: [], phone: '', noReport: false, ...u };
+    const user = { accessScope: 'all', allowedWeeks: [], permissions: [], phone: '', noReport: false, canConfirm: false, ...u };
     if (!user.username) user.username = (user.name || `user${i + 1}`).split(' ')[0];
     if (!user.password) user.password = user.code || '';
     delete user.code;
@@ -2807,6 +2807,9 @@ export default function App() {
       phone: normalizePhone(form.phone || ''), noReport: Boolean(form.noReport),
       // «يشوف فقط» ما تُحفظ إلا لصلاحيةٍ يملكها، وإلا بقيت أثرًا لصلاحيةٍ نُزعت
       readOnly: (form.readOnly || []).filter((x) => (form.permissions || []).includes(x)),
+      // صلاحية التأكيد ما تُحفظ إلا مع نطاقٍ محدودٍ وفُتح له يومٌ فيه فعلًا،
+      // وإلا بقيت أثرًا من يومٍ وسّع نطاقَه بعده فصارت بلا معنى
+      canConfirm: Boolean(form.canConfirm) && (form.accessScope || 'all') === 'limited' && (form.allowedWeeks || []).length > 0,
     };
     if (form.id) {
       // كلمة المرور تتغيّر فقط لو كتب وحدة جديدة
@@ -4357,6 +4360,13 @@ export default function App() {
   const hasAssignedWeeks = !isAdmin && effectiveUser?.accessScope === 'limited'
     && (effectiveUser?.allowedWeeks || []).length > 0;
   const canAttend = can('الأسابيع والحضور') || can('البرامج') || hasAssignedWeeks;
+  /**
+   * صلاحية التأكيد: تُعطى وحدها لمن ضُيّق نطاقُه بأيام بعينها، فيؤكّد وصول
+   * مبلغ من سجّل من الرابط العام في أيامه بلا ما يرى مبلغًا ولا حسابًا —
+   * المالي يؤكّد دائمًا، والخانة في شاشة المستخدم لا تظهر أصلًا إلا لمن
+   * عنده نطاقٌ محدود وفُتح له يومٌ فيه.
+   */
+  const canConfirmPending = canMoney || (hasAssignedWeeks && Boolean(effectiveUser?.canConfirm));
   /**
    * التسجيل مسموح لمسجّل الحضور كمان: يقدر يضيف طالب بمبلغه وطريقة دفعه.
    * لكن يبقى ما يشوف مبالغ اللي سجّلهم غيره — الإدخال مسموح والقراءة لا.
@@ -6795,7 +6805,7 @@ export default function App() {
                 ) : (
                   <AttendanceTable
                     participants={dayAttendanceRows}
-                    onConfirmWaiting={canMoney ? (p) => confirmPending(p.id) : null}
+                    onConfirmWaiting={canConfirmPending ? (p) => confirmPending(p.id) : null}
                     statusOf={(p) => attendanceOf(p, week.id)}
                     subscriptionOf={(p) => enrolledDays(p, program.weeks).length}
                     totalDays={program.weeks.length}
@@ -6819,6 +6829,7 @@ export default function App() {
                   hidden={dayWaiting.length - visibleDayWaiting.length}
                   accounts={data.faidAccounts}
                   canMoney={canMoney}
+                  canConfirm={canConfirmPending}
                   locked={week.status === 'مغلق'}
                   onConfirm={(p) => confirmPending(p.id)}
                   onConfirmAll={() => confirmMany(visibleDayWaiting)}
@@ -6943,7 +6954,7 @@ export default function App() {
                       // بلا صلاحية مالية: واجهة تحضير صرفة، نفس تجربة البرنامج المجمّع
                       <AttendanceTable
                         participants={weekAttendanceRows}
-                        onConfirmWaiting={canMoney ? (p) => confirmPending(p.id) : null}
+                        onConfirmWaiting={canConfirmPending ? (p) => confirmPending(p.id) : null}
                         statusOf={(p) => p.attendance || 'معلق'}
                         locked={ledgerLocked}
                         onSet={(p, st) => setAttendance(p.id, st)}
@@ -6951,7 +6962,7 @@ export default function App() {
                     ) : (
                       <ParticipantsTable
                         participants={weekAttendanceRows}
-                        onConfirmWaiting={canMoney ? (p) => confirmPending(p.id) : null}
+                        onConfirmWaiting={canConfirmPending ? (p) => confirmPending(p.id) : null}
                         accounts={data.faidAccounts}
                         showAttendance
                         showMoney={canMoney}
@@ -6971,6 +6982,7 @@ export default function App() {
                       hidden={waiting.length - visibleWaiting.length}
                       accounts={data.faidAccounts}
                       canMoney={canMoney}
+                      canConfirm={canConfirmPending}
                       locked={ledgerLocked}
                       onConfirm={(p) => confirmPending(p.id)}
                       onConfirmAll={() => confirmMany(visibleWaiting)}
@@ -10259,6 +10271,20 @@ export default function App() {
               );
             })()}
           </Field>
+          {/*
+            تظهر فقط لمن ضُيّق نطاقُه ويومٌ واحد على الأقل مفتوحٌ له —
+            قبلها ما فيه يومٌ يؤكّد فيه شيئًا، فالخانة بلا معنى.
+          */}
+          {form.accessScope === 'limited' && (form.allowedWeeks || []).length > 0 && (
+            <Field label="صلاحية التأكيد" hint="يأكّد وصول مبلغ من سجّل من الرابط العام في أيامه، بلا ما يرى مبلغًا ولا حسابًا.">
+              <div className="flex gap-2">
+                {[{ v: false, l: 'لا' }, { v: true, l: 'نعم' }].map((o) => (
+                  <button key={String(o.v)} type="button" onClick={() => setForm({ ...form, canConfirm: o.v })}
+                    className={`flex-1 py-2 rounded-lg text-sm font-medium border ${Boolean(form.canConfirm) === o.v ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`}>{o.l}</button>
+                ))}
+              </div>
+            </Field>
+          )}
           {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
           <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={saveUser}>{modal === 'editUser' ? 'حفظ' : 'إضافة'}</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
         </Modal>
@@ -12217,7 +12243,7 @@ function WaitingChip({ count }) {
  * قائمة الحضور، وتأكيد وصول مبلغه ينقله فوق فورًا — بلا ما تطلع من الشاشة
  * ولا تنشغل عن التحضير.
  */
-function WaitingList({ items, accounts, canMoney, locked, onConfirm, onConfirmAll, onReceipt, onDrop, arrearsOf, arrearsText, hidden = 0 }) {
+function WaitingList({ items, accounts, canMoney, canConfirm = canMoney, locked, onConfirm, onConfirmAll, onReceipt, onDrop, arrearsOf, arrearsText, hidden = 0 }) {
   // ما فيه منتظر أصلًا: نختفي. حجبهم البحثُ: نبقى ونقول ذلك — وإلا ظنّ إنه ما فيه أحد
   if (!items.length && !hidden) return null;
   const accountName = (id) => accounts.find((a) => a.id === id)?.name || 'بلا حساب';
@@ -12250,6 +12276,8 @@ function WaitingList({ items, accounts, canMoney, locked, onConfirm, onConfirmAl
         <div className="text-xs text-slate-500 mb-3 leading-relaxed">
           {canMoney
             ? 'الإيصال قدامك. «وصل» ينقله لقائمة الحضور فوق، و«ما وصل» يحذف تسجيله — ويقعد شهرًا في صندوق المحذوفات لو غلطت.'
+            : canConfirm
+            ? 'سجّلوا من الرابط. اضغط «وصل» لمن تأكّدت من وصول مبلغه، وينتقل لقائمة الحضور فوق.'
             : 'سجّلوا من الرابط، وينتظرون تأكيد المسؤول عشان يدخلون قائمة الحضور.'}
         </div>
       )}
@@ -12304,16 +12332,22 @@ function WaitingList({ items, accounts, canMoney, locked, onConfirm, onConfirmAl
                   <div className={`text-[11px] mt-0.5 ${old ? 'text-orange-600 font-bold' : 'text-slate-400'}`}>
                     سجّل {agoText(p.submittedAt) || '— بلا تاريخ'}
                   </div>
-                  {canMoney && (
+                  {/*
+                    «وصل» وحده يفتح لصلاحية التأكيد — أما «ما وصل» فحذفٌ
+                    لتسجيل غيره، ويبقى للمالي كما كان.
+                  */}
+                  {(canMoney || canConfirm) && (
                     <div className="flex gap-1.5 mt-2">
                       <button onClick={() => onConfirm(p)} disabled={locked}
                         className="flex-1 bg-green-600 text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center justify-center gap-1 disabled:opacity-40">
                         <Check size={14} /> وصل
                       </button>
-                      <button onClick={() => onDrop?.(p)} disabled={locked}
-                        className="flex-1 bg-white border border-red-200 text-red-600 text-xs font-bold px-3 py-2 rounded-lg flex items-center justify-center gap-1 disabled:opacity-40">
-                        <X size={14} /> ما وصل
-                      </button>
+                      {canMoney && (
+                        <button onClick={() => onDrop?.(p)} disabled={locked}
+                          className="flex-1 bg-white border border-red-200 text-red-600 text-xs font-bold px-3 py-2 rounded-lg flex items-center justify-center gap-1 disabled:opacity-40">
+                          <X size={14} /> ما وصل
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

@@ -7,7 +7,7 @@
  * مفتاح، ولا يُعدّ المحذوفُ باليد ضائعًا.
  */
 import assert from 'node:assert/strict';
-import { moneyRows, moneyChanged, moneyMissing, moneySum, moneyKey, moneyPrint, MONEY_KINDS, blindMoney, restoreMoney } from '../src/money.js';
+import { moneyRows, moneyChanged, moneyMissing, moneySum, moneyKey, moneyPrint, MONEY_KINDS, blindMoney, restoreMoney, PART_MONEY } from '../src/money.js';
 
 let passed = 0;
 const test = (name, fn) => { fn(); passed++; console.log('  ✓ ' + name); };
@@ -231,6 +231,33 @@ test('ومشتركٌ جديدٌ سجّله هو يمرّ كما هو، فما ل
   const parts = restoreMoney(his, full).programs[0].weeks[0].participants;
   assert.equal(parts.length, 2);
   assert.equal(parts[1].name, 'خالد');
+});
+
+/* ------------------------- صلاحية التأكيد: pending وحده ------------------------- */
+
+/** حقول الحجب لمن أُعطي صلاحية التأكيد وحدها: كلُّ المال إلا pending. */
+const CONFIRM_FIELDS = PART_MONEY.filter((k) => k !== 'pending');
+
+test('صلاحية التأكيد: pending يمرّ، وبقية المال تبقى محجوبة', () => {
+  const full = world();
+  full.programs[0].weeks[0].participants[0].pending = true;
+  const b = blindMoney(full, CONFIRM_FIELDS);
+  const p = b.programs[0].weeks[0].participants[0];
+  assert.equal(p.pending, true, 'يرى أنه ينتظر تأكيده');
+  for (const k of ['amount', 'accountId', 'receipt', 'receiptNo', 'sub'])
+    assert.equal(p[k], undefined, k);
+});
+
+test('ومن أكّده بنفسه، حفظتُه لا تُردّ عليه تأكيده القديم', () => {
+  const full = world();
+  full.programs[0].weeks[0].participants[0].pending = true;
+  const blind = blindMoney(full, CONFIRM_FIELDS);
+  const his = { ...blind, programs: blind.programs.map((p) => ({ ...p, weeks: p.weeks.map((w) => ({ ...w,
+    participants: w.participants.map((x) => ({ ...x, pending: false, confirmedAt: 1 })) })) })) };
+  const out = restoreMoney(his, full, CONFIRM_FIELDS);
+  const p = out.programs[0].weeks[0].participants[0];
+  assert.equal(p.pending, false, 'تأكيدُه يبقى — ما يُردّ عليه القديم');
+  assert.equal(p.amount, 50, 'وما سواه من المال يُردّ كما كان');
 });
 
 console.log(`\n✅ ${passed} اختبارًا لدفتر المال\n`);

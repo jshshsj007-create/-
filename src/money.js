@@ -185,18 +185,24 @@ const without = (obj, fields) => {
   return hit ? out : obj;
 };
 
-const blindLedger = (l) => {
+const blindLedger = (l, fields) => {
   if (!l || typeof l !== 'object') return l;
   const out = { ...l };
   for (const k of MONEY_LISTS) if (out[k]) out[k] = [];
   if (out.faidTransfer) out.faidTransfer = null;
   if (out.quickRevenue) out.quickRevenue = 0;
-  if (Array.isArray(out.participants)) out.participants = out.participants.map((x) => without(x, PART_MONEY));
+  if (Array.isArray(out.participants)) out.participants = out.participants.map((x) => without(x, fields));
   return out;
 };
 
-/** البيانات بلا مال — لمن ليست عنده صلاحيةُ المال. */
-export const blindMoney = (data) => {
+/**
+ * البيانات بلا مال — لمن ليست عنده صلاحيةُ المال.
+ *
+ * و`fields` تُضيَّق أحيانًا: من أُعطي صلاحية «التأكيد» وحدها يرى `pending`
+ * فقط من بين حقول المشترك المالية — يكفيه ليعرف من ينتظر تأكيده ويؤكّده،
+ * ولا يرى مبلغًا ولا حسابًا. فالحجبُ هنا يستثني حقلًا بعينه لا كلَّ المال.
+ */
+export const blindMoney = (data, fields = PART_MONEY) => {
   if (!data) return data;
   return {
     ...data,
@@ -204,8 +210,8 @@ export const blindMoney = (data) => {
     handovers: [],
     faidAccounts: [],
     programs: (data.programs || []).map((p) => {
-      const q = blindLedger(p);
-      return { ...q, weeks: (q.weeks || []).map(blindLedger) };
+      const q = blindLedger(p, fields);
+      return { ...q, weeks: (q.weeks || []).map((w) => blindLedger(w, fields)) };
     }),
     trips: (data.trips || []).map((t) => ({ ...t, incomeItems: [], expenseItems: [] })),
   };
@@ -217,8 +223,12 @@ export const blindMoney = (data) => {
  * وإلا محته حفظةُ حضورٍ من قائدٍ ما رآه أصلًا: يفتح اليوم فيسجّل الحاضرين،
  * فتذهب مصروفاتُ اليوم ومبالغُ المشتركين معها — لأن جهازَه ما كان فيها شيء.
  * وهذا حجبٌ يُتلف، لا حجبٌ يحفظ.
+ *
+ * و`fields` كما في `blindMoney`: من رأى `pending` وحده (صلاحية التأكيد)
+ * عدّله هو بنفسه بتأكيده، فما يُردّ عليه القديم — وإلا محا تأكيدَه حجبُه
+ * نفسُه. وبقيّة الحقول التي ما رآها تُردّ كما كانت، كأي جهازٍ أعمى عنها.
  */
-export const restoreMoney = (incoming, current) => {
+export const restoreMoney = (incoming, current, fields = PART_MONEY) => {
   if (!incoming) return incoming;
   const backLedger = (mine, was) => {
     if (!was) return mine;
@@ -232,7 +242,7 @@ export const restoreMoney = (incoming, current) => {
         const o = old.get(x?.id);
         if (!o) return x;
         const add = {};
-        for (const k of PART_MONEY) if (o[k] !== undefined) add[k] = o[k];
+        for (const k of fields) if (o[k] !== undefined) add[k] = o[k];
         return { ...x, ...add };
       });
     }
