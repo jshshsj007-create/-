@@ -42,6 +42,7 @@ import {
   reviewCycles, cycleTarget, cycleDrift, stopsOf, stopsExtraOf, stopText, pagesBetween, pagesOf,
   sessionRows, sessionReportText, khayrSessionSections, khayrSeasonSections,
 } from './khayr.js';
+import { DEFAULT_WUDU_STEPS, wuduDone, wuduPercent, wuduMastered, wuduStats } from './wudu.js';
 import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 import PdfFirstPage from './pdfview.jsx';
 import { say } from './adad.js';
@@ -547,6 +548,11 @@ const defaultData = () => ({
    */
   khayr: { students: [], sessions: [] },
   /**
+   * تعليم الوضوء: داخل تبويب النادي، وقائمة طلابه مستقلة كخيركم — خطواتُها
+   * تُعدَّل، ونسبة كلّ طالب تُحسب منها لا تُكتب يدويًا.
+   */
+  wudu: { steps: DEFAULT_WUDU_STEPS(), students: [] },
+  /**
    * إعدادات الفريق: كلمة «متقطع» لها معنى واحد عند الجميع، فتُضبط هنا مرة
    * وتنطبق على كل البرامج.
    */
@@ -660,6 +666,10 @@ export function migrate(loaded) {
    * ويظهر للمدير «غير مُسنَد» ليُسنِده بيده.
    */
   d.qiyami = (d.qiyami || []).map((q) => ({ supervisors: [], helper: '', title: '', points: '', qa: '', video: '', ...q }));
+  /** تعليم الوضوء: من جاء بلا خطواتٍ يأخذ الافتراضية، ومن جاء بلا طلاب يبدأ فارغًا. */
+  d.wudu = { steps: DEFAULT_WUDU_STEPS(), students: [], ...(d.wudu || {}) };
+  if (!d.wudu.steps?.length) d.wudu.steps = DEFAULT_WUDU_STEPS();
+  d.wudu.students = (d.wudu.students || []).map((s) => ({ notes: '', steps: {}, ...s }));
   d.dayReports = (d.dayReports || []).map((r) => ({ comp: '', league: '', notes: '', ...r }));
   d.studentNotes = d.studentNotes || [];
   d.notices = (d.notices || []).map((n) => ({ to: '', days: 0, reads: [], ...n }));
@@ -3296,6 +3306,47 @@ export default function App() {
       ...(gone ? { trash: intoTrash('khayrSession', gone, { label: `جلسة ${gone.date}` }) } : {}),
     });
     goto('khayr');
+  };
+
+  /* --------------------------- تعليم الوضوء --------------------------- */
+
+  const patchWudu = (patch) => save({ ...data, wudu: { ...data.wudu, ...patch } });
+
+  const saveWuduStudent = () => {
+    if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب اسم الطالب' }); return; }
+    const fields = { name: form.name.trim(), notes: (form.notes || '').trim() };
+    patchWudu({
+      students: form.id
+        ? data.wudu.students.map((s) => (s.id !== form.id ? s : mark({ ...s, ...fields }, false)))
+        : [...data.wudu.students, mark({ id: uid(), steps: {}, ...fields }, true)],
+    });
+    closeModal();
+  };
+
+  const removeWuduStudent = (sid) => {
+    const st = data.wudu.students.find((s) => s.id === sid);
+    save({
+      ...data,
+      wudu: { ...data.wudu, students: data.wudu.students.filter((s) => s.id !== sid) },
+      ...(st ? { trash: intoTrash('wuduStudent', st) } : {}),
+    });
+  };
+
+  const toggleWuduStep = (sid, stepId) => {
+    patchWudu({
+      students: data.wudu.students.map((s) => (s.id !== sid ? s
+        : mark({ ...s, steps: { ...s.steps, [stepId]: !s.steps?.[stepId] } }, false))),
+    });
+  };
+
+  /**
+   * خطوات الوضوء نفسها: قائمةٌ معدَّلة لا ثابتة، لأن كل معلّمٍ يُعلّم بترتيبٍ
+   * يناسبه. حذفُ خطوة لا يمحو أثرها من سجلّ من أتقنها — يبقى محفوظًا بلا أثر
+   * ظاهر، فلو رجعت الخطوة بنفس معرّفها رجع معها.
+   */
+  const saveWuduSteps = (steps) => {
+    const cleaned = (steps || []).map((s) => ({ ...s, text: (s.text || '').trim() })).filter((s) => s.text);
+    patchWudu({ steps: cleaned.length ? cleaned : DEFAULT_WUDU_STEPS() });
   };
 
   /**
@@ -7395,15 +7446,117 @@ export default function App() {
               { id: 'comps', label: 'المسابقات' },
               { id: 'league', label: 'الدوري والكأس' },
               { id: 'question', label: 'سؤال اليوم' },
+              { id: 'wudu', label: 'تعليم الوضوء' },
             ] : []),
             ...(can('القيمي') ? [{ id: 'qiyami', label: 'القيمي' }] : []),
           ];
           const tab = tabs.some((t) => t.id === clubTab) ? clubTab : tabs[0]?.id;
+          const editClub = canWritePerm(effectiveUser, 'النادي');
+          const wudu = data.wudu || { steps: DEFAULT_WUDU_STEPS(), students: [] };
           return (
           <div>
             <h2 className="text-xl font-extrabold text-slate-800">النادي</h2>
-            <div className="text-xs text-slate-400 mt-0.5 mb-4">المسابقات والدوري وسؤال اليوم{can('القيمي') ? ' والقيمي' : ''}.</div>
+            <div className="text-xs text-slate-400 mt-0.5 mb-4">المسابقات والدوري وسؤال اليوم وتعليم الوضوء{can('القيمي') ? ' والقيمي' : ''}.</div>
             <Tabs value={tab} onChange={setClubTab} tabs={tabs} />
+
+            {tab === 'wudu' && (() => {
+              const stats = wuduStats(wudu.students, wudu.steps);
+              return (
+                <div>
+                  <div className="flex items-center justify-between mb-3 gap-3">
+                    <h3 className="font-bold text-slate-700">تعليم الوضوء</h3>
+                    {editClub && (
+                      <div className="flex items-center gap-2">
+                        <button className={btnGhostBox}
+                          onClick={() => { setForm({ steps: wudu.steps.map((s) => ({ ...s })) }); setModal('editWuduSteps'); }}>
+                          <Pencil size={14} /> الخطوات
+                        </button>
+                        <button className={btnPrimary}
+                          onClick={() => { setForm({ name: '', notes: '' }); setModal('wuduStudent'); }}>
+                          <Plus size={16} /> طالب
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-xs text-slate-400 mb-4">
+                    قائمة طلابٍ مستقلة لتعليم الوضوء — تسجّلهم بنفسك، وتعلّم كل ما أتقنوه من خطواته.
+                  </div>
+
+                  {wudu.students.length > 0 && (
+                    <div className="grid grid-cols-3 gap-2.5 mb-4">
+                      <div className={cardCls + ' text-center py-3'}>
+                        <div className="text-2xl font-extrabold text-slate-800">{stats.total}</div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">طالب</div>
+                      </div>
+                      <div className={cardCls + ' text-center py-3'}>
+                        <div className="text-2xl font-extrabold text-green-700">{stats.mastered}</div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">أتقنوا الوضوء</div>
+                      </div>
+                      <div className={cardCls + ' text-center py-3'}>
+                        <div className="text-2xl font-extrabold text-brand-700">{stats.avg}٪</div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">متوسط الإتقان</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {!wudu.students.length ? (
+                    <div className={emptyCls}>ما فيه طلاب بعد. أضف أول طالب.</div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {wudu.students.map((st) => {
+                        const pct = wuduPercent(st, wudu.steps);
+                        const mastered = wuduMastered(st, wudu.steps);
+                        return (
+                          <div key={st.id} className={cardCls}>
+                            <div className="flex items-start gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <div className="font-bold text-slate-800">{st.name}</div>
+                                  {mastered && <Badge tone="green">أتقن الوضوء</Badge>}
+                                </div>
+                                {st.notes && <div className="text-[11px] text-slate-400 mt-0.5">{st.notes}</div>}
+                                <Trace item={st} className="mt-1.5" />
+                              </div>
+                              {editClub && (
+                                <>
+                                  <button onClick={() => { setForm({ ...st }); setModal('wuduStudent'); }}
+                                    className="text-slate-400 hover:text-brand-700 shrink-0"><Pencil size={16} /></button>
+                                  <button onClick={() => askConfirm(`حذف «${st.name}»؟`, () => removeWuduStudent(st.id))}
+                                    className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 size={16} /></button>
+                                </>
+                              )}
+                            </div>
+                            <div className="mt-3 pt-3 border-t border-slate-100">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-xs font-bold text-slate-700">نسبة الإتقان</span>
+                                <span className={`text-xs font-bold ${mastered ? 'text-green-700' : 'text-brand-700'}`}>
+                                  {wuduDone(st, wudu.steps)} من {wudu.steps.length} · {pct}٪
+                                </span>
+                              </div>
+                              <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden mb-3">
+                                <div className={`h-full rounded-full ${mastered ? 'bg-green-500' : 'bg-brand-500'}`} style={{ width: `${pct}%` }} />
+                              </div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {wudu.steps.map((step) => {
+                                  const on = Boolean(st.steps?.[step.id]);
+                                  return (
+                                    <button key={step.id} disabled={!editClub} onClick={() => toggleWuduStep(st.id, step.id)}
+                                      className={`text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border flex items-center gap-1 disabled:opacity-60 ${
+                                        on ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-slate-200 text-slate-500'}`}>
+                                      {on && <Check size={12} />} {step.text}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {tab === 'qiyami' && (() => {
               const rows = (data.qiyami || []).slice().sort((a, b) => (b.at || 0) - (a.at || 0));
@@ -11188,6 +11341,48 @@ export default function App() {
           )}
           {form.error && <div className="text-xs text-red-500 mb-3">{form.error}</div>}
           <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={saveKhayrStudent}>حفظ</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
+        </Modal>
+      )}
+
+      {modal === 'wuduStudent' && (
+        <Modal title={form.id ? 'تعديل الطالب' : 'طالب جديد'} onClose={closeModal}>
+          <Field label="اسم الطالب">
+            <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="سعد المطيري" />
+          </Field>
+          <Field label="ملاحظات (اختياري)">
+            <textarea className={inputCls} rows={3} value={form.notes || ''} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+          </Field>
+          {form.error && <div className="text-xs text-red-500 mb-3">{form.error}</div>}
+          <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={saveWuduStudent}>حفظ</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
+        </Modal>
+      )}
+
+      {modal === 'editWuduSteps' && (
+        <Modal title="خطوات الوضوء" onClose={closeModal} wide>
+          <div className="text-xs text-slate-400 mb-4">
+            عدّل نصّ أي خطوة أو احذفها أو أضف خطوات جديدة. حذف خطوة لا يمحو تقدّم من أتقنها — يبقى محفوظًا بلا أثر ظاهر.
+          </div>
+          <div className="space-y-2 mb-3">
+            {(form.steps || []).map((s, i) => (
+              <div key={s.id} className="flex items-center gap-2">
+                <input className={inputCls} value={s.text}
+                  onChange={(e) => setForm({ ...form, steps: form.steps.map((x, j) => (j !== i ? x : { ...x, text: e.target.value })) })} />
+                <button type="button" className="text-slate-300 hover:text-red-500 shrink-0"
+                  onClick={() => setForm({ ...form, steps: form.steps.filter((_, j) => j !== i) })}>
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            ))}
+          </div>
+          <button type="button" className="text-[11px] font-semibold text-slate-400 hover:text-brand-700 mb-4"
+            onClick={() => setForm({ ...form, steps: [...(form.steps || []), { id: uid(), text: '' }] })}>
+            + خطوة جديدة
+          </button>
+          {form.error && <div className="text-xs text-red-500 mb-3">{form.error}</div>}
+          <div className="flex gap-2 mt-2">
+            <button className={btnPrimary + ' flex-1'} onClick={() => { saveWuduSteps(form.steps); closeModal(); }}>حفظ</button>
+            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+          </div>
         </Modal>
       )}
 
