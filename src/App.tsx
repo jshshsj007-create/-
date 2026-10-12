@@ -7536,14 +7536,15 @@ export default function App() {
                               <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden mb-3">
                                 <div className={`h-full rounded-full ${mastered ? 'bg-green-500' : 'bg-brand-500'}`} style={{ width: `${pct}%` }} />
                               </div>
-                              <div className="flex flex-wrap gap-1.5">
+                              <div className="flex flex-wrap gap-1">
                                 {wudu.steps.map((step) => {
                                   const on = Boolean(st.steps?.[step.id]);
                                   return (
                                     <button key={step.id} disabled={!editClub} onClick={() => toggleWuduStep(st.id, step.id)}
-                                      className={`text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border flex items-center gap-1 disabled:opacity-60 ${
+                                      title={step.text}
+                                      className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md border flex items-center gap-0.5 leading-tight disabled:opacity-60 ${
                                         on ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-slate-200 text-slate-500'}`}>
-                                      {on && <Check size={12} />} {step.text}
+                                      {on && <Check size={10} />} {step.text}
                                     </button>
                                   );
                                 })}
