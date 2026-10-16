@@ -34,18 +34,33 @@ export const wuduPercent = (student, steps) => {
 export const wuduMastered = (student, steps) =>
   (steps || []).length > 0 && wuduDone(student, steps) === (steps || []).length;
 
-/** النادي يلتقي كل جمعة — فهذا مدى «هذا الأسبوع» في عدّ من أتقن حديثًا. */
-export const WUDU_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * بداية أسبوع «هذا الأسبوع»: الأحد الذي يقع فيه `now`، منتصف الليل.
+ *
+ * النادي يلتقي الجمعة، وأحيانًا يُسجَّل تأخّرٌ يوم السبت لنفس جمعة أمس — فلو
+ * عُدّ الأسبوع بالأيام السبعة الماضية من لحظة الفتح، خرج يوم السبت من أسبوع
+ * جمعته هو. والأسبوع هنا من الأحد إلى السبت كما يعدّه الفريق، لا سبعة أيامٍ
+ * متدحرجة من الآن.
+ */
+const weekStart = (now) => {
+  const d = new Date(now);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - d.getDay());
+  return d.getTime();
+};
 
 /**
- * كم طالبًا أتقن الوضوء خلال الأسبوع الماضي.
+ * كم طالبًا أتقن الوضوء خلال أسبوع الفريق الحالي (الأحد إلى السبت).
  *
  * من `masteredAt`، وهو تاريخٌ يُختم آليًا لحظة اكتمال آخر خطوة — لا من حالة
  * الطالب الآن: من أتقن ثم عاد خطوةً ثم أكملها لا يُحسب مرتين، ومن أتقن قبل
- * شهر لا يظهر في عدّاد هذا الأسبوع رغم بقاء شارة «أتقن» على اسمه.
+ * أسبوعٍ لا يظهر في عدّاد هذا الأسبوع رغم بقاء شارة «أتقن» على اسمه.
  */
-export const wuduMasteredThisWeek = (students, now = Date.now()) =>
-  (students || []).filter((s) => s.masteredAt && now - s.masteredAt <= WUDU_WEEK_MS).length;
+export const wuduMasteredThisWeek = (students, now = Date.now()) => {
+  const start = weekStart(now);
+  const end = start + 7 * 24 * 60 * 60 * 1000;
+  return (students || []).filter((s) => s.masteredAt && s.masteredAt >= start && s.masteredAt < end).length;
+};
 
 /** إحصائية القسم: كم طالب، وكم أتقن الوضوء كاملًا، وكم أتقنه هذا الأسبوع، ومتوسط النسبة. */
 export const wuduStats = (students, steps, now = Date.now()) => {
