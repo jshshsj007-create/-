@@ -669,7 +669,7 @@ export function migrate(loaded) {
   /** تعليم الوضوء: من جاء بلا خطواتٍ يأخذ الافتراضية، ومن جاء بلا طلاب يبدأ فارغًا. */
   d.wudu = { steps: DEFAULT_WUDU_STEPS(), students: [], ...(d.wudu || {}) };
   if (!d.wudu.steps?.length) d.wudu.steps = DEFAULT_WUDU_STEPS();
-  d.wudu.students = (d.wudu.students || []).map((s) => ({ notes: '', steps: {}, ...s }));
+  d.wudu.students = (d.wudu.students || []).map((s) => ({ notes: '', steps: {}, masteredAt: null, ...s }));
   d.dayReports = (d.dayReports || []).map((r) => ({ comp: '', league: '', notes: '', ...r }));
   d.studentNotes = d.studentNotes || [];
   d.notices = (d.notices || []).map((n) => ({ to: '', days: 0, reads: [], ...n }));
@@ -3339,10 +3339,19 @@ export default function App() {
     });
   };
 
+  /**
+   * تبديل خطوة يختم تاريخ الإتقان آليًا: لحظة تكتمل آخر خطوة، لا حين يُسأل
+   * المعلّم عنه بعدها بأسبوع فينسى. وإن عاد الطالب خطوةً يُمحى الختم، فلو
+   * أكملها ثانيةً سُجّل إتقانًا جديدًا لا نفس الأسبوع القديم.
+   */
   const toggleWuduStep = (sid, stepId) => {
     patchWudu({
-      students: data.wudu.students.map((s) => (s.id !== sid ? s
-        : mark({ ...s, steps: { ...s.steps, [stepId]: !s.steps?.[stepId] } }, false))),
+      students: data.wudu.students.map((s) => {
+        if (s.id !== sid) return s;
+        const steps = { ...s.steps, [stepId]: !s.steps?.[stepId] };
+        const nowMastered = wuduMastered({ steps }, data.wudu.steps);
+        return mark({ ...s, steps, masteredAt: nowMastered ? (s.masteredAt || Date.now()) : null }, false);
+      }),
     });
   };
 
@@ -7490,7 +7499,7 @@ export default function App() {
                   </div>
 
                   {wudu.students.length > 0 && (
-                    <div className="grid grid-cols-3 gap-2.5 mb-4">
+                    <div className="grid grid-cols-2 gap-2.5 mb-4">
                       <div className={cardCls + ' text-center py-3'}>
                         <div className="text-2xl font-extrabold text-slate-800">{stats.total}</div>
                         <div className="text-[11px] text-slate-400 mt-0.5">طالب</div>
@@ -7498,6 +7507,10 @@ export default function App() {
                       <div className={cardCls + ' text-center py-3'}>
                         <div className="text-2xl font-extrabold text-green-700">{stats.mastered}</div>
                         <div className="text-[11px] text-slate-400 mt-0.5">أتقنوا الوضوء</div>
+                      </div>
+                      <div className={cardCls + ' text-center py-3'}>
+                        <div className="text-2xl font-extrabold text-amber-600">{stats.week}</div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">أتقنوا هذا الأسبوع</div>
                       </div>
                       <div className={cardCls + ' text-center py-3'}>
                         <div className="text-2xl font-extrabold text-brand-700">{stats.avg}٪</div>

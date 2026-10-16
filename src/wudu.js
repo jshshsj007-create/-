@@ -34,12 +34,25 @@ export const wuduPercent = (student, steps) => {
 export const wuduMastered = (student, steps) =>
   (steps || []).length > 0 && wuduDone(student, steps) === (steps || []).length;
 
-/** إحصائية القسم: كم طالب، وكم أتقن الوضوء كاملًا، ومتوسط النسبة بينهم. */
-export const wuduStats = (students, steps) => {
+/** النادي يلتقي كل جمعة — فهذا مدى «هذا الأسبوع» في عدّ من أتقن حديثًا. */
+export const WUDU_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * كم طالبًا أتقن الوضوء خلال الأسبوع الماضي.
+ *
+ * من `masteredAt`، وهو تاريخٌ يُختم آليًا لحظة اكتمال آخر خطوة — لا من حالة
+ * الطالب الآن: من أتقن ثم عاد خطوةً ثم أكملها لا يُحسب مرتين، ومن أتقن قبل
+ * شهر لا يظهر في عدّاد هذا الأسبوع رغم بقاء شارة «أتقن» على اسمه.
+ */
+export const wuduMasteredThisWeek = (students, now = Date.now()) =>
+  (students || []).filter((s) => s.masteredAt && now - s.masteredAt <= WUDU_WEEK_MS).length;
+
+/** إحصائية القسم: كم طالب، وكم أتقن الوضوء كاملًا، وكم أتقنه هذا الأسبوع، ومتوسط النسبة. */
+export const wuduStats = (students, steps, now = Date.now()) => {
   const list = students || [];
   const mastered = list.filter((s) => wuduMastered(s, steps)).length;
   const avg = list.length
     ? Math.round(list.reduce((a, s) => a + wuduPercent(s, steps), 0) / list.length)
     : 0;
-  return { total: list.length, mastered, avg };
+  return { total: list.length, mastered, avg, week: wuduMasteredThisWeek(list, now) };
 };
