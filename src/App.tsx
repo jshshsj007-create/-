@@ -2748,7 +2748,14 @@ export default function App() {
       ...emptyLedger('named'),
     }));
     const id = uid();
-    save({ ...data, programs: [...data.programs, mark({ id, name: form.name.trim(), type, termKey, status: 'مفتوح', dayPrice: Number(form.dayPrice || 0), weeks, attendance: {}, ...emptyLedger('named') }, true)] });
+    /*
+      نسخ الصور من برنامج سابق: الإعلان كثيرًا ما يتكرر موسمًا بعد موسم، فلا
+      يُعاد رفعه ولا تصميمه — يكفي أن يُشار إلى نفس الصورة المرفوعة من قبل.
+    */
+    const srcProgram = form.copyImagesFrom ? data.programs.find((p) => p.id === form.copyImagesFrom) : null;
+    const srcSignup = srcProgram ? { ...emptySignup(), ...(srcProgram.signup || {}) } : null;
+    const copiedSignup = srcSignup ? { signup: { ...emptySignup(), poster: srcSignup.poster, gallery: srcSignup.gallery } } : {};
+    save({ ...data, programs: [...data.programs, mark({ id, name: form.name.trim(), type, termKey, status: 'مفتوح', dayPrice: Number(form.dayPrice || 0), weeks, attendance: {}, ...emptyLedger('named'), ...copiedSignup }, true)] });
     setSelectedProgramId(id); setProgramTab('days'); goto('programDetail');
     setForm({});
   };
@@ -9790,6 +9797,19 @@ export default function App() {
               <input type="number" className={inputCls} value={form.dayPrice || ''} onChange={(e) => setForm({ ...form, dayPrice: e.target.value })} placeholder="مثال: 50" />
             </Field>
           )}
+          {(() => {
+            const picSources = data.programs.filter((p) => p.signup?.poster || (p.signup?.gallery || []).length);
+            if (!picSources.length) return null;
+            return (
+              <Field label="نسخ الصور من برنامج سابق (اختياري)"
+                hint="يأخذ معه صورة الإعلان وصور المعرض كما هي بلا إعادة رفع — تقدر تغيّرها بعدين من صفحة التسجيل.">
+                <select className={inputCls} value={form.copyImagesFrom || ''} onChange={(e) => setForm({ ...form, copyImagesFrom: e.target.value })}>
+                  <option value="">بلا نسخ</option>
+                  {picSources.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </Field>
+            );
+          })()}
           {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
           <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} onClick={addProgram}>إضافة</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
         </Modal>
