@@ -136,7 +136,7 @@ const loadImage = (src) => new Promise((resolve) => {
  * ويُطوى ما غاب: من لا صلاحية له في المال لا يرى قسمًا فارغًا، ومن لم يُقم
  * شيئًا من النادي لا يرى عنوانه.
  */
-export const sheetSections = ({ students, present, enrolled, money, club, qiyami, notes, reports, reportTable } = {}) => {
+export const sheetSections = ({ students, present, enrolled, money, club, qiyami, notes, reports, reportTable, wudu } = {}) => {
   const out = [];
   const who = [];
   if (students != null) who.push(['الطلاب المسجلون', fmt(students)]);
@@ -160,6 +160,9 @@ export const sheetSections = ({ students, present, enrolled, money, club, qiyami
 
   const list = (club || []).map((c) => clean(c)).filter(Boolean);
   if (list.length) out.push({ title: 'النادي', lines: list });
+
+  /** تعليم الوضوء: سطرٌ واحد جاهز — عددٌ عامٌّ للفريق لا يخصّ هذا اليوم وحده. */
+  if (clean(wudu)) out.push({ title: 'تعليم الوضوء', lines: [clean(wudu)] });
 
   /**
    * القيمي: عنوانُه ومن ألقاه. ولا يصل هنا أصلًا إلا من يملك صلاحيته —

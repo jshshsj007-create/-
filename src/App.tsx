@@ -7171,13 +7171,16 @@ export default function App() {
                           .map((q) => ({ title: q.title, by: supervisorNames(q, data.users).join(' و') }));
                         const notes = noteNames(data, program.id, week.id, data.students);
                         const roll = isAdmin ? reportRoll(data, program.id, week.id, seesWeek) : null;
+                        // غيابُه يعني القسم غير مُستخدَم أصلًا — لا أن لا أحد أتقن هذا الأسبوع
+                        const wuduWeek = (data.wudu?.students || []).length
+                          ? { week: wuduStats(data.wudu.students, data.wudu.steps).week } : null;
                         return {
-                          qiyami: qs, notes,
+                          qiyami: qs, notes, wudu: wuduWeek,
                           reports: roll && roll.total ? rollText(roll) : '',
                           // والجدولُ نفسه يدخل الورقة: من كتب ماذا، لا كم عددُهم
                           reportTable: isAdmin ? reportTable(data, program.id, week.id, seesWeek) : null,
                           summary: (names) => daySummary({
-                            comps: runs?.competitions.length || 0, qiyami: qs, noteNames: notes, roll,
+                            comps: runs?.competitions.length || 0, qiyami: qs, noteNames: notes, roll, wudu: wuduWeek,
                           }, { names }),
                         };
                       })()} />
@@ -13290,6 +13293,7 @@ function WeekReport({ week, accounts, canMoney, programName, term, club, extra =
         } : null,
         club,
         qiyami: qs, notes, reports: extra?.reports || '', reportTable: names ? (extra?.reportTable || null) : null,
+        wudu: extra?.wudu ? `أتقن ${say(extra.wudu.week, 'student')} هذا الأسبوع` : '',
       }, { logo: LOGO_MARK_WHITE, team: TEAM_NAME, stamp: hijri(Date.now()) });
       const how = await shareFile(blob, sheetFileName(week.date), `تقرير ${week.name}`);
       setShared(how === 'downloaded' ? 'نزلت الورقة' : '');

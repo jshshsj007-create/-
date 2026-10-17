@@ -481,7 +481,12 @@ export const videoEmbed = (url) => {
  * و`names: false` يشيل أسماء الأولاد ويبقي عددهم — لأن الورقة إذا خرجت من
  * التطبيق خرجت من الصلاحيات معها.
  */
-export const daySummary = ({ comps = 0, qiyami = [], noteNames: notes = [], roll = null } = {},
+/**
+ * `wudu` عدد من أتقن الوضوء هذا الأسبوع (الأحد-السبت) — عددٌ عامٌّ للفريق لا
+ * يخصّ هذا اليوم وحده، فلا يُمرَّر إلا من عنده طلاب في القائمة أصلًا؛ غيابُه
+ * يعني القسم غير مُستخدَم، لا أن لا أحد أتقن.
+ */
+export const daySummary = ({ comps = 0, qiyami = [], noteNames: notes = [], roll = null, wudu = null } = {},
   { names = true } = {}) => {
   const out = [];
   if (comps) out.push(`أُقيمت اليوم ${say(comps, 'competition')}`);
@@ -496,5 +501,6 @@ export const daySummary = ({ comps = 0, qiyami = [], noteNames: notes = [], roll
     out.push(names ? `${who}: ${notes.join(' · ')}` : who);
   }
   if (roll) out.push(`تقارير القادة: ${rollText(roll)}`);
+  if (wudu) out.push(`تعليم الوضوء: أتقن ${say(wudu.week, 'student')} هذا الأسبوع`);
   return out;
 };
