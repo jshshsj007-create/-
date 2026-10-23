@@ -78,15 +78,24 @@ const toUser = async (store, userId, payload) => {
 };
 
 /**
- * من يُرسَل إليهم هذا التنبيه: الموجَّه إليه وحده، أو الفريق كلُّه.
+ * من يُرسَل إليهم هذا التنبيه: من اختارهم المدير بأسمائهم، أو الفريق كلُّه.
+ *
+ * `to` مصفوفة معرّفات منذ صار الاختيار متعددًا — وفاضيةٌ تعني «للكل»، كما
+ * في `noticeTargets` بـ`taqreer.js`. **القاعدتان يجب أن تتطابقا دائمًا**:
+ * هذي تقرّر من يصله الإشعار، وتلك من يراه في التطبيق — افترقتا مرة فتوقّف
+ * الإشعار عن الجميع بصمت رغم وصول التنبيه للتطبيق كما هو.
  *
  * ولا يُرسَل إلى كاتبه ولا إلى مديرٍ — هؤلاء يكتبونها لا ينتظرونها، كما لا
  * يُعدّون في «قرأه ٣ من ٥».
  */
-export const noticeTargets = (notice, users) => (users || [])
-  .filter((u) => u.role !== 'مدير' && u.status !== 'غير نشط'
-    && u.id !== notice.by && (!notice.to || u.id === notice.to))
-  .map((u) => u.id);
+export const noticeTargets = (notice, users) => {
+  const raw = notice?.to;
+  const to = Array.isArray(raw) ? raw.filter(Boolean) : (raw ? [raw] : []);
+  return (users || [])
+    .filter((u) => u.role !== 'مدير' && u.status !== 'غير نشط'
+      && u.id !== notice.by && (!to.length || to.includes(u.id)))
+    .map((u) => u.id);
+};
 
 /**
  * ما جدّ من التنبيهات بين حفظتين يُرسَل مرةً واحدة.
