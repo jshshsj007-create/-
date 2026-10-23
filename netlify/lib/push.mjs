@@ -65,6 +65,10 @@ export const whoHasPush = async (store, userIds) => {
  *
  * والجهاز الذي ردّ ٤٠٤ أو ٤١٠ مات اشتراكُه — حُذف التطبيق أو أُبطل الإذن —
  * فيُشال، وإلا بقي يُرسَل إليه إلى الأبد.
+ *
+ * وخطأٌ غيرُ ذلك (مفتاحٌ غير مطابق، حمولةٌ مرفوضة...) كان يختفي بصمتٍ تام —
+ * لا الاشتراك يُحذف ولا أثرٌ يبقى، فيبدو الإرسال ناجحًا وهو فاشل. فيُكتب
+ * الآن في سجلّ الدالة، يُقرأ من لوحة Netlify وإن لم يصل خبرٌ إلى التطبيق.
  */
 const toUser = async (store, userId, payload) => {
   const list = await subsOf(store, userId);
@@ -73,6 +77,7 @@ const toUser = async (store, userId, payload) => {
       await webpush.sendNotification(sub, JSON.stringify(payload));
     } catch (e) {
       if (e?.statusCode === 404 || e?.statusCode === 410) await dropSub(store, userId, sub.endpoint);
+      else console.error('push_send_failed', userId, e?.statusCode || '', e?.body || e?.message || String(e));
     }
   }
 };
@@ -123,7 +128,8 @@ export const notifyNewNotices = async (store, was, now, origin) => {
       }
     }
     return sent;
-  } catch {
+  } catch (e) {
+    console.error('notify_new_notices_failed', e?.message || String(e));
     return 0;
   }
 };
