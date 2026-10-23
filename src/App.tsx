@@ -2391,6 +2391,9 @@ export default function App() {
       setForm({ ...form, error: 'رقم الجوال غير صحيح. امسحه أو صحّحه.' }); return;
     }
     const { next, studentId } = linkByPhone(data);
+    const newId = uid();
+    // «حضر اليوم»: يأتي أمامك فعلًا الآن، فلا تدوّر عليه في قائمة الحضور بعد ثوانٍ من تسجيله
+    const attendToday = Boolean(form.attendToday);
 
     /**
      * الاشتراك اليدوي: لمن يدفع المدة كلها عندك مباشرة.
@@ -2419,9 +2422,9 @@ export default function App() {
             return {
               ...base, mode: 'named',
               participants: [...(base.participants || []), mark({
-                id: uid(), ref, name: form.name.trim(), packageName: pack.name,
+                id: w.id === here ? newId : uid(), ref, name: form.name.trim(), packageName: pack.name,
                 amount: accountId === 'unpaid' ? 0 : (share[w.id] || 0),
-                accountId, attendance: 'معلق',
+                accountId, attendance: attendToday && w.id === here ? 'حاضر' : 'معلق',
                 sub: { id: subId, packId: pack.id, total: pack.total, span: pack.span, i: ids.indexOf(w.id) },
                 ...(studentId ? { studentId } : {}),
                 // أيامه الباقية مدفوعةٌ مقدّمًا تنتظر يومها، لا تنتظر تأكيدك.
@@ -2437,19 +2440,24 @@ export default function App() {
       return;
     }
 
+    // في المجمّع الحضور في خريطة البرنامج لا على المشارك — ولا يُسجَّل حضورٌ ليومٍ لم يُسجَّل فيه أصلًا
+    const attendTodayHere = attendToday && selectedWeekId && (!isGrouped || (form.days || []).includes(selectedWeekId));
     save(withLedger(next, activeRef, (l) => {
       const patch = {
         participants: [...(l.participants || []), mark({
-          id: uid(), name: form.name.trim(),
+          id: newId, name: form.name.trim(),
           // من يضيفه صاحب التطبيق بيده يستحق إيصالًا مثل من سجّل بنفسه،
           // فالترقيم واحد مهما كان الباب
           ref: nextRef(next, yearOf(program?.termKey)),
           amount: accountId === 'unpaid' ? 0 : Number(form.amount || 0),
-          accountId, attendance: 'معلق',
+          accountId, attendance: !isGrouped && attendTodayHere ? 'حاضر' : 'معلق',
           // الربط بسجلّ الطالب هو اللي يخلّي تاريخه عبر المواسم يتجمّع في مكان واحد
           ...(studentId ? { studentId } : {}),
           ...(isGrouped ? { days: form.days } : {}),
         }, true)],
+        ...(isGrouped && attendTodayHere ? {
+          attendance: { ...(l.attendance || {}), [selectedWeekId]: { ...((l.attendance || {})[selectedWeekId] || {}), [newId]: 'حاضر' } },
+        } : {}),
       };
       // أول اسم يُسجَّل في يوم «سريع» يحوّله للأسماء، والمبلغ المسجّل سابقًا
       // ينتقل لبند تحصيل إضافي حتى ما يضيع من الحساب
@@ -2516,6 +2524,36 @@ export default function App() {
   /** الحضور: المنفصل يخزّنه على المشارك، والمجمّع في خريطة attendance[weekId][participantId]. */
   const attendanceOf = (p, weekId) =>
     (isGrouped ? program?.attendance?.[weekId]?.[p.id] : p.attendance) || 'معلق';
+
+  /**
+   * بحث عن طالب داخل هذا البرنامج: بالاسم لا بسجلّه — فيعمل لمن سجّلتَه
+   * بيدك بلا ربطه برقم جوال. يرجّع كل شخصٍ طابق الاسم، وكم مرةً حضر من
+   * أصل أيامه كلها في هذا البرنامج.
+   */
+  const programAttendanceSearch = (q) => {
+    if (!program || !String(q || '').trim()) return [];
+    const entries = isGrouped
+      ? (program.participants || []).flatMap((p) => (p.days || []).map((wid) => ({
+        part: p, weekId: wid, weekName: (program.weeks || []).find((w) => w.id === wid)?.name || '',
+        status: attendanceOf(p, wid),
+      })))
+      : (program.weeks || []).flatMap((w) => (w.participants || []).map((p) => ({
+        part: p, weekId: w.id, weekName: w.name, status: p.attendance || 'معلق',
+      })));
+    const groups = new Map();
+    for (const e of entries) {
+      if (!nameMatches(e.part.name, q)) continue;
+      const key = personKey(e.part);
+      if (!groups.has(key)) groups.set(key, { name: e.part.name, rows: [] });
+      groups.get(key).rows.push(e);
+    }
+    return [...groups.values()].map((g) => ({
+      name: g.name,
+      attended: g.rows.filter((r) => r.status === 'حاضر').length,
+      total: g.rows.length,
+      rows: g.rows,
+    }));
+  };
 
   /**
    * تسجيل الحضور يُنزل نصيب المدفوع مقدّمًا في إيراد يومه.
@@ -5816,6 +5854,11 @@ export default function App() {
                   </>
                 )}
               </div>
+              {canAttend && (
+                <button className={btnGhostBox} onClick={() => { setForm({ q: '' }); setModal('studentAttendance'); }}>
+                  <Search size={15} /> ابحث عن طالب
+                </button>
+              )}
               {isGrouped && canMoney && (
                 <button onClick={() => patchProgram({ status: program.status === 'مفتوح' ? 'مغلق' : 'مفتوح' })}
                   className={`flex items-center gap-1.5 text-sm font-semibold px-3 py-2 rounded-lg ${program.status === 'مفتوح' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>
@@ -10146,6 +10189,15 @@ export default function App() {
                 onChange={(e) => setForm({ ...form, amount: e.target.value, amountTouched: true })} />
             </Field>
           )}
+          {/* واقفٌ قدامك الآن فعلًا — فلا تحتاج تدوّر عليه بعدها في قائمة الحضور */}
+          {modal === 'addParticipant' && selectedWeekId
+            && (!isGrouped || (form.days || []).includes(selectedWeekId)) && (
+            <label className="flex items-center gap-2.5 mb-4 px-3.5 py-3 rounded-xl border border-slate-200 cursor-pointer select-none">
+              <input type="checkbox" checked={Boolean(form.attendToday)}
+                onChange={(e) => setForm({ ...form, attendToday: e.target.checked })} />
+              <span className="text-sm text-slate-700"><b>حاضر اليوم</b> — يُسجَّل «حاضر» فورًا مع الإضافة.</span>
+            </label>
+          )}
           {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
           <div className="flex gap-2 mt-5">
             <button className={btnPrimary + ' flex-1'} onClick={modal === 'addParticipant' ? addParticipant : saveParticipantEdit}>
@@ -10153,6 +10205,47 @@ export default function App() {
             </button>
             <button className={btnGhost} onClick={closeModal}>إلغاء</button>
           </div>
+        </Modal>
+      )}
+
+      {modal === 'studentAttendance' && program && (
+        <Modal title="ابحث عن طالب" onClose={closeModal} wide>
+          <Field label="اسم الطالب" hint="يبحث داخل هذا البرنامج فقط — بالاسم، ولو ما كان مربوطًا برقم جوال.">
+            <div className="relative">
+              <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" />
+              <input className={inputCls + ' pr-9'} autoFocus value={form.q || ''}
+                onChange={(e) => setForm({ ...form, q: e.target.value })} placeholder="مثال: محمد عبدالله" />
+            </div>
+          </Field>
+          {(() => {
+            const q = (form.q || '').trim();
+            if (q.length < 2) return null;
+            const results = programAttendanceSearch(q);
+            if (!results.length) return <div className={emptyCls}>ما فيه طالب بهذا الاسم في هذا البرنامج.</div>;
+            return (
+              <div className="space-y-2.5">
+                {results.map((r) => (
+                  <div key={r.name} className={cardCls}>
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="font-bold text-slate-800">{r.name}</div>
+                      <Badge tone={r.attended === r.total ? 'green' : r.attended ? 'brand' : 'slate'}>
+                        حضر {r.attended} من {r.total}
+                      </Badge>
+                    </div>
+                    <div className="space-y-1">
+                      {r.rows.map((row, i) => (
+                        <div key={i} className="flex items-center justify-between text-[12px] border-t border-slate-50 pt-1.5">
+                          <span className="text-slate-500">{row.weekName || '—'}</span>
+                          <Badge tone={row.status === 'حاضر' ? 'green' : row.status === 'غائب' ? 'red' : 'slate'}>{row.status}</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+          <div className="flex gap-2 mt-5"><button className={btnGhost + ' flex-1'} onClick={closeModal}>إغلاق</button></div>
         </Modal>
       )}
 
