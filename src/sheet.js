@@ -136,7 +136,7 @@ const loadImage = (src) => new Promise((resolve) => {
  * ويُطوى ما غاب: من لا صلاحية له في المال لا يرى قسمًا فارغًا، ومن لم يُقم
  * شيئًا من النادي لا يرى عنوانه.
  */
-export const sheetSections = ({ students, present, enrolled, money, club, qiyami, notes, reports, reportTable, wudu } = {}) => {
+export const sheetSections = ({ students, present, enrolled, money, club, qiyami, notes, noteHighlights, reports, reportTable, wudu } = {}) => {
   const out = [];
   const who = [];
   if (students != null) who.push(['الطلاب المسجلون', fmt(students)]);
@@ -177,11 +177,20 @@ export const sheetSections = ({ students, present, enrolled, money, club, qiyami
    * يُعاد اسمُه في ورقة التي بعدها.
    */
   const names = (notes || []).map((n) => clean(n)).filter(Boolean);
-  if (names.length) {
-    // ثلاثةٌ في السطر: الأسماء الطويلة تخرج عن عرض الورقة لو رُصّت كلها سطرًا
-    const lines = [];
-    for (let i = 0; i < names.length; i += 3) lines.push(names.slice(i, i + 3).join(' · '));
-    out.push({ title: 'ملاحظات سلوكية', rows: [['عدد الطلاب', fmt(names.length), true]], lines });
+  const high = (noteHighlights || []).map((n) => clean(n)).filter(Boolean);
+  if (names.length || high.length) {
+    /*
+      البارزة تُقتبس بنصّها سطرًا سطرًا — أهمّ من عدّ الأسماء. وبلا بارزةٍ
+      نرجع للعرض القديم: ثلاثة أسماء في السطر، فلا تخرج الأسماء الطويلة عن
+      عرض الورقة لو رُصّت كلها سطرًا.
+    */
+    const lines = high.length ? high
+      : Array.from({ length: Math.ceil(names.length / 3) }, (_, i) => names.slice(i * 3, i * 3 + 3).join(' · '));
+    out.push({
+      title: 'ملاحظات سلوكية',
+      ...(names.length ? { rows: [['عدد الطلاب', fmt(names.length), true]] } : {}),
+      lines,
+    });
   }
 
   /*

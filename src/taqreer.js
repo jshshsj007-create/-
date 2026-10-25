@@ -326,6 +326,54 @@ export const noteNamesProgram = (data, programId, students) => {
   return seen;
 };
 
+/**
+ * كلماتٌ تدلّ على خطورة الملاحظة — قائمةٌ يدويةٌ لا ذكاءً اصطناعيًا، فمن
+ * يقرأ ملخّص البرنامج يعرف سببَ ظهور ملاحظةٍ بعينها لا يحتار من أين جاءت.
+ */
+export const SEVERE_NOTE_WORDS = [
+  'ضرب', 'إيذاء', 'ايذاء', 'تنمر', 'اعتداء', 'عدوان', 'مشاجرة', 'شجار',
+  'تهديد', 'إصابة', 'اصابة', 'هروب', 'طرد', 'خطير', 'خطر', 'إيقاف',
+];
+
+/**
+ * الملاحظات البارزة عبر البرنامج كله — لا كل ملاحظة.
+ *
+ * بارزة يعني أحد أمرين: تكرّرت على نفس الطالب (نمطٌ لا زلّة يوم)، أو فيها
+ * كلمةٌ من `SEVERE_NOTE_WORDS` تدلّ على خطورتها. وغيرها يبقى في سجلّ
+ * الطالب يُفتح من يبحث عنه، ولا يُثقل ورقة ملخّصٍ وعدُها صفحتان.
+ *
+ * والخطيرة تتصدّر، فمن يقرأ الملخّص سريعًا يرى الأهم أولًا.
+ */
+export const noteHighlightsProgram = (data, programId, students, { max = 6 } = {}) => {
+  const nameOf = Object.fromEntries((students || []).map((s) => [s.id, s.name || '']));
+  const byStudent = new Map();
+  for (const n of (data?.studentNotes || []).filter((x) => x.programId === programId)) {
+    const nm = nameOf[n.studentId] || n.studentName;
+    if (!nm) continue;
+    const key = n.studentId || nm;
+    const g = byStudent.get(key) || { name: nm, notes: [] };
+    g.notes.push(n);
+    byStudent.set(key, g);
+  }
+  const isSevere = (text) => SEVERE_NOTE_WORDS.some((w) => String(text || '').includes(w));
+  const out = [];
+  for (const g of byStudent.values()) {
+    const severeNote = g.notes.find((n) => isSevere(n.text));
+    const repeated = g.notes.length >= 2;
+    if (!severeNote && !repeated) continue;
+    // الخطيرة تُقتبس بنصّها لو وُجدت، وإلا فآخر ملاحظةٍ على من تكرّرت عليه
+    const pick = severeNote || g.notes[g.notes.length - 1];
+    out.push({ name: g.name, text: String(pick.text || '').trim(), count: g.notes.length, severe: !!severeNote });
+  }
+  return out
+    .sort((a, b) => (Number(b.severe) - Number(a.severe)) || (b.count - a.count))
+    .slice(0, max);
+};
+
+/** سطرٌ جاهزٌ للورقة أو الشاشة: «فلان — النص (تكرّرت ٣ مرات)». */
+export const noteHighlightLine = (h) =>
+  `${h.name} — ${h.text}${h.count > 1 ? ` (تكرّرت ${say(h.count, 'time')})` : ''}`;
+
 /* -------------------------------- التنبيهات -------------------------------- */
 
 /** مُددٌ معدودة: التنبيه الذي لا ينتهي يتكدّس حتى يصير خلفيةً لا تُقرأ. */
