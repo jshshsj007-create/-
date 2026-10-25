@@ -6009,8 +6009,21 @@ export default function App() {
             {activeProgramTab === 'report' && (() => {
               // ملاحظات سلوكية عبر البرنامج كله — تُذكر فقط إن وُجدت، مختصرة بالأسماء لا بالتفصيل
               const progNotes = noteNamesProgram(data, program.id, data.students);
+              const totals = programTotals(program);
+              const runs = programRuns(data, program.id);
+              const c = clubCounts(runs);
+              // «كم واحد أتقن» سؤال اليوم: الأجوبة الصحيحة عبر أسئلة البرنامج كلها
+              const correct = runs.questions.reduce((a, q) => a + questionTally(q).ok, 0);
+              const clubLines = [
+                c.competitions ? `أُقيمت ${say(c.competitions, 'competition')}` : '',
+                c.leagues ? say(c.leagues, 'league') : '',
+                c.cups ? say(c.cups, 'cup') : '',
+                c.questions ? `${say(c.questions, 'question')}${correct ? ` — أجاب عليها صحيحًا ${say(correct, 'answer')}` : ''}` : '',
+              ].filter(Boolean);
               return (
                 <>
+                  <ProgramSummaryReport program={program} totals={totals} clubLines={clubLines}
+                    notes={progNotes} canMoney={canMoney} />
                   {progNotes.length > 0 && (
                     <div className={cardCls + ' mb-4'}>
                       <div className="text-sm font-semibold text-slate-700 mb-2">ملاحظات سلوكية في هذا البرنامج</div>
@@ -13473,6 +13486,74 @@ function WeekReport({ week, accounts, canMoney, programName, term, club, extra =
         <FileText size={16} /> {busy ? 'نجهّز الورقة…' : 'ورقة التقرير PDF'}
       </button>
       {shared && <div className="text-xs text-center text-slate-500">{shared}</div>}
+    </div>
+  );
+}
+
+/**
+ * ملخّص البرنامج كله — لا يومٍ بعينه.
+ *
+ * صاحب التطبيق كان يفتح كل جمعة على حدة ليجمع بنفسه كم أقيم وكم بقي، وهذي
+ * ورقةٌ واحدة تكفي: إيراده ومصروفه وصافيه، وعدد المسجّلين والحاضرين، وما
+ * أقام النادي، وملاحظات القادة إن وُجدت — تُطوى كل خانةٍ لا قيمة لها، فلا
+ * تطول الورقة بصفوفٍ فارغة.
+ */
+function ProgramSummaryReport({ program, totals, clubLines, notes, canMoney }) {
+  const [shared, setShared] = useState('');
+  const [busy, setBusy] = useState(false);
+  const term = termText(program.termKey);
+  const money = canMoney ? {
+    revenue: totals.revenue, expenses: totals.expenses, net: totals.net,
+    school: totals.school, faid: totals.faid,
+  } : null;
+
+  const sheet = async () => {
+    if (busy) return;
+    setBusy(true);
+    setShared('');
+    try {
+      const blob = await reportSheet({
+        week: 'البرنامج', program: program.name, term, date: hijri(Date.now()),
+        students: totals.people, present: totals.present, enrolled: totals.slots,
+        money, club: clubLines, notes,
+      }, { logo: LOGO_MARK_WHITE, team: TEAM_NAME, stamp: hijri(Date.now()) });
+      const how = await shareFile(blob, sheetFileName(hijri(Date.now())), `ملخص ${program.name}`);
+      setShared(how === 'downloaded' ? 'نزلت الورقة' : '');
+    } catch {
+      setShared('ما قدرنا نجهّز الورقة. جرّب مرة ثانية.');
+    } finally {
+      setBusy(false);
+      setTimeout(() => setShared(''), 4000);
+    }
+  };
+
+  const share = async () => {
+    const text = weekReport({
+      week: 'البرنامج', program: program.name, term,
+      students: totals.people, present: totals.present, enrolled: totals.slots,
+      money, club: clubLines,
+      summary: notes.length ? [`فيه ملاحظات سلوكية على ${say(notes.length, 'student')}`] : [],
+    });
+    try {
+      if (navigator.share) { await shareText({ title: `ملخص ${program.name}`, text }); return; }
+      await navigator.clipboard.writeText(text);
+      setShared('اننسخ الملخص، الصقه وين ما تبي');
+    } catch {
+      setShared('ما قدر ينسخ. حدّد النص ونسخه يدويًا.');
+    }
+    setTimeout(() => setShared(''), 3000);
+  };
+
+  return (
+    <div className={cardCls + ' mb-4'}>
+      <div className="text-sm font-semibold text-slate-700 mb-3">ملخّص البرنامج</div>
+      <div className="space-y-2">
+        <button className={btnPrimary + ' w-full'} onClick={share}><Send size={16} /> مشاركة الملخّص</button>
+        <button className={btnGhostBox + ' w-full'} onClick={sheet} disabled={busy}>
+          <FileText size={16} /> {busy ? 'نجهّز الورقة…' : 'ورقة الملخّص PDF'}
+        </button>
+      </div>
+      {shared && <div className="text-xs text-center text-slate-500 mt-2">{shared}</div>}
     </div>
   );
 }

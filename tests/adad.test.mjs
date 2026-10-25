@@ -78,6 +78,13 @@ test('كل صيغةٍ في الجدول أربع', () => {
   }
 });
 
+test('ودوري وكأس وسؤال — لتقرير البرنامج المختصر', () => {
+  assert.equal(say(1, 'league'), 'دوري');
+  assert.equal(say(2, 'cup'), 'كأسين');
+  assert.equal(say(5, 'question'), '5 أسئلة');
+  assert.equal(say(19, 'question'), '19 سؤالًا');
+});
+
 /* ------------------------- وأثرُ السجل يتبعه ------------------------- */
 
 const ago = (ms) => agoText(Date.now() - ms, Date.now());
