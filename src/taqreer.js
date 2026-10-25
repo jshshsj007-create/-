@@ -312,6 +312,20 @@ export const noteNames = (data, programId, weekId, students) => {
   return seen;
 };
 
+/**
+ * أسماء من كُتبت عليهم ملاحظةٌ عبر البرنامج كلّه، لا يومٍ بعينه — لتقرير
+ * البرنامج المختصر: «فيه ملاحظات على فلان وفلان» أو لا شيء إن لم يكن.
+ */
+export const noteNamesProgram = (data, programId, students) => {
+  const nameOf = Object.fromEntries((students || []).map((s) => [s.id, s.name || '']));
+  const seen = [];
+  for (const n of (data?.studentNotes || []).filter((x) => x.programId === programId)) {
+    const nm = nameOf[n.studentId] || n.studentName;
+    if (nm && !seen.includes(nm)) seen.push(nm);
+  }
+  return seen;
+};
+
 /* -------------------------------- التنبيهات -------------------------------- */
 
 /** مُددٌ معدودة: التنبيه الذي لا ينتهي يتكدّس حتى يصير خلفيةً لا تُقرأ. */

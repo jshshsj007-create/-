@@ -52,7 +52,7 @@ import {
   defaultReportFields, reportFields, allReportFields, fieldValue, replyOf,
   emptyReport, missingParts, reportReady, submitLabel, reportOf, dayReports,
   mustReport, reportRoll, rollText, reportTable, owedDays, dayNow, hijriKey, sameDate,
-  noteOn, notesOn, notesOfDay, noteNames,
+  noteOn, notesOn, notesOfDay, noteNames, noteNamesProgram,
   NOTICE_SPANS, noticeTargets, noticeLive, hasRead, noticesFor, markRead, readTally,
   supervisorsOf, toggleSupervisor, supervisorNames, unassigned, SUPERVISOR_MAX,
   qiyamiMissing, qiyamiReady, qiyamiOfDay, videoEmbed, daySummary,
@@ -6006,14 +6006,26 @@ export default function App() {
             )}
 
             {/* تقرير البرنامج */}
-            {activeProgramTab === 'report' && (
-              <>
-                <ClubReport data={data} program={program} />
-                {isGrouped
-                  ? <GroupedReport program={program} accounts={data.faidAccounts} canMoney={canMoney} />
-                  : <SeparateReport program={program} accounts={data.faidAccounts} canMoney={canMoney} />}
-              </>
-            )}
+            {activeProgramTab === 'report' && (() => {
+              // ملاحظات سلوكية عبر البرنامج كله — تُذكر فقط إن وُجدت، مختصرة بالأسماء لا بالتفصيل
+              const progNotes = noteNamesProgram(data, program.id, data.students);
+              return (
+                <>
+                  {progNotes.length > 0 && (
+                    <div className={cardCls + ' mb-4'}>
+                      <div className="text-sm font-semibold text-slate-700 mb-2">ملاحظات سلوكية في هذا البرنامج</div>
+                      <div className="text-[13px] text-slate-600 leading-7">
+                        {say(progNotes.length, 'student')}: {progNotes.join(' · ')}
+                      </div>
+                    </div>
+                  )}
+                  <ClubReport data={data} program={program} />
+                  {isGrouped
+                    ? <GroupedReport program={program} accounts={data.faidAccounts} canMoney={canMoney} />
+                    : <SeparateReport program={program} accounts={data.faidAccounts} canMoney={canMoney} />}
+                </>
+              );
+            })()}
 
             {activeProgramTab === 'signup' && (() => {
               const s = { ...emptySignup(), ...(program.signup || {}) };

@@ -11,7 +11,7 @@ import {
   emptyReport, missingParts, reportReady, submitLabel, replyOf,
   reportOf, dayReports, mustReport, reportRoll, rollText, reportTable,
   hijriKey, sameDate, dayNow, dateRank, owedDays,
-  noteOn, notesOn, notesOfDay, noteNames,
+  noteOn, notesOn, notesOfDay, noteNames, noteNamesProgram,
   NOTICE_SPANS, noticeLive, hasRead, noticesFor, markRead, readTally,
   supervisorsOf, toggleSupervisor, supervisorNames, unassigned, SUPERVISOR_MAX,
   qiyamiMissing, qiyamiReady, qiyamiOfDay, videoEmbed,
@@ -327,6 +327,15 @@ test('والاسم المكتوب فيها يكفي من لا يفتح قاعد�
   const data = { studentNotes: [noteOn('s9', 'ملاحظة', 'b', { programId: 'p1', weekId: 'w1', studentName: 'راكان' })] };
   assert.deepEqual(noteNames(data, 'p1', 'w1', []), ['راكان']);
   assert.deepEqual(noteNames(data, 'p1', 'w1', [{ id: 's9', name: 'راكان القحطاني' }]), ['راكان القحطاني']);
+});
+
+test('وتقرير البرنامج يجمع الأسماء عبر كل أيامه، لا يومًا بعينه', () => {
+  assert.deepEqual(noteNamesProgram(noteData, 'p1', students), ['سعد', 'فهد']);
+});
+
+test('ولا يذكر برنامجًا غير هذا', () => {
+  const data = { studentNotes: [...noteData.studentNotes, noteOn('s2', 'ملاحظة', 'b', { programId: 'p2', weekId: 'w1', studentName: 'فهد' })] };
+  assert.deepEqual(noteNamesProgram(data, 'p9', students), []);
 });
 
 /* -------------------------------- التنبيهات -------------------------------- */
