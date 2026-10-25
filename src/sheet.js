@@ -136,7 +136,7 @@ const loadImage = (src) => new Promise((resolve) => {
  * ويُطوى ما غاب: من لا صلاحية له في المال لا يرى قسمًا فارغًا، ومن لم يُقم
  * شيئًا من النادي لا يرى عنوانه.
  */
-export const sheetSections = ({ students, present, enrolled, money, club, qiyami, notes, noteHighlights, reports, reportTable, wudu } = {}) => {
+export const sheetSections = ({ students, present, enrolled, money, club, qiyami, notes, noteHighlights, leaders, reports, reportTable, wudu } = {}) => {
   const out = [];
   const who = [];
   if (students != null) who.push(['الطلاب المسجلون', fmt(students)]);
@@ -160,6 +160,13 @@ export const sheetSections = ({ students, present, enrolled, money, club, qiyami
 
   const list = (club || []).map((c) => clean(c)).filter(Boolean);
   if (list.length) out.push({ title: 'النادي', lines: list });
+
+  /**
+   * القادة الذين أشرفوا على نشاط النادي عبر البرنامج، وأسابيعُهم تحت كل
+   * واحد — لتقرير البرنامج: «القائد: فلان» ثم أسابيعه سطرًا سطرًا.
+   */
+  const leaderLines = (leaders || []).map((n) => clean(n)).filter(Boolean);
+  if (leaderLines.length) out.push({ title: 'إشراف القادة', lines: leaderLines });
 
   /** تعليم الوضوء: سطرٌ واحد جاهز — عددٌ عامٌّ للفريق لا يخصّ هذا اليوم وحده. */
   if (clean(wudu)) out.push({ title: 'تعليم الوضوء', lines: [clean(wudu)] });

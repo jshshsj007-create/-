@@ -120,6 +120,20 @@ test('صناديق الورقة الثلاثة الجديدة، بترتيبها
   assert.equal(s[4].rows[0][1], '5 من 5');
 });
 
+test('وإشراف القادة يجي بعد النادي مباشرة، سطرًا لكل قائد وأسابيعه', () => {
+  const s = sheetSections({
+    students: 10, club: ['الكنز المفقود — مسابقة'],
+    leaders: ['القائد: محمد العلوان', 'الأسبوع الأول', 'الأسبوع الثاني'],
+  });
+  assert.deepEqual(s.map((x) => x.title), ['الحضور', 'النادي', 'إشراف القادة']);
+  assert.deepEqual(s[2].lines, ['القائد: محمد العلوان', 'الأسبوع الأول', 'الأسبوع الثاني']);
+});
+
+test('وبلا قادة لا يظهر صندوقهم', () => {
+  const s = sheetSections({ students: 3, leaders: [] });
+  assert.deepEqual(s.map((x) => x.title), ['الحضور']);
+});
+
 test('وقيميٌّ بلا ملقٍ يُكتب عنوانه ولا يُترك فارغًا', () => {
   const s = sheetSections({ qiyami: [{ title: 'برّ الوالدين', by: '' }] });
   assert.equal(s[0].rows[0][1], '—');

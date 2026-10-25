@@ -52,7 +52,7 @@ import {
   defaultReportFields, reportFields, allReportFields, fieldValue, replyOf,
   emptyReport, missingParts, reportReady, submitLabel, reportOf, dayReports,
   mustReport, reportRoll, rollText, reportTable, owedDays, dayNow, hijriKey, sameDate,
-  noteOn, notesOn, notesOfDay, noteNames, noteNamesProgram, noteHighlightsProgram, noteHighlightLine,
+  noteOn, notesOn, notesOfDay, noteNames, noteNamesProgram, noteHighlightsProgram, noteHighlightLine, leaderWeeksProgram,
   NOTICE_SPANS, noticeTargets, noticeLive, hasRead, noticesFor, markRead, readTally,
   supervisorsOf, toggleSupervisor, supervisorNames, unassigned, SUPERVISOR_MAX,
   qiyamiMissing, qiyamiReady, qiyamiOfDay, videoEmbed, daySummary,
@@ -6022,10 +6022,26 @@ export default function App() {
                 c.cups ? say(c.cups, 'cup') : '',
                 c.questions ? `${say(c.questions, 'question')}${correct ? ` — أجاب عليها صحيحًا ${say(correct, 'answer')}` : ''}` : '',
               ].filter(Boolean);
+              // القادة الذين أشرفوا على نشاط النادي، وأسابيعهم تحت كل واحد
+              const leaders = leaderWeeksProgram(data, program.id, program, data.users);
+              const leaderLines = leaders.flatMap((l) => [`القائد: ${l.name}`, ...l.weeks]);
               return (
                 <>
                   <ProgramSummaryReport program={program} totals={totals} clubLines={clubLines}
-                    notes={progNotes} highlights={highlights} canMoney={canMoney} />
+                    notes={progNotes} highlights={highlights} leaderLines={leaderLines} canMoney={canMoney} />
+                  {leaders.length > 0 && (
+                    <div className={cardCls + ' mb-4'}>
+                      <div className="text-sm font-semibold text-slate-700 mb-2">إشراف القادة على النادي</div>
+                      <div className="space-y-2">
+                        {leaders.map((l, i) => (
+                          <div key={i} className="text-[13px] text-slate-600">
+                            <span className="font-semibold text-slate-700">القائد: {l.name}</span>
+                            <div className="text-slate-500">{l.weeks.join(' · ')}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {progNotes.length > 0 && (
                     <div className={cardCls + ' mb-4'}>
                       <div className="text-sm font-semibold text-slate-700 mb-2">ملاحظات سلوكية في هذا البرنامج</div>
@@ -13511,7 +13527,7 @@ function WeekReport({ week, accounts, canMoney, programName, term, club, extra =
  * أقام النادي، وملاحظات القادة إن وُجدت — تُطوى كل خانةٍ لا قيمة لها، فلا
  * تطول الورقة بصفوفٍ فارغة.
  */
-function ProgramSummaryReport({ program, totals, clubLines, notes, highlights, canMoney }) {
+function ProgramSummaryReport({ program, totals, clubLines, notes, highlights, leaderLines, canMoney }) {
   const [shared, setShared] = useState('');
   const [busy, setBusy] = useState(false);
   /**
@@ -13535,7 +13551,7 @@ function ProgramSummaryReport({ program, totals, clubLines, notes, highlights, c
       const blob = await reportSheet({
         week: 'البرنامج', program: program.name, term, date: hijri(Date.now()),
         students: totals.people, present: totals.present, enrolled: totals.slots,
-        money, club: clubLines, notes, noteHighlights: high,
+        money, club: clubLines, notes, noteHighlights: high, leaders: leaderLines,
       }, { logo: LOGO_MARK_WHITE, team: TEAM_NAME, stamp: hijri(Date.now()) });
       const how = await shareFile(blob, sheetFileName(hijri(Date.now())), `ملخص ${program.name}`);
       setShared(how === 'downloaded' ? 'نزلت الورقة' : '');

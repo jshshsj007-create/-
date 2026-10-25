@@ -14,7 +14,7 @@ import {
   noteOn, notesOn, notesOfDay, noteNames, noteNamesProgram,
   noteHighlightsProgram, noteHighlightLine, SEVERE_NOTE_WORDS,
   NOTICE_SPANS, noticeLive, hasRead, noticesFor, markRead, readTally,
-  supervisorsOf, toggleSupervisor, supervisorNames, unassigned, SUPERVISOR_MAX,
+  supervisorsOf, toggleSupervisor, supervisorNames, unassigned, SUPERVISOR_MAX, leaderWeeksProgram,
   qiyamiMissing, qiyamiReady, qiyamiOfDay, videoEmbed,
   daySummary,
 } from '../src/taqreer.js';
@@ -485,6 +485,40 @@ test('وما أُقيم بلا مشرفٍ يظهر ولا يسقط', () => {
     { id: '4' },
   ];
   assert.deepEqual(unassigned(runs).map((r) => r.id), ['2', '4']);
+});
+
+/* ------------------------------ أسابيع القادة ------------------------------ */
+
+const program1 = { id: 'p1', weeks: [{ id: 'w1', name: 'الأسبوع الأول' }, { id: 'w2', name: 'الأسبوع الثاني' }, { id: 'w3', name: 'الأسبوع الثالث' }] };
+
+test('كل قائد وأسابيعه بترتيبها — لا بترتيب إشرافه', () => {
+  const data = {
+    clubRuns: [
+      { id: 'r1', programId: 'p1', weekId: 'w3', supervisors: ['b'] },
+      { id: 'r2', programId: 'p1', weekId: 'w1', supervisors: ['b'] },
+    ],
+    tournaments: [{ id: 't1', programId: 'p1', weekId: 'w2', supervisors: ['b'] }],
+  };
+  const l = leaderWeeksProgram(data, 'p1', program1, users);
+  assert.deepEqual(l, [{ name: 'عبدالله', weeks: ['الأسبوع الأول', 'الأسبوع الثاني', 'الأسبوع الثالث'] }]);
+});
+
+test('والأسبوع لا يتكرر ولو أشرف على نشاطين فيه', () => {
+  const data = {
+    clubRuns: [{ id: 'r1', programId: 'p1', weekId: 'w1', supervisors: ['b'] }],
+    qiyami: [{ id: 'q1', programId: 'p1', weekId: 'w1', supervisors: ['b'] }],
+  };
+  assert.deepEqual(leaderWeeksProgram(data, 'p1', program1, users)[0].weeks, ['الأسبوع الأول']);
+});
+
+test('والمتطوّع بلا حساب لا يدخل القائمة', () => {
+  const data = { clubRuns: [{ id: 'r1', programId: 'p1', weekId: 'w1', helper: 'فيصل' }] };
+  assert.deepEqual(leaderWeeksProgram(data, 'p1', program1, users), []);
+});
+
+test('ولا يذكر برنامجًا غير هذا', () => {
+  const data = { clubRuns: [{ id: 'r1', programId: 'p9', weekId: 'w1', supervisors: ['b'] }] };
+  assert.deepEqual(leaderWeeksProgram(data, 'p1', program1, users), []);
 });
 
 /* --------------------------------- القيمي --------------------------------- */

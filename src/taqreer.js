@@ -488,6 +488,45 @@ export const supervisorNames = (run, users) => {
 };
 
 /**
+ * كل قائدٍ أشرف على نشاطٍ في البرنامج، وأسابيعُه بترتيبها — لتقرير البرنامج
+ * المختصر: «القائد: محمد العلوان — الأسبوع الأول، الأسبوع الثاني...».
+ *
+ * النشاط هنا مسابقةٌ أو دوريٌّ أو كأسٌ أو قيمي؛ المتطوّع بلا حسابٍ (`helper`)
+ * لا يدخل هنا — هذي لمن له حساب في الفريق. وأسابيعُ القائد الواحد لا تتكرّر
+ * ولو أشرف على نشاطين في نفس الأسبوع.
+ */
+export const leaderWeeksProgram = (data, programId, program, users) => {
+  const weekOrder = Object.fromEntries((program?.weeks || []).map((w, i) => [w.id, i]));
+  const weekName = Object.fromEntries((program?.weeks || []).map((w) => [w.id, w.name || '']));
+  const nameOf = Object.fromEntries((users || []).map((u) => [u.id, u.name || '']));
+  const runs = [
+    ...(data?.clubRuns || []).filter((r) => r.programId === programId),
+    ...(data?.tournaments || []).filter((r) => r.programId === programId),
+    ...(data?.qiyami || []).filter((r) => r.programId === programId),
+  ];
+  const byLeader = new Map();
+  for (const r of runs) {
+    if (!r.weekId) continue;
+    for (const uid of supervisorsOf(r)) {
+      const nm = nameOf[uid];
+      if (!nm) continue;
+      const g = byLeader.get(uid) || { name: nm, weekIds: new Set() };
+      g.weekIds.add(r.weekId);
+      byLeader.set(uid, g);
+    }
+  }
+  return [...byLeader.values()]
+    .map((g) => ({
+      name: g.name,
+      weeks: [...g.weekIds]
+        .sort((a, b) => (weekOrder[a] ?? 0) - (weekOrder[b] ?? 0))
+        .map((wid) => weekName[wid])
+        .filter(Boolean),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+};
+
+/**
  * ما أُقيم ولم يُكتب له مشرف.
  *
  * ولا يُخفى ولا يُحذف: لو سقط من التقارير بلا خبر، ضاع عملٌ عُمل ولم يشعر به
