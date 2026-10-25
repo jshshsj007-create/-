@@ -162,11 +162,11 @@ export const sheetSections = ({ students, present, enrolled, money, club, qiyami
   if (list.length) out.push({ title: 'النادي', lines: list });
 
   /**
-   * القادة الذين أشرفوا على نشاط النادي عبر البرنامج، وأسابيعُهم تحت كل
-   * واحد — لتقرير البرنامج: «القائد: فلان» ثم أسابيعه سطرًا سطرًا.
+   * ما كتبه كل قائد في خانة «ملاحظات سلوكية» من تقرير يومه، عبر البرنامج
+   * كله — لتقرير البرنامج: «القائد: فلان» ثم ما كتبه تحت كل أسبوع.
    */
   const leaderLines = (leaders || []).map((n) => clean(n)).filter(Boolean);
-  if (leaderLines.length) out.push({ title: 'إشراف القادة', lines: leaderLines });
+  if (leaderLines.length) out.push({ title: 'ملاحظات القادة', lines: leaderLines });
 
   /** تعليم الوضوء: سطرٌ واحد جاهز — عددٌ عامٌّ للفريق لا يخصّ هذا اليوم وحده. */
   if (clean(wudu)) out.push({ title: 'تعليم الوضوء', lines: [clean(wudu)] });

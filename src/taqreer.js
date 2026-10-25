@@ -488,42 +488,41 @@ export const supervisorNames = (run, users) => {
 };
 
 /**
- * كل قائدٍ أشرف على نشاطٍ في البرنامج، وأسابيعُه بترتيبها — لتقرير البرنامج
- * المختصر: «القائد: محمد العلوان — الأسبوع الأول، الأسبوع الثاني...».
+ * ما كتبه كل قائد في خانة «الطلاب — ملاحظات سلوكية» من تقرير يومه، عبر
+ * البرنامج كله — لا أسابيع إشرافه على النادي، بل كلامُه هو بنصّه. لتقرير
+ * البرنامج المختصر: «القائد: محمد العلوان» ثم ما كتبه تحت كل أسبوع.
  *
- * النشاط هنا مسابقةٌ أو دوريٌّ أو كأسٌ أو قيمي؛ المتطوّع بلا حسابٍ (`helper`)
- * لا يدخل هنا — هذي لمن له حساب في الفريق. وأسابيعُ القائد الواحد لا تتكرّر
- * ولو أشرف على نشاطين في نفس الأسبوع.
+ * والنصّ الطويل يُختصر (`cut` حرفًا) حتى لا يُخرج ورقة الملخّص عن صفحاتها
+ * الثلاث — تمامه يبقى في تقرير ذلك اليوم بعينه، يُفتح من يحتاجه. وعددُ
+ * الأسابيع المعروضة محدودٌ كذلك (`max`)، وما زاد يُذكر عددُه في النهاية.
  */
-export const leaderWeeksProgram = (data, programId, program, users) => {
+export const leaderNotesProgram = (data, programId, program, users, { cut = 220, max = 14 } = {}) => {
   const weekOrder = Object.fromEntries((program?.weeks || []).map((w, i) => [w.id, i]));
   const weekName = Object.fromEntries((program?.weeks || []).map((w) => [w.id, w.name || '']));
   const nameOf = Object.fromEntries((users || []).map((u) => [u.id, u.name || '']));
-  const runs = [
-    ...(data?.clubRuns || []).filter((r) => r.programId === programId),
-    ...(data?.tournaments || []).filter((r) => r.programId === programId),
-    ...(data?.qiyami || []).filter((r) => r.programId === programId),
-  ];
-  const byLeader = new Map();
-  for (const r of runs) {
-    if (!r.weekId) continue;
-    for (const uid of supervisorsOf(r)) {
-      const nm = nameOf[uid];
-      if (!nm) continue;
-      const g = byLeader.get(uid) || { name: nm, weekIds: new Set() };
-      g.weekIds.add(r.weekId);
-      byLeader.set(uid, g);
-    }
+  const clip = (t) => {
+    const x = String(t || '').replace(/\s+/g, ' ').trim();
+    return x.length > cut ? `${x.slice(0, cut - 1)}…` : x;
+  };
+
+  const entries = [];
+  for (const r of (data?.dayReports || [])) {
+    if (r.programId !== programId || !r.weekId) continue;
+    const text = clip(fieldValue(r, 'notes'));
+    const nm = nameOf[r.userId];
+    if (!text || !nm) continue;
+    entries.push({ name: nm, weekId: r.weekId, week: weekName[r.weekId] || '', text });
   }
-  return [...byLeader.values()]
-    .map((g) => ({
-      name: g.name,
-      weeks: [...g.weekIds]
-        .sort((a, b) => (weekOrder[a] ?? 0) - (weekOrder[b] ?? 0))
-        .map((wid) => weekName[wid])
-        .filter(Boolean),
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+  entries.sort((a, b) => a.name.localeCompare(b.name, 'ar') || (weekOrder[a.weekId] ?? 0) - (weekOrder[b.weekId] ?? 0));
+
+  const shown = entries.slice(0, max);
+  const leaders = [];
+  for (const e of shown) {
+    const last = leaders[leaders.length - 1];
+    if (last && last.name === e.name) last.weeks.push(`${e.week}: ${e.text}`);
+    else leaders.push({ name: e.name, weeks: [`${e.week}: ${e.text}`] });
+  }
+  return { leaders, hidden: entries.length - shown.length };
 };
 
 /**

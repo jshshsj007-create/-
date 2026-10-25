@@ -52,7 +52,7 @@ import {
   defaultReportFields, reportFields, allReportFields, fieldValue, replyOf,
   emptyReport, missingParts, reportReady, submitLabel, reportOf, dayReports,
   mustReport, reportRoll, rollText, reportTable, owedDays, dayNow, hijriKey, sameDate,
-  noteOn, notesOn, notesOfDay, noteNames, noteNamesProgram, noteHighlightsProgram, noteHighlightLine, leaderWeeksProgram,
+  noteOn, notesOn, notesOfDay, noteNames, noteNamesProgram, noteHighlightsProgram, noteHighlightLine, leaderNotesProgram,
   NOTICE_SPANS, noticeTargets, noticeLive, hasRead, noticesFor, markRead, readTally,
   supervisorsOf, toggleSupervisor, supervisorNames, unassigned, SUPERVISOR_MAX,
   qiyamiMissing, qiyamiReady, qiyamiOfDay, videoEmbed, daySummary,
@@ -6022,23 +6022,29 @@ export default function App() {
                 c.cups ? say(c.cups, 'cup') : '',
                 c.questions ? `${say(c.questions, 'question')}${correct ? ` — أجاب عليها صحيحًا ${say(correct, 'answer')}` : ''}` : '',
               ].filter(Boolean);
-              // القادة الذين أشرفوا على نشاط النادي، وأسابيعهم تحت كل واحد
-              const leaders = leaderWeeksProgram(data, program.id, program, data.users);
+              // ما كتبه كل قائد في خانة «ملاحظات سلوكية» من تقرير يومه، تحت كل أسبوع
+              const { leaders, hidden: hiddenLeaderNotes } = leaderNotesProgram(data, program.id, program, data.users);
               const leaderLines = leaders.flatMap((l) => [`القائد: ${l.name}`, ...l.weeks]);
+              if (hiddenLeaderNotes > 0) leaderLines.push(`و${say(hiddenLeaderNotes, 'note')} أخرى — راجع تقرير اليوم`);
               return (
                 <>
                   <ProgramSummaryReport program={program} totals={totals} clubLines={clubLines}
                     notes={progNotes} highlights={highlights} leaderLines={leaderLines} canMoney={canMoney} />
                   {leaders.length > 0 && (
                     <div className={cardCls + ' mb-4'}>
-                      <div className="text-sm font-semibold text-slate-700 mb-2">إشراف القادة على النادي</div>
-                      <div className="space-y-2">
+                      <div className="text-sm font-semibold text-slate-700 mb-2">ملاحظات القادة من تقاريرهم</div>
+                      <div className="space-y-3">
                         {leaders.map((l, i) => (
                           <div key={i} className="text-[13px] text-slate-600">
-                            <span className="font-semibold text-slate-700">القائد: {l.name}</span>
-                            <div className="text-slate-500">{l.weeks.join(' · ')}</div>
+                            <div className="font-semibold text-slate-700 mb-1">القائد: {l.name}</div>
+                            <div className="space-y-0.5">
+                              {l.weeks.map((w, j) => <div key={j} className="text-slate-500">{w}</div>)}
+                            </div>
                           </div>
                         ))}
+                        {hiddenLeaderNotes > 0 && (
+                          <div className="text-xs text-slate-400">و{say(hiddenLeaderNotes, 'note')} أخرى — راجع تقرير اليوم</div>
+                        )}
                       </div>
                     </div>
                   )}

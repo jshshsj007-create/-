@@ -14,7 +14,7 @@ import {
   noteOn, notesOn, notesOfDay, noteNames, noteNamesProgram,
   noteHighlightsProgram, noteHighlightLine, SEVERE_NOTE_WORDS,
   NOTICE_SPANS, noticeLive, hasRead, noticesFor, markRead, readTally,
-  supervisorsOf, toggleSupervisor, supervisorNames, unassigned, SUPERVISOR_MAX, leaderWeeksProgram,
+  supervisorsOf, toggleSupervisor, supervisorNames, unassigned, SUPERVISOR_MAX, leaderNotesProgram,
   qiyamiMissing, qiyamiReady, qiyamiOfDay, videoEmbed,
   daySummary,
 } from '../src/taqreer.js';
@@ -487,38 +487,50 @@ test('وما أُقيم بلا مشرفٍ يظهر ولا يسقط', () => {
   assert.deepEqual(unassigned(runs).map((r) => r.id), ['2', '4']);
 });
 
-/* ------------------------------ أسابيع القادة ------------------------------ */
+/* ------------------------------ ملاحظات القادة ------------------------------ */
 
 const program1 = { id: 'p1', weeks: [{ id: 'w1', name: 'الأسبوع الأول' }, { id: 'w2', name: 'الأسبوع الثاني' }, { id: 'w3', name: 'الأسبوع الثالث' }] };
+const dayReport = (userId, weekId, notes, over = {}) =>
+  ({ userId, programId: 'p1', weekId, values: { notes }, at: 1, ...over });
 
-test('كل قائد وأسابيعه بترتيبها — لا بترتيب إشرافه', () => {
+test('كل قائد وما كتبه تحت كل أسبوع، بترتيب الأسابيع لا ترتيب الكتابة', () => {
   const data = {
-    clubRuns: [
-      { id: 'r1', programId: 'p1', weekId: 'w3', supervisors: ['b'] },
-      { id: 'r2', programId: 'p1', weekId: 'w1', supervisors: ['b'] },
+    dayReports: [
+      dayReport('b', 'w3', 'نشيط هذا الأسبوع'),
+      dayReport('b', 'w1', 'تأخّر الحضور قليلًا'),
     ],
-    tournaments: [{ id: 't1', programId: 'p1', weekId: 'w2', supervisors: ['b'] }],
   };
-  const l = leaderWeeksProgram(data, 'p1', program1, users);
-  assert.deepEqual(l, [{ name: 'عبدالله', weeks: ['الأسبوع الأول', 'الأسبوع الثاني', 'الأسبوع الثالث'] }]);
+  const { leaders, hidden } = leaderNotesProgram(data, 'p1', program1, users);
+  assert.deepEqual(leaders, [{
+    name: 'عبدالله',
+    weeks: ['الأسبوع الأول: تأخّر الحضور قليلًا', 'الأسبوع الثالث: نشيط هذا الأسبوع'],
+  }]);
+  assert.equal(hidden, 0);
 });
 
-test('والأسبوع لا يتكرر ولو أشرف على نشاطين فيه', () => {
-  const data = {
-    clubRuns: [{ id: 'r1', programId: 'p1', weekId: 'w1', supervisors: ['b'] }],
-    qiyami: [{ id: 'q1', programId: 'p1', weekId: 'w1', supervisors: ['b'] }],
-  };
-  assert.deepEqual(leaderWeeksProgram(data, 'p1', program1, users)[0].weeks, ['الأسبوع الأول']);
+test('والخانة الفارغة لا تُكتب لها سطر', () => {
+  const data = { dayReports: [dayReport('b', 'w1', '   ')] };
+  assert.deepEqual(leaderNotesProgram(data, 'p1', program1, users).leaders, []);
 });
 
-test('والمتطوّع بلا حساب لا يدخل القائمة', () => {
-  const data = { clubRuns: [{ id: 'r1', programId: 'p1', weekId: 'w1', helper: 'فيصل' }] };
-  assert.deepEqual(leaderWeeksProgram(data, 'p1', program1, users), []);
+test('والنصّ الطويل يُختصر بحدّ الحروف', () => {
+  const long = 'حرف'.repeat(100);
+  const data = { dayReports: [dayReport('b', 'w1', long)] };
+  const { leaders } = leaderNotesProgram(data, 'p1', program1, users, { cut: 20 });
+  assert.ok(leaders[0].weeks[0].endsWith('…'));
+  assert.ok(leaders[0].weeks[0].length < long.length);
 });
 
 test('ولا يذكر برنامجًا غير هذا', () => {
-  const data = { clubRuns: [{ id: 'r1', programId: 'p9', weekId: 'w1', supervisors: ['b'] }] };
-  assert.deepEqual(leaderWeeksProgram(data, 'p1', program1, users), []);
+  const data = { dayReports: [dayReport('b', 'w1', 'ملاحظة', { programId: 'p9' })] };
+  assert.deepEqual(leaderNotesProgram(data, 'p1', program1, users).leaders, []);
+});
+
+test('والحدّ الأقصى يُحترم، وما زاد يُحسب في `hidden`', () => {
+  const data = { dayReports: [dayReport('b', 'w1', 'أ'), dayReport('b', 'w2', 'ب'), dayReport('b', 'w3', 'ج')] };
+  const { leaders, hidden } = leaderNotesProgram(data, 'p1', program1, users, { max: 2 });
+  assert.equal(leaders[0].weeks.length, 2);
+  assert.equal(hidden, 1);
 });
 
 /* --------------------------------- القيمي --------------------------------- */
