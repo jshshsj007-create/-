@@ -336,35 +336,43 @@ export const SEVERE_NOTE_WORDS = [
 ];
 
 /**
- * كل ملاحظة عبر البرنامج، مرقّمةً بنصّها الكامل — لا اسم صاحبها وحده.
+ * الملاحظات البارزة عبر البرنامج كله — لا كل ملاحظة.
  *
- * صاحب التطبيق طلبها صريحةً: «كل واحد وش كتب»، لا تلخيصًا يختار عنه. فكل
- * ملاحظةٍ سطرٌ برقمه، والخطيرة (من `SEVERE_NOTE_WORDS`) تتصدّر فتُقرأ أولًا.
+ * بارزة يعني أحد أمرين: تكرّرت على نفس الطالب (نمطٌ لا زلّة يوم)، أو فيها
+ * كلمةٌ من `SEVERE_NOTE_WORDS` تدلّ على خطورتها. وغيرها يبقى في سجلّ
+ * الطالب يُفتح من يبحث عنه، ولا يُثقل ورقة ملخّصٍ وعدُها صفحتان.
  *
- * والعددُ محدودٌ بـ`max` — لا لأن ما بعده غير مهم، بل لأن ورقة الملخّص
- * حدُّها ثلاث صفحات كما طلب، وسطرًا سطرًا تطول القائمة بطول الموسم. فمن زاد
- * عددُه عن الحدّ يُذكر عددُه في سطرٍ أخير بدل أن يُرسم كله ويخرج عن الورقة.
+ * والخطيرة تتصدّر، فمن يقرأ الملخّص سريعًا يرى الأهم أولًا.
  */
-export const programNoteLines = (data, programId, students, { max = 30 } = {}) => {
+export const noteHighlightsProgram = (data, programId, students, { max = 6 } = {}) => {
   const nameOf = Object.fromEntries((students || []).map((s) => [s.id, s.name || '']));
+  const byStudent = new Map();
+  for (const n of (data?.studentNotes || []).filter((x) => x.programId === programId)) {
+    const nm = nameOf[n.studentId] || n.studentName;
+    if (!nm) continue;
+    const key = n.studentId || nm;
+    const g = byStudent.get(key) || { name: nm, notes: [] };
+    g.notes.push(n);
+    byStudent.set(key, g);
+  }
   const isSevere = (text) => SEVERE_NOTE_WORDS.some((w) => String(text || '').includes(w));
-  const all = (data?.studentNotes || [])
-    .filter((n) => n.programId === programId)
-    .map((n) => ({
-      name: nameOf[n.studentId] || n.studentName || '',
-      text: String(n.text || '').trim(),
-      at: n.at || 0,
-      severe: isSevere(n.text),
-    }))
-    .filter((n) => n.name && n.text)
-    .sort((a, b) => (Number(b.severe) - Number(a.severe)) || (a.at - b.at));
-
-  const shown = all.slice(0, max);
-  const lines = shown.map((n, i) => `${i + 1}. ${n.severe ? '⚠ ' : ''}${n.name}: ${n.text}`);
-  const hidden = all.length - shown.length;
-  if (hidden > 0) lines.push(`و${say(hidden, 'note')} أخرى — راجع سجلّ الطالب`);
-  return { lines, total: all.length };
+  const out = [];
+  for (const g of byStudent.values()) {
+    const severeNote = g.notes.find((n) => isSevere(n.text));
+    const repeated = g.notes.length >= 2;
+    if (!severeNote && !repeated) continue;
+    // الخطيرة تُقتبس بنصّها لو وُجدت، وإلا فآخر ملاحظةٍ على من تكرّرت عليه
+    const pick = severeNote || g.notes[g.notes.length - 1];
+    out.push({ name: g.name, text: String(pick.text || '').trim(), count: g.notes.length, severe: !!severeNote });
+  }
+  return out
+    .sort((a, b) => (Number(b.severe) - Number(a.severe)) || (b.count - a.count))
+    .slice(0, max);
 };
+
+/** سطرٌ جاهزٌ للورقة أو الشاشة: «فلان — النص (تكرّرت ٣ مرات)». */
+export const noteHighlightLine = (h) =>
+  `${h.name} — ${h.text}${h.count > 1 ? ` (تكرّرت ${say(h.count, 'time')})` : ''}`;
 
 /* -------------------------------- التنبيهات -------------------------------- */
 
