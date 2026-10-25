@@ -12,7 +12,7 @@ import {
   reportOf, dayReports, mustReport, reportRoll, rollText, reportTable,
   hijriKey, sameDate, dayNow, dateRank, owedDays,
   noteOn, notesOn, notesOfDay, noteNames, noteNamesProgram,
-  noteHighlightsProgram, noteHighlightLine, SEVERE_NOTE_WORDS,
+  programNoteLines, SEVERE_NOTE_WORDS,
   NOTICE_SPANS, noticeLive, hasRead, noticesFor, markRead, readTally,
   supervisorsOf, toggleSupervisor, supervisorNames, unassigned, SUPERVISOR_MAX,
   qiyamiMissing, qiyamiReady, qiyamiOfDay, videoEmbed,
@@ -339,48 +339,48 @@ test('ولا يذكر برنامجًا غير هذا', () => {
   assert.deepEqual(noteNamesProgram(data, 'p9', students), []);
 });
 
-/* ---------------------------- الملاحظات البارزة ---------------------------- */
+/* ------------------------------- كل الملاحظات ------------------------------- */
 
-test('من تكررت ملاحظاته بارزٌ، ومن كُتبت عليه مرة واحدة لا', () => {
-  // noteData: سعد له 3 ملاحظات (تكرار)، فهد له واحدة فقط
-  const high = noteHighlightsProgram(noteData, 'p1', students);
-  assert.deepEqual(high.map((h) => h.name), ['سعد']);
-  assert.equal(high[0].count, 3);
-  assert.equal(high[0].severe, false);
+test('كل ملاحظة سطرٌ برقمه، بترتيب وقتها', () => {
+  // noteData: سعد (at 10, 20, 14) وفهد (at 12) — أربع ملاحظات، لا واحدة منها خطيرة
+  const { lines, total } = programNoteLines(noteData, 'p1', students);
+  assert.equal(total, 4);
+  assert.deepEqual(lines, [
+    '1. سعد: تأخّر',
+    '2. فهد: ممتاز',
+    '3. سعد: ثانية',
+    '4. سعد: ساعد',
+  ]);
 });
 
-test('وكلمة خطورة تُبرز الملاحظة ولو كُتبت مرة واحدة', () => {
-  const data = { studentNotes: [noteOn('s2', 'صار فيه مشاجرة بينه وبين زميله', 'b', { programId: 'p1', weekId: 'w1', studentName: 'فهد' })] };
-  const high = noteHighlightsProgram(data, 'p1', [{ id: 's2', name: 'فهد' }]);
-  assert.deepEqual(high.map((h) => h.name), ['فهد']);
-  assert.equal(high[0].severe, true);
-});
-
-test('والخطيرة تتصدّر على المتكررة غير الخطيرة', () => {
+test('والخطيرة تتصدّر مهما كان وقتها', () => {
   const data = {
     studentNotes: [
-      ...noteData.studentNotes, // سعد: 3 ملاحظات، غير خطيرة
-      noteOn('s2', 'تهديد زميله', 'b', { programId: 'p1', weekId: 'w3', studentName: 'فهد' }),
+      noteOn('s1', 'ملاحظة عادية', 'b', { programId: 'p1', weekId: 'w1', studentName: 'سعد', at: 1 }),
+      noteOn('s2', 'صارت مشاجرة بينه وبين زميله', 'b', { programId: 'p1', weekId: 'w2', studentName: 'فهد', at: 99 }),
     ],
   };
-  const high = noteHighlightsProgram(data, 'p1', students);
-  assert.deepEqual(high.map((h) => h.name), ['فهد', 'سعد']);
+  const { lines } = programNoteLines(data, 'p1', students);
+  assert.equal(lines[0], '1. ⚠ فهد: صارت مشاجرة بينه وبين زميله');
+  assert.equal(lines[1], '2. سعد: ملاحظة عادية');
 });
 
-test('وما لم يتكرر وما فيه كلمة خطورة لا يظهر أصلًا', () => {
-  const data = { studentNotes: [noteOn('s3', 'ممتاز اليوم', 'b', { programId: 'p1', weekId: 'w1', studentName: 'عمر' })] };
-  assert.deepEqual(noteHighlightsProgram(data, 'p1', []), []);
+test('ولا يذكر برنامجًا غير هذا', () => {
+  const data = { studentNotes: [...noteData.studentNotes, noteOn('s2', 'ملاحظة', 'b', { programId: 'p2', weekId: 'w1', studentName: 'فهد' })] };
+  assert.equal(programNoteLines(data, 'p9', students).total, 0);
 });
 
-test('والحدّ الأقصى يُحترم', () => {
+test('وبلا ملاحظات لا سطر ولا خطأ', () => {
+  assert.deepEqual(programNoteLines({ studentNotes: [] }, 'p1', students), { lines: [], total: 0 });
+});
+
+test('والحدّ الأقصى يُحترم، وما زاد يُذكر عددُه في سطرٍ أخير', () => {
   const many = Array.from({ length: 10 }, (_, i) =>
-    noteOn(`s${i}`, 'خطير جدًا', 'b', { programId: 'p1', weekId: 'w1', studentName: `طالب${i}` }));
-  assert.equal(noteHighlightsProgram({ studentNotes: many }, 'p1', [], { max: 4 }).length, 4);
-});
-
-test('وسطر الورقة يجمع الاسم والنص وعدد التكرار', () => {
-  assert.equal(noteHighlightLine({ name: 'سعد', text: 'تأخّر', count: 1 }), 'سعد — تأخّر');
-  assert.equal(noteHighlightLine({ name: 'سعد', text: 'تأخّر', count: 3 }), 'سعد — تأخّر (تكرّرت 3 مرات)');
+    noteOn(`s${i}`, 'ملاحظة', 'b', { programId: 'p1', weekId: 'w1', studentName: `طالب${i}`, at: i }));
+  const { lines, total } = programNoteLines({ studentNotes: many }, 'p1', [], { max: 4 });
+  assert.equal(total, 10);
+  assert.equal(lines.length, 5); // 4 ملاحظات + سطر العدد الباقي
+  assert.match(lines[4], /^و6 ملاحظات أخرى/);
 });
 
 test('وقائمة كلمات الخطورة ليست فارغة', () => {
