@@ -1617,6 +1617,7 @@ export default function App() {
   const [selectedStudentId, setSelectedStudentId] = useState(null);
   const [guardianSearch, setGuardianSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('الكل');  // تصفية المشتركين بحالتهم
+  const [guardianMissingOnly, setGuardianMissingOnly] = useState(false); // بلا وليّ أمر فقط
   const [tripScope, setTripScope] = useState('term');       // سفرات الموسم أو كلها
   const [hideMoney, setHideMoney] = useState(readHideMoney);  // طمس أرقام فيض على هذا الجهاز
   useEffect(() => { writeHideMoney(hideMoney); }, [hideMoney]);
@@ -9531,7 +9532,9 @@ export default function App() {
            * البحث بالكلمات: «عبدالعزيز القاسم» تلقى «عبدالعزيز محمد القاسم».
            * المقارنة النصّية كانت تخفيه لأن «محمد» واقفة بينهما.
            */
+          const missingCount = data.students.filter((s) => !s.guardianId).length;
           const list = data.students.filter((s) => {
+            if (guardianMissingOnly && s.guardianId) return false;
             if (statusFilter !== 'الكل' && studentState(data.programs, s.id, stOpts) !== statusFilter) return false;
             if (!guardianSearch.trim()) return true;
             const g = data.guardians.find((x) => x.id === s.guardianId);
@@ -9563,6 +9566,21 @@ export default function App() {
                   <div className="text-xs text-slate-400 mt-1">ولي أمر</div>
                 </div>
               </div>
+
+              {/* من سُجّل بلا جوال ولي أمر — ما له طريق تطالبه ولا تسأل عنه إلا تدوّر عليه بالاسم */}
+              {missingCount > 0 && (
+                <button
+                  className={`w-full text-right rounded-2xl px-4 py-3 mb-4 flex items-center justify-between gap-2 border ${
+                    guardianMissingOnly ? 'bg-amber-100 border-amber-300' : 'bg-amber-50 border-amber-200'}`}
+                  onClick={() => setGuardianMissingOnly(!guardianMissingOnly)}>
+                  <span className="text-sm text-amber-900">
+                    فيه <b>{missingCount}</b> طالب بلا رقم ولي أمر
+                  </span>
+                  <span className="text-xs font-semibold text-amber-700 shrink-0">
+                    {guardianMissingOnly ? 'إلغاء التصفية ✕' : 'أظهرهم فقط'}
+                  </span>
+                </button>
+              )}
 
               {duplicates.length > 0 && (
                 <button className="w-full text-right bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 mb-4 flex items-start gap-2"
