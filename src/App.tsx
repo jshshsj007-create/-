@@ -6022,24 +6022,35 @@ export default function App() {
                 c.cups ? say(c.cups, 'cup') : '',
                 c.questions ? `${say(c.questions, 'question')}${correct ? ` — أجاب عليها صحيحًا ${say(correct, 'answer')}` : ''}` : '',
               ].filter(Boolean);
-              // ما كتبه كل قائد في خانة «ملاحظات سلوكية» من تقرير يومه، تحت كل أسبوع
+              // ما كتبه كل قائد في خانة «ملاحظات سلوكية» من تقرير يومه، جدولًا تحت كل أسبوع
               const { leaders, hidden: hiddenLeaderNotes } = leaderNotesProgram(data, program.id, program, data.users);
-              const leaderLines = leaders.flatMap((l) => [`القائد: ${l.name}`, ...l.weeks]);
-              if (hiddenLeaderNotes > 0) leaderLines.push(`و${say(hiddenLeaderNotes, 'note')} أخرى — راجع تقرير اليوم`);
               return (
                 <>
                   <ProgramSummaryReport program={program} totals={totals} clubLines={clubLines}
-                    notes={progNotes} highlights={highlights} leaderLines={leaderLines} canMoney={canMoney} />
+                    notes={progNotes} highlights={highlights} leaderNotes={leaders} leaderNotesHidden={hiddenLeaderNotes} canMoney={canMoney} />
                   {leaders.length > 0 && (
                     <div className={cardCls + ' mb-4'}>
                       <div className="text-sm font-semibold text-slate-700 mb-2">ملاحظات القادة من تقاريرهم</div>
-                      <div className="space-y-3">
+                      <div className="space-y-4">
                         {leaders.map((l, i) => (
-                          <div key={i} className="text-[13px] text-slate-600">
-                            <div className="font-semibold text-slate-700 mb-1">القائد: {l.name}</div>
-                            <div className="space-y-0.5">
-                              {l.weeks.map((w, j) => <div key={j} className="text-slate-500">{w}</div>)}
-                            </div>
+                          <div key={i}>
+                            <div className="text-[13px] font-semibold text-slate-700 mb-1.5">القائد: {l.name}</div>
+                            <table className="w-full text-[12px] border-collapse">
+                              <thead>
+                                <tr className="text-slate-400">
+                                  <th className="text-right font-medium py-1 px-1.5 w-24">الأسبوع</th>
+                                  <th className="text-right font-medium py-1 px-1.5">الملاحظات</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {l.rows.map(([week, text], j) => (
+                                  <tr key={j} className="border-t border-slate-100 align-top">
+                                    <td className="py-1.5 px-1.5 text-slate-600 whitespace-nowrap">{week}</td>
+                                    <td className="py-1.5 px-1.5 text-slate-600">{text}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
                           </div>
                         ))}
                         {hiddenLeaderNotes > 0 && (
@@ -13533,7 +13544,7 @@ function WeekReport({ week, accounts, canMoney, programName, term, club, extra =
  * أقام النادي، وملاحظات القادة إن وُجدت — تُطوى كل خانةٍ لا قيمة لها، فلا
  * تطول الورقة بصفوفٍ فارغة.
  */
-function ProgramSummaryReport({ program, totals, clubLines, notes, highlights, leaderLines, canMoney }) {
+function ProgramSummaryReport({ program, totals, clubLines, notes, highlights, leaderNotes, leaderNotesHidden, canMoney }) {
   const [shared, setShared] = useState('');
   const [busy, setBusy] = useState(false);
   /**
@@ -13543,6 +13554,7 @@ function ProgramSummaryReport({ program, totals, clubLines, notes, highlights, l
    */
   const [bare, setBare] = useState(false);
   const high = bare ? [] : (highlights || []).map(noteHighlightLine);
+  const leaderNotesForSheet = bare ? [] : leaderNotes;
   const term = termText(program.termKey);
   const money = canMoney ? {
     revenue: totals.revenue, expenses: totals.expenses, net: totals.net,
@@ -13557,7 +13569,7 @@ function ProgramSummaryReport({ program, totals, clubLines, notes, highlights, l
       const blob = await reportSheet({
         week: 'البرنامج', program: program.name, term, date: hijri(Date.now()),
         students: totals.people, present: totals.present, enrolled: totals.slots,
-        money, club: clubLines, notes, noteHighlights: high, leaders: leaderLines,
+        money, club: clubLines, notes, noteHighlights: high, leaderNotes: leaderNotesForSheet, leaderNotesHidden: bare ? 0 : leaderNotesHidden,
       }, { logo: LOGO_MARK_WHITE, team: TEAM_NAME, stamp: hijri(Date.now()) });
       const how = await shareFile(blob, sheetFileName(hijri(Date.now())), `ملخص ${program.name}`);
       setShared(how === 'downloaded' ? 'نزلت الورقة' : '');
@@ -13589,7 +13601,7 @@ function ProgramSummaryReport({ program, totals, clubLines, notes, highlights, l
   return (
     <div className={cardCls + ' mb-4'}>
       <div className="text-sm font-semibold text-slate-700 mb-3">ملخّص البرنامج</div>
-      {(highlights || []).length > 0 && (
+      {((highlights || []).length > 0 || (leaderNotes || []).length > 0) && (
         <button type="button" onClick={() => setBare(!bare)}
           className={`w-full rounded-xl border px-4 py-2.5 text-xs font-bold mb-2 ${bare ? 'bg-brand-700 text-white border-brand-700' : 'bg-white text-slate-600 border-slate-200'}`}>
           {bare ? 'بلا نصوص الملاحظات ✓ — يطلع العدد وحده' : 'بلا نصوص الملاحظات — لو أرسلتَه لغير رئيس المجلس'}

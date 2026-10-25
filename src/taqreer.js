@@ -489,26 +489,22 @@ export const supervisorNames = (run, users) => {
 
 /**
  * ما كتبه كل قائد في خانة «الطلاب — ملاحظات سلوكية» من تقرير يومه، عبر
- * البرنامج كله — لا أسابيع إشرافه على النادي، بل كلامُه هو بنصّه. لتقرير
- * البرنامج المختصر: «القائد: محمد العلوان» ثم ما كتبه تحت كل أسبوع.
+ * البرنامج كله — لا أسابيع إشرافه على النادي، بل كلامُه هو بنصّه. جدولٌ
+ * لكل قائد: الأسبوع في عمود، ونصّه كاملًا في عمودٍ آخر — كما يُبنى جدول
+ * «تقارير القادة» بالضبط، فنصُّه لا يُقصّ ولو طال، بل يُشَقّ صفحةً تكمل.
  *
- * والنصّ الطويل يُختصر (`cut` حرفًا) حتى لا يُخرج ورقة الملخّص عن صفحاتها
- * الثلاث — تمامه يبقى في تقرير ذلك اليوم بعينه، يُفتح من يحتاجه. وعددُ
- * الأسابيع المعروضة محدودٌ كذلك (`max`)، وما زاد يُذكر عددُه في النهاية.
+ * وعددُ الأسابيع محدودٌ بـ`max` احتياطًا من موسمٍ طويل جدًّا، وما زاد
+ * يُذكر عددُه لا يُرسم كله.
  */
-export const leaderNotesProgram = (data, programId, program, users, { cut = 220, max = 14 } = {}) => {
+export const leaderNotesProgram = (data, programId, program, users, { max = 60 } = {}) => {
   const weekOrder = Object.fromEntries((program?.weeks || []).map((w, i) => [w.id, i]));
   const weekName = Object.fromEntries((program?.weeks || []).map((w) => [w.id, w.name || '']));
   const nameOf = Object.fromEntries((users || []).map((u) => [u.id, u.name || '']));
-  const clip = (t) => {
-    const x = String(t || '').replace(/\s+/g, ' ').trim();
-    return x.length > cut ? `${x.slice(0, cut - 1)}…` : x;
-  };
 
   const entries = [];
   for (const r of (data?.dayReports || [])) {
     if (r.programId !== programId || !r.weekId) continue;
-    const text = clip(fieldValue(r, 'notes'));
+    const text = String(fieldValue(r, 'notes') || '').trim();
     const nm = nameOf[r.userId];
     if (!text || !nm) continue;
     entries.push({ name: nm, weekId: r.weekId, week: weekName[r.weekId] || '', text });
@@ -519,8 +515,8 @@ export const leaderNotesProgram = (data, programId, program, users, { cut = 220,
   const leaders = [];
   for (const e of shown) {
     const last = leaders[leaders.length - 1];
-    if (last && last.name === e.name) last.weeks.push(`${e.week}: ${e.text}`);
-    else leaders.push({ name: e.name, weeks: [`${e.week}: ${e.text}`] });
+    if (last && last.name === e.name) last.rows.push([e.week, e.text]);
+    else leaders.push({ name: e.name, rows: [[e.week, e.text]] });
   }
   return { leaders, hidden: entries.length - shown.length };
 };

@@ -136,7 +136,7 @@ const loadImage = (src) => new Promise((resolve) => {
  * ويُطوى ما غاب: من لا صلاحية له في المال لا يرى قسمًا فارغًا، ومن لم يُقم
  * شيئًا من النادي لا يرى عنوانه.
  */
-export const sheetSections = ({ students, present, enrolled, money, club, qiyami, notes, noteHighlights, leaders, reports, reportTable, wudu } = {}) => {
+export const sheetSections = ({ students, present, enrolled, money, club, qiyami, notes, noteHighlights, leaderNotes, leaderNotesHidden, reports, reportTable, wudu } = {}) => {
   const out = [];
   const who = [];
   if (students != null) who.push(['الطلاب المسجلون', fmt(students)]);
@@ -162,11 +162,22 @@ export const sheetSections = ({ students, present, enrolled, money, club, qiyami
   if (list.length) out.push({ title: 'النادي', lines: list });
 
   /**
-   * ما كتبه كل قائد في خانة «ملاحظات سلوكية» من تقرير يومه، عبر البرنامج
-   * كله — لتقرير البرنامج: «القائد: فلان» ثم ما كتبه تحت كل أسبوع.
+   * ما كتبه كل قائد في خانة «ملاحظات سلوكية» من تقرير يومه، جدولًا بعمودين
+   * — الأسبوع ونصُّه — كما يُبنى جدول «تقارير القادة» بالضبط. صندوقٌ لكل
+   * قائد، فنصُّه الطويل لا يُقصّ بل يُشَقّ صفحةً تكمل.
    */
-  const leaderLines = (leaders || []).map((n) => clean(n)).filter(Boolean);
-  if (leaderLines.length) out.push({ title: 'ملاحظات القادة', lines: leaderLines });
+  for (const l of (leaderNotes || [])) {
+    const rows = (l?.rows || []).map(([w, t]) => [clean(w), clean(t)]).filter(([, t]) => t);
+    if (!rows.length) continue;
+    out.push({
+      title: `القائد: ${clean(l.name)}`,
+      cols: [{ label: 'الأسبوع', w: 25 }, { label: 'الملاحظات', w: 75 }],
+      grid: rows,
+    });
+  }
+  if (Number(leaderNotesHidden) > 0) {
+    out.push({ title: 'ملاحظات قادة أخرى', lines: [`${fmt(leaderNotesHidden)} أسبوعًا أخرى — راجع تقرير اليوم`] });
+  }
 
   /** تعليم الوضوء: سطرٌ واحد جاهز — عددٌ عامٌّ للفريق لا يخصّ هذا اليوم وحده. */
   if (clean(wudu)) out.push({ title: 'تعليم الوضوء', lines: [clean(wudu)] });

@@ -120,18 +120,32 @@ test('صناديق الورقة الثلاثة الجديدة، بترتيبها
   assert.equal(s[4].rows[0][1], '5 من 5');
 });
 
-test('وملاحظات القادة تجي بعد النادي مباشرة، سطرًا لكل قائد وما كتبه', () => {
+test('وملاحظات القادة تجي بعد النادي، صندوقًا لكل قائد وجدولُه عمودان', () => {
   const s = sheetSections({
     students: 10, club: ['الكنز المفقود — مسابقة'],
-    leaders: ['القائد: محمد العلوان', 'الأسبوع الأول: نشيط هذا الأسبوع'],
+    leaderNotes: [{ name: 'محمد العلوان', rows: [['الأسبوع الأول', 'نشيط هذا الأسبوع']] }],
   });
-  assert.deepEqual(s.map((x) => x.title), ['الحضور', 'النادي', 'ملاحظات القادة']);
-  assert.deepEqual(s[2].lines, ['القائد: محمد العلوان', 'الأسبوع الأول: نشيط هذا الأسبوع']);
+  assert.deepEqual(s.map((x) => x.title), ['الحضور', 'النادي', 'القائد: محمد العلوان']);
+  assert.deepEqual(s[2].cols.map((c) => c.label), ['الأسبوع', 'الملاحظات']);
+  assert.deepEqual(s[2].grid, [['الأسبوع الأول', 'نشيط هذا الأسبوع']]);
 });
 
-test('وبلا قادة لا يظهر صندوقهم', () => {
-  const s = sheetSections({ students: 3, leaders: [] });
+test('وكل قائد صندوقه الخاص، لا صندوق واحد للكل', () => {
+  const s = sheetSections({
+    leaderNotes: [
+      { name: 'محمد العلوان', rows: [['الأسبوع الأول', 'أ']] },
+      { name: 'خالد السبيعي', rows: [['الأسبوع الأول', 'ب']] },
+    ],
+  });
+  assert.deepEqual(s.map((x) => x.title), ['القائد: محمد العلوان', 'القائد: خالد السبيعي']);
+});
+
+test('وبلا قادة لا يظهر صندوقهم، وما زاد عن الحدّ يُذكر عدده', () => {
+  const s = sheetSections({ students: 3, leaderNotes: [] });
   assert.deepEqual(s.map((x) => x.title), ['الحضور']);
+  const s2 = sheetSections({ students: 3, leaderNotesHidden: 4 });
+  assert.deepEqual(s2.map((x) => x.title), ['الحضور', 'ملاحظات قادة أخرى']);
+  assert.equal(s2[1].lines[0], '4 أسبوعًا أخرى — راجع تقرير اليوم');
 });
 
 test('وقيميٌّ بلا ملقٍ يُكتب عنوانه ولا يُترك فارغًا', () => {

@@ -493,7 +493,7 @@ const program1 = { id: 'p1', weeks: [{ id: 'w1', name: 'الأسبوع الأو�
 const dayReport = (userId, weekId, notes, over = {}) =>
   ({ userId, programId: 'p1', weekId, values: { notes }, at: 1, ...over });
 
-test('كل قائد وما كتبه تحت كل أسبوع، بترتيب الأسابيع لا ترتيب الكتابة', () => {
+test('كل قائد وجدول أسبوعه ونصّه، بترتيب الأسابيع لا ترتيب الكتابة', () => {
   const data = {
     dayReports: [
       dayReport('b', 'w3', 'نشيط هذا الأسبوع'),
@@ -503,22 +503,21 @@ test('كل قائد وما كتبه تحت كل أسبوع، بترتيب الأ
   const { leaders, hidden } = leaderNotesProgram(data, 'p1', program1, users);
   assert.deepEqual(leaders, [{
     name: 'عبدالله',
-    weeks: ['الأسبوع الأول: تأخّر الحضور قليلًا', 'الأسبوع الثالث: نشيط هذا الأسبوع'],
+    rows: [['الأسبوع الأول', 'تأخّر الحضور قليلًا'], ['الأسبوع الثالث', 'نشيط هذا الأسبوع']],
   }]);
   assert.equal(hidden, 0);
 });
 
-test('والخانة الفارغة لا تُكتب لها سطر', () => {
+test('والخانة الفارغة لا تُكتب لها صفّ', () => {
   const data = { dayReports: [dayReport('b', 'w1', '   ')] };
   assert.deepEqual(leaderNotesProgram(data, 'p1', program1, users).leaders, []);
 });
 
-test('والنصّ الطويل يُختصر بحدّ الحروف', () => {
+test('والنصّ يمشي كاملًا بلا اختصار — الجدول يتّسع له', () => {
   const long = 'حرف'.repeat(100);
   const data = { dayReports: [dayReport('b', 'w1', long)] };
-  const { leaders } = leaderNotesProgram(data, 'p1', program1, users, { cut: 20 });
-  assert.ok(leaders[0].weeks[0].endsWith('…'));
-  assert.ok(leaders[0].weeks[0].length < long.length);
+  const { leaders } = leaderNotesProgram(data, 'p1', program1, users);
+  assert.equal(leaders[0].rows[0][1], long);
 });
 
 test('ولا يذكر برنامجًا غير هذا', () => {
@@ -529,7 +528,7 @@ test('ولا يذكر برنامجًا غير هذا', () => {
 test('والحدّ الأقصى يُحترم، وما زاد يُحسب في `hidden`', () => {
   const data = { dayReports: [dayReport('b', 'w1', 'أ'), dayReport('b', 'w2', 'ب'), dayReport('b', 'w3', 'ج')] };
   const { leaders, hidden } = leaderNotesProgram(data, 'p1', program1, users, { max: 2 });
-  assert.equal(leaders[0].weeks.length, 2);
+  assert.equal(leaders[0].rows.length, 2);
   assert.equal(hidden, 1);
 });
 
