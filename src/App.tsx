@@ -17,7 +17,7 @@ import { checkAll, worst } from './watch.js';
 import { trashed, pruned, sortedTrash, leftText, kindLabel, TRASH_DAYS } from './trash.js';
 import { canWrite as canWritePerm, READ_REPORTS } from './perms.js';
 import { conversion, people } from './visits.js';
-import { makeToken as makeSignupToken, packTotal, packSpan, splitLump, subsFor, TEXTS, CLOSED, waIntl, waLink, varNames, fieldsFor, dayLabel, mapHref, waGroupLink, placeOf, blocksSignup, DEFAULT_WA_TEMPLATE } from './signup.js';
+import { makeToken as makeSignupToken, packTotal, packSpan, splitLump, subsFor, missingSubSeats, TEXTS, CLOSED, waIntl, waLink, varNames, fieldsFor, dayLabel, mapHref, waGroupLink, placeOf, blocksSignup, DEFAULT_WA_TEMPLATE } from './signup.js';
 import { readImage, POSTER, GALLERY } from './img.js';
 import { qrDataUrl, qrPngBlob } from './qr.js';
 import { runningBuild, publishedBuild, isStale, hardReload } from './freshness.js';
@@ -7100,8 +7100,27 @@ export default function App() {
                   </div>
                 )}
 
-                {activeWeekTab === 'participants' && (
+                {activeWeekTab === 'participants' && (() => {
+                  /*
+                    مشتركو الموسم الذين لم ينزل نصيبهم في هذا الأسبوع رغم أنه
+                    مفتوحٌ لهم — وقعت حين يُقفل أسبوعٌ وقت التسجيل ثم يُفتح، أو
+                    حين يُنشأ أسبوعٌ بطريقةٍ لا تمرّ على جرّ المشتركين التلقائي.
+                  */
+                  const missingSeats = canEnroll ? missingSubSeats(program.weeks, week.id, uid) : [];
+                  return (
                   <div>
+                    {missingSeats.length > 0 && (
+                      <button
+                        className="w-full mb-3 text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-3 text-right flex items-center justify-between gap-2"
+                        disabled={ledgerLocked}
+                        onClick={() => patchLedger(activeRef, (w) => ({ participants: [...(w.participants || []), ...missingSeats] }))}>
+                        <span>
+                          فيه {say(missingSeats.length, 'student')} مشتركٌ بالموسم، نصيبهم من هذا الأسبوع ما نزل بعد:
+                          {' '}{missingSeats.map((x) => x.name).join(' · ')}
+                        </span>
+                        <span className="shrink-0">أكملهم ←</span>
+                      </button>
+                    )}
                     <div className="flex items-center gap-2 mb-3">
                       <div className="relative flex-1">
                         <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" />
@@ -7191,7 +7210,8 @@ export default function App() {
                       arrearsText={arrearsText}
                     />
                   </div>
-                )}
+                  );
+                })()}
 
                 {activeWeekTab === 'report' && (() => {
                   /*

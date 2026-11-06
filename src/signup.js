@@ -832,6 +832,48 @@ export const subsFor = (weeks, newId, { attendance = 'معلق' } = {}) => {
 };
 
 /**
+ * مشتركو الموسم الذين يستحقّون النزول في جمعةٍ **قائمة أصلًا**، لا جمعةٍ
+ * تُنشأ الآن.
+ *
+ * وقعت: جمعةٌ كانت مقفلة وقت تسجيل المشترك فما نزل فيها نصيبه، ثم فُتحت —
+ * أو جمعةٌ لم تكن موجودة بعد، ثم أُنشئت بطريقةٍ لا تمرّ على `subsFor`
+ * (كاستعادةٍ من المحذوفات). فيبقى اشتراكه ناقصًا في جمعةٍ هو مفتوحٌ لها
+ * فعلًا، ولا يظهر له أثر فيها أبدًا حتى يُكتشف يدويًا.
+ *
+ * ومن له صفٌّ في هذي الجمعة أصلًا لا يُكرَّر — وإن كان اشتراكُه ناقصًا من
+ * جمعةٍ أخرى، فتلك قصّةٌ غير هذي.
+ */
+export const missingSubSeats = (weeks, targetWeekId, newId, { attendance = 'معلق' } = {}) => {
+  const target = (weeks || []).find((w) => w.id === targetWeekId);
+  if (!target) return [];
+  const already = new Set((target.participants || []).map((x) => x.sub?.id).filter(Boolean));
+  const groups = new Map();
+  for (const w of weeks || []) {
+    for (const x of w?.participants || []) {
+      if (!x?.sub?.id || already.has(x.sub.id)) continue;
+      const g = groups.get(x.sub.id) || [];
+      g.push(x);
+      groups.set(x.sub.id, g);
+    }
+  }
+  const out = [];
+  for (const rows of groups.values()) {
+    const { arrivedAt, receipt, ...last } = rows[rows.length - 1];
+    const span = Math.max(0, Math.round(Number(last.sub.span) || 0));
+    const used = rows.length;
+    if (!span || used >= span) continue;
+    out.push({
+      ...last,
+      id: newId(),
+      amount: shareAt(last.sub.total, span, used),
+      sub: { ...last.sub, i: used },
+      attendance,
+    });
+  }
+  return out;
+};
+
+/**
  * حماية الرابط العام.
  *
  * الحدُّ الذي يردع العابث هو حدُّ الجوال الواحد: خمسٌ في الساعة، وما بعدها

@@ -7,7 +7,7 @@ import {
   makeToken, programByToken, publicView, validateSubmission,
   dueFor, totalDue, applySubmission, rateLimited, PER_HOUR, coversAll, isReceipt, RECEIPT_MAX, packTotal, splitLump, normalizeSubmission,
   waIntl, waLink, fillTemplate, signupVars, txt, TEXTS, varNames, DEFAULT_WA_TEMPLATE,
-  orderedDays, weekShares, packSpan, shareAt, subsFor,
+  orderedDays, weekShares, packSpan, shareAt, subsFor, missingSubSeats,
 } from '../src/signup.js';
 import { studentsOf } from '../src/people.js';
 
@@ -829,6 +829,47 @@ test('ولا يُجرّ من ليس له اشتراك', () => {
   assert.deepEqual(subsFor([{ id: 'w1', participants: [{ id: 'x', name: 'ماجد', amount: 50 }] }], () => 'n1'), []);
 });
 
+/* ------------------- الجمعة القائمة فاتها نصيب الاشتراك ------------------- */
+
+/** اشتراكٌ نزل في جمعةٍ واحدة من ثلاث، والجمعتان الأخريان قائمتان بلا نصيبه. */
+const gapWeeks = () => [
+  {
+    id: 'w1', participants: [
+      { id: 'p1', name: 'عبدالله البراك', amount: 34, attendance: 'حاضر', accountId: 'rajhi',
+        sub: { id: 's1', packId: 'pk', total: 102, span: 3, i: 0 } },
+    ],
+  },
+  { id: 'w2', participants: [] },
+  { id: 'w3', participants: [] },
+];
+
+test('من له جمعةٌ قائمة بلا نصيبه ينزل فيها بترتيب اشتراكه', () => {
+  let n = 0;
+  const seats = missingSubSeats(gapWeeks(), 'w2', () => `n${++n}`);
+  assert.equal(seats.length, 1);
+  assert.equal(seats[0].name, 'عبدالله البراك');
+  assert.equal(seats[0].amount, 34, 'الثاني من ثلاثة');
+  assert.equal(seats[0].sub.i, 1);
+  assert.equal(seats[0].attendance, 'معلق');
+  assert.equal(seats[0].arrivedAt, undefined, 'الحضور يخصّ يومه، ما يُورَّث');
+});
+
+test('ومن له صفٌّ في هذي الجمعة أصلًا لا يتكرّر', () => {
+  const weeks = gapWeeks();
+  weeks[1].participants = [{ id: 'p2', name: 'عبدالله البراك', amount: 34, sub: { id: 's1', packId: 'pk', total: 102, span: 3, i: 1 } }];
+  assert.deepEqual(missingSubSeats(weeks, 'w2', () => 'n1'), []);
+});
+
+test('ومن استوفى مدّته لا ينزل في جمعةٍ بعدها', () => {
+  const weeks = gapWeeks();
+  weeks[1].participants = [{ id: 'p2', sub: { id: 's1', span: 3, i: 1 }, amount: 34 }];
+  weeks[2].participants = [{ id: 'p3', sub: { id: 's1', span: 3, i: 2 }, amount: 34 }];
+  assert.deepEqual(missingSubSeats(weeks, 'w3', () => 'n1'), [], 'استوفى الثلاثة في w1 وw2 — ما بقي له شيء');
+});
+
+test('وجمعةٌ غير موجودة ترجع فاضية بلا خطأ', () => {
+  assert.deepEqual(missingSubSeats(gapWeeks(), 'w9', () => 'n1'), []);
+});
 
 console.log(`\n${passed} اختبار نجح.`);
 
