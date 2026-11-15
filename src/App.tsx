@@ -9301,14 +9301,10 @@ export default function App() {
             <Breadcrumb items={[{ label: 'السفرات', onClick: () => goto(myOnlyTrip ? 'home' : 'trips') }, { label: trip.name }]} />
             <div className="flex items-center gap-2 mb-5 mt-2">
               <h2 className="text-lg sm:text-xl font-bold text-slate-800">{trip.name}</h2>
+              {trip.closed && <span data-testid="trip-closed-badge" className="text-[11px] font-bold bg-slate-100 text-slate-500 rounded-md px-2 py-1">🔒 مقفلة</span>}
               {isAdmin && <button onClick={() => askConfirm(`حذف سفرة «${trip.name}»؟`, () => removeTrip(trip.id))} className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>}
             </div>
             <Trace item={trip} className="-mt-3 mb-5" />
-            {trip.closed && (
-              <div className="bg-slate-100 border border-slate-200 rounded-xl px-3.5 py-3 mb-3 text-xs text-slate-700 leading-6" data-testid="trip-closed-note">
-                🔒 هذه السفرة مقفلة: لا يُضاف فيها ولا يُعدَّل ولا يُحذف شيء.{isAdmin ? ' افتحها إن أردت أن تعدّل.' : ''}
-              </div>
-            )}
             {isAdmin && (
               <div className="flex gap-2 mb-3">
                 <button type="button" data-testid="trip-lock" className="flex-1 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-700 py-2.5"
