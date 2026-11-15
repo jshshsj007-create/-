@@ -29,6 +29,7 @@ d.users = [...d.users,
   { id: 'u1', name: 'سعد', username: 'saad', password: 'pw1', role: 'مشرف برنامج', permissions: [], status: 'نشط' },
   { id: 'u2', name: 'خالد', username: 'khalid', password: 'pw2', role: 'مسؤول فيض', permissions: ['السفرات'], status: 'نشط' },
   { id: 'u3', name: 'نورة', username: 'noura', password: 'pw3', role: 'مسجل حضور', permissions: [], status: 'نشط' },
+  { id: 'u7', name: 'تركي العريني', username: 'turki', password: 'pw7', role: 'مسجل حضور', permissions: [], payerName: 'تركي', status: 'نشط' },
   { id: 'u4', name: 'العلوان', username: 'alawan', password: 'pw4', role: 'مسجل حضور', permissions: [], status: 'نشط' }];
 r = await call({ op: 'push', token: adminTok, baseRev: rev, data: d });
 check('المدير يضيف الحسابات', r.status === 200, JSON.stringify(r.body).slice(0, 200)); rev = r.body.rev;
@@ -171,6 +172,23 @@ r = await call({ op: 'push', token: alawan, baseRev: r.body.rev, data: spread })
 after = (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data.trips.find((t) => t.id === 't1');
 const sp = after.expenseItems.filter((x) => x.grp === 'sp1');
 check('أجزاء السكن من المُدخِل تُحفظ بمجموعتها وعلامتها وباسمه', sp.length === 2 && sp.every((x) => x.by === 'u4' && x.paidBy === 'العلوان') && sp.map((x) => x.part).join() === '١ من ٢,٢ من ٢', JSON.stringify(sp));
+
+// ---- الدافع المربوط بحسابه ----
+const turki = await login('turki', 'pw7');
+r = await call({ op: 'pull', token: turki, sinceRev: 0 });
+const td = r.body.data;
+const tr1 = td.trips.find((t) => t.id === 't1');
+check('الدافع المربوط يرى السفرة التي له فيها حساب فقط', td.trips.length === 1 && Boolean(tr1), JSON.stringify(td.trips.map((t) => t.id)));
+check('وبنوده هو فقط، لا بند غيره', tr1.expenseItems.length > 0 && tr1.expenseItems.every((x) => x.paidBy === 'تركي'), JSON.stringify(tr1.expenseItems.map((x) => x.paidBy)));
+check('وتسوياته هو، ولا شباب ولا إيراد ولا مسؤولين', tr1.settlements.every((x) => x.person === 'تركي') && JSON.stringify(tr1.people) === '["تركي"]' && tr1.incomeItems.length === 0 && tr1.managers.length === 0);
+check('ومال البرامج وفيض محجوب عنه', td.faidAdjustments.length === 0 && !JSON.stringify(td.programs).includes('321'));
+const tk = JSON.parse(JSON.stringify(td));
+tk.trips[0].expenseItems.push({ id: 'fake', name: 'مزوّر', amount: 9999, paidBy: 'تركي' });
+tk.trips[0].settlements.push({ id: 'fakeS', person: 'تركي', amount: 8888 });
+r = await call({ op: 'push', token: turki, baseRev: (await call({ op: 'pull', token: turki, sinceRev: 0 })).body.rev, data: tk });
+after = (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data.trips.find((t) => t.id === 't1');
+check('ولا يكتب شيئًا: القراءة فقط', !after.expenseItems.some((x) => x.id === 'fake') && !after.settlements.some((x) => x.id === 'fakeS'));
+check('وبقية حسابات الشباب باقية عند المدير', after.expenseItems.some((x) => x.paidBy === 'العلوان') && after.expenseItems.length >= 4);
 
 console.log(`\n${bad ? '✗' : '✅'} ${ok} نجح، ${bad} فشل`);
 process.exit(bad ? 1 : 0);

@@ -1,9 +1,14 @@
 /** اختبارات «مسؤول السفرة»: من يرى سفرةً كاملة، ومن يكتب، وما لا يُقبل من غيرهما. */
 import assert from 'node:assert/strict';
-import { manages, enters, managedIds, enteredIds, entrantView, tripsSeen, tripsKept } from '../src/tripaccess.js';
+import { manages, enters, managedIds, enteredIds, entrantView, tripsSeen, tripsKept, payerOf, paysIn } from '../src/tripaccess.js';
 import { blindMoney, restoreMoney } from '../src/money.js';
 
 let passed = 0;
+const tripBalancesOf = (trip, name) => {
+  const paid = (trip.expenseItems || []).filter((x) => x.paidBy === name).reduce((a, x) => a + x.amount, 0);
+  const settled = (trip.settlements || []).filter((x) => x.person === name).reduce((a, x) => a + x.amount, 0);
+  return { paid, settled, owed: paid - settled };
+};
 const test = (name, fn) => { fn(); passed++; console.log('  ✓ ' + name); };
 
 const admin = { id: 'a', role: 'مدير', permissions: [] };
@@ -189,6 +194,54 @@ test('ومن لا يقفل بحفظةٍ: «closed» لا يُكتب من غير 
   const kept = tripsKept([{ ...cur[0], closed: true }, cur[1]], cur, saad, false).find((t) => t.id === 't1');
   assert.equal(kept.closed, false, 'المسؤول لا يقفل');
   assert.equal(tripsKept([{ ...cur[0], closed: true }, cur[1]], cur, admin, true).find((t) => t.id === 't1').closed, true, 'والمدير يقفل');
+});
+
+/* ---------------- الدافع المربوط بحسابه ---------------- */
+const turki = { id: 'u8', role: 'مسجل حضور', permissions: [], payerName: 'تركي' };
+const ledger = () => [{
+  id: 't1', name: 'قطر', managers: [], entrants: ['u4'], people: ['العلوان', 'تركي', 'أبو فارس'], incomeItems: [{ id: 'i', name: 'اشتراكات', amount: 3000 }],
+  expenseItems: [
+    { id: 'a', name: 'سكن', amount: 600, paidBy: 'العلوان', by: 'u4' },
+    { id: 'b', name: 'بنزين', amount: 150, paidBy: 'تركي', by: 'u4' },
+    { id: 'c', name: 'أكل', amount: 220, paidBy: 'أبو فارس', by: 'u1' },
+    { id: 'd', name: 'ماء', amount: 40, paidBy: 'تركي', by: 'u1' }],
+  settlements: [{ id: 's1', person: 'العلوان', amount: 300 }, { id: 's2', person: 'تركي', amount: 100 }],
+}, { id: 't2', name: 'الشرقية', managers: [], entrants: [], people: ['العلوان'], expenseItems: [{ id: 'z', name: 'سكن', amount: 90, paidBy: 'العلوان' }], settlements: [] }];
+
+test('الدافع المربوط يرى ما دفعه وتسوياته فقط، ولو أدخل بنوده غيره', () => {
+  const ls = ledger();
+  const seen = tripsSeen(ls, blind(ls), turki, false);
+  assert.deepEqual(seen.map((t) => t.id), ['t1'], 'سفرته وحدها: التي له فيها حساب');
+  assert.deepEqual(seen[0].expenseItems.map((x) => x.id), ['b', 'd'], 'ما دُفع باسمه فقط');
+  assert.deepEqual(seen[0].settlements.map((x) => x.id), ['s2'], 'وتسويته هو');
+  assert.deepEqual([seen[0].people, seen[0].incomeItems, seen[0].managers], [['تركي'], [], []], 'ولا شباب ولا إيراد');
+  assert.equal(payerOf(turki), 'تركي');
+  assert.deepEqual([paysIn(ls[0], turki), paysIn(ls[1], turki)], [true, false]);
+});
+
+test('حسابه من معاينته يطابق الحقيقة: دفع ١٩٠ واستلم ١٠٠ فبقي له ٩٠', () => {
+  const ls = ledger();
+  const mine = tripsSeen(ls, blind(ls), turki, false)[0];
+  const row = tripBalancesOf(mine, 'تركي');
+  assert.deepEqual(row, { paid: 190, settled: 100, owed: 90 });
+});
+
+test('الدافع المربوط يقرأ فقط: لا يضيف ولا يعدّل ولا يسدّد', () => {
+  const ls = ledger();
+  const mine = tripsSeen(ls, blind(ls), turki, false);
+  const inc = [{ ...mine[0], expenseItems: [...mine[0].expenseItems, { id: 'n', name: 'مزوّر', amount: 9999, paidBy: 'تركي' }], settlements: [{ id: 'x', person: 'تركي', amount: 5000 }] }];
+  const kept = tripsKept(inc, ls, turki, false);
+  assert.deepEqual(kept.find((t) => t.id === 't1'), ls[0], 'السفرة كما كانت');
+  assert.equal(kept.length, 2, 'وسفراته الأخرى باقية');
+});
+
+test('من لا اسم له في السفرات ولا إدخال: لا شيء يصله، ومن جمع الدور والاسم يرى الاثنين', () => {
+  const ls = ledger();
+  assert.deepEqual(tripsSeen(ls, blind(ls), { id: 'u9', permissions: [] }, false), []);
+  const both = { id: 'u4', permissions: [], payerName: 'تركي' };               // يُدخِل في t1 ومربوطٌ بتركي
+  const seen = tripsSeen(ls, blind(ls), both, false)[0];
+  assert.deepEqual(seen.expenseItems.map((x) => x.id).sort(), ['a', 'b', 'd'], 'ما أدخله هو (سكن العلوان) وما دُفع باسمه');
+  assert.deepEqual(seen.settlements.map((x) => x.id), ['s2']);
 });
 
 console.log(`\n✅ ${passed} اختبارًا لمسؤول السفرة`);

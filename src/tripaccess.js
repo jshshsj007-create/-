@@ -31,17 +31,41 @@ export const managedIds = (trips, me) => (trips || []).filter((t) => manages(t, 
 /** معرّفات السفرات التي يُدخِل فيها وليس مسؤولًا عنها. */
 export const enteredIds = (trips, me) => (trips || []).filter((t) => enters(t, me) && !manages(t, me)).map((t) => t.id);
 
-/** ما يراه المُدخِل من السفرة: ما أدخله هو، لا غيره ولا إيراداتها ولا تسوياتها ولا شبابها. */
-export const entrantView = (trip, me) => ({
-  ...trip,
-  expenseItems: (trip?.expenseItems || []).filter((x) => x?.by === me?.id),
-  incomeItems: [],
-  settlements: [],
-  people: [],
-  managers: [],
-  // يعرف الجهاز أنه مُدخِلٌ فيها بمعرّفه هو وحده، لا بقائمة غيره
-  entrants: [me?.id],
-});
+/**
+ * اسمه في السفرات: الاسم الذي يُكتب دافعًا باسمه (العلوان، تركي، أبو فارس).
+ *
+ * يربطه صاحب التطبيق بحسابٍ من حساباته، فيدخل صاحبُه ويرى ما دفع وما استلم وما بقي له — وحده، لا غيره.
+ */
+export const payerOf = (me) => String(me?.payerName ?? '').trim();
+
+/** هل في هذه السفرة حسابٌ لهذا الدافع؟ دفع بندًا أو أخذ تسوية أو كُتب في شبابها. */
+export const paysIn = (trip, me) => {
+  const n = payerOf(me);
+  if (!n) return false;
+  return (trip?.expenseItems || []).some((x) => String(x?.paidBy ?? '').trim() === n)
+    || (trip?.settlements || []).some((x) => String(x?.person ?? '').trim() === n)
+    || (trip?.people || []).some((x) => String(x ?? '').trim() === n);
+};
+
+/**
+ * ما يراه المُدخِل أو الدافع المربوط من السفرة: ما يخصّه وحده.
+ *
+ * بنوده (ما أدخله، وما دُفع باسمه ولو أدخله غيره)، وتسوياته هو، واسمه. لا مصروف غيره ولا إيراد
+ * ولا تسوية لأحد ولا شباب ولا مجموع. ومنها يحسب جهازُه «دفعتَ وبقي لك» دقيقًا لأن كل ما يخصّه فيها.
+ */
+export const entrantView = (trip, me) => {
+  const n = payerOf(me);
+  return {
+    ...trip,
+    expenseItems: (trip?.expenseItems || []).filter((x) => x?.by === me?.id || (n && String(x?.paidBy ?? '').trim() === n)),
+    incomeItems: [],
+    settlements: n ? (trip?.settlements || []).filter((x) => String(x?.person ?? '').trim() === n) : [],
+    people: n ? [n] : [],
+    managers: [],
+    // يعرف الجهاز أنه مُدخِلٌ فيها بمعرّفه هو وحده، لا بقائمة غيره
+    entrants: enters(trip, me) ? [me.id] : [],
+  };
+};
 
 /**
  * السفرات التي تُرسل لهذا الحساب.
@@ -57,7 +81,7 @@ export const tripsSeen = (original, visible, me, hasTripPerm, fullAccess = false
   return (visible || []).flatMap((t) => {
     const whole = full.get(t.id);
     if (manages(whole, me)) return [whole];
-    if (enters(whole, me)) return [entrantView(whole, me)];
+    if (enters(whole, me) || paysIn(whole, me)) return [entrantView(whole, me)];
     return hasTripPerm ? [t] : [];
   });
 };

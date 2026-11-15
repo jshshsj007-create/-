@@ -1534,6 +1534,34 @@ function TripReport({ trip }) {
 }
 
 /**
+ * حسابه هو: دفعتَ كذا، واستلمتَ كذا، وبقي لك كذا.
+ *
+ * يراه الدافع المربوط بحسابه، وما يصله من الخادم إلا ما يخصّه، فلا مجموع للسفرة ولا حساب غيره.
+ */
+function TripMyAccount({ balance }) {
+  const { paid, settled, owed } = balance;
+  return (
+    <div className={cardCls + ' mb-3'} data-testid="trip-my-account">
+      <div className="text-sm font-semibold text-slate-700 mb-3">حسابك</div>
+      <div className="grid grid-cols-3 gap-2 text-center">
+        <div className="bg-slate-50 rounded-xl py-3">
+          <div className="text-[11px] text-slate-400">دفعتَ</div>
+          <div className="text-lg font-extrabold text-slate-800 tabular-nums">{fmt(paid)}</div>
+        </div>
+        <div className="bg-slate-50 rounded-xl py-3">
+          <div className="text-[11px] text-slate-400">استلمتَ</div>
+          <div className="text-lg font-extrabold text-slate-800 tabular-nums">{fmt(settled)}</div>
+        </div>
+        <div className={`rounded-xl py-3 ${owed > 0 ? 'bg-amber-50' : 'bg-green-50'}`}>
+          <div className="text-[11px] text-slate-500">{owed < 0 ? 'أُعطيتَ زيادة' : 'الباقي لك'}</div>
+          <div className={`text-lg font-extrabold tabular-nums ${owed > 0 ? 'text-amber-700' : owed < 0 ? 'text-red-600' : 'text-green-700'}`}>{owed === 0 ? 'مسدَّد' : fmt(Math.abs(owed))}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * من يدير هذه السفرة؟
  *
  * صاحب الفريق قد لا يسافر، فيختار حسابًا من حساباته يرى كل شيء في هذه السفرة وحدها
@@ -2238,8 +2266,7 @@ export default function App() {
     if (currentUser.role === 'مدير' || (currentUser.permissions || []).includes('السفرات')) return;
     const only = tilesRef.current.length > 0 && tilesRef.current.every((id) => id === 'trips');
     if (!only) return;
-    const open = (data.trips || []).filter((t) => !t.closed
-      && ((t.managers || []).includes(currentUser.id) || (t.entrants || []).includes(currentUser.id)));
+    const open = (data.trips || []).filter((t) => !t.closed);
     if (!open.length) return;
     landedRef.current = true;
     if (open.length === 1) { setSelectedTripId(open[0].id); setView('tripDetail'); } else setView('trips');
@@ -3127,6 +3154,8 @@ export default function App() {
       name: form.name.trim(), username, role: forceAdmin ? 'مدير' : (form.role || ROLES[0]),
       permissions: form.permissions || [], accessScope: form.accessScope || 'all', allowedWeeks: form.allowedWeeks || [],
       phone: normalizePhone(form.phone || ''), noReport: Boolean(form.noReport),
+      // اسمه في السفرات: به يرى ما دفع وما استلم في سفرةٍ دفع فيها باسمه
+      payerName: (form.payerName || '').trim(),
       // «يشوف فقط» ما تُحفظ إلا لصلاحيةٍ يملكها، وإلا بقيت أثرًا لصلاحيةٍ نُزعت
       readOnly: (form.readOnly || []).filter((x) => (form.permissions || []).includes(x)),
       // صلاحية التأكيد ما تُحفظ إلا مع نطاقٍ محدودٍ وفُتح له يومٌ فيه فعلًا،
@@ -4808,7 +4837,8 @@ export default function App() {
    * مسؤول سفرةٍ بعينها: يفتح السفرات وفيها سفرته وحدها (الخادم لا يرسل له غيرها)،
    * بلا أن يملك «السفرات» ولا صلاحية المال. فالمنع في الخادم، وهذا لإظهار الشاشة له.
    */
-  const isTripManager = (data.trips || []).some((t) => effectiveUser?.id && ((t.managers || []).includes(effectiveUser.id) || (t.entrants || []).includes(effectiveUser.id)));
+  // من لا يملك «السفرات» لا يصله من الخادم إلا ما يخصّه (يديرها أو يُدخِل فيها أو له فيها حسابٌ باسمه)
+  const isTripManager = Boolean(effectiveUser?.id && !isAdmin && !can('السفرات') && (data.trips || []).length > 0);
   const canTrips = can('السفرات') || isTripManager;
   /**
    * من يشارك في سفرةٍ واحدة وحدها (ولا يملك «السفرات»): تُفتح له مباشرةً.
@@ -4824,9 +4854,7 @@ export default function App() {
    * «السفرات» فيرون كل شيء كما كانوا.
    */
   const participantOnly = Boolean(!isAdmin && !can('السفرات') && effectiveUser?.id);
-  const openMine = participantOnly
-    ? (data.trips || []).filter((t) => !t.closed && ((t.managers || []).includes(effectiveUser.id) || (t.entrants || []).includes(effectiveUser.id)))
-    : [];
+  const openMine = participantOnly ? (data.trips || []).filter((t) => !t.closed) : [];
   const myOnlyTrip = participantOnly && openMine.length === 1 ? openMine[0] : null;
   const openTrips = () => {
     if (myOnlyTrip) { setSelectedTripId(myOnlyTrip.id); goto('tripDetail'); return; }
@@ -4838,8 +4866,9 @@ export default function App() {
    * نُظهر له زرًّا يُضيّع ما يكتب.
    */
   /** مُدخِلٌ في هذه السفرة وليس مسؤولًا عنها ولا يرى كل شيء بصلاحيته: يضيف ويرى ما أدخله وحده. */
-  const tripEntrantOnly = Boolean(trip && !isAdmin && (trip.entrants || []).includes(effectiveUser?.id)
+  const tripEntrantOnly = Boolean(trip && !isAdmin
     && !(trip.managers || []).includes(effectiveUser?.id)
+    && ((trip.entrants || []).includes(effectiveUser?.id) || !can('السفرات'))
     && !(can('السفرات') && (can('المصروفات والتقارير') || can('فيض - الإيرادات والمصروفات'))));
   const tripCanWrite = Boolean(isAdmin || (trip?.managers || []).includes(effectiveUser?.id)
     || (can('السفرات') && (can('المصروفات والتقارير') || can('فيض - الإيرادات والمصروفات'))));
@@ -9374,24 +9403,38 @@ export default function App() {
                 </button>
               </div>
             )}
-            <div className={cardCls + ' mb-3'}>
-              <div className="text-sm text-slate-500 mb-2">التاريخ (هـ)</div>
-              <input className={inputCls + (trip.closed ? ' opacity-60' : '')} disabled={Boolean(trip.closed)} value={trip.date} onChange={(e) => typeTrip({ date: e.target.value })} placeholder="1447/03/01" />
-            </div>
+            {!tripEntrantOnly && (
+              <div className={cardCls + ' mb-3'}>
+                <div className="text-sm text-slate-500 mb-2">التاريخ (هـ)</div>
+                <input className={inputCls + (trip.closed ? ' opacity-60' : '')} disabled={Boolean(trip.closed)} value={trip.date} onChange={(e) => typeTrip({ date: e.target.value })} placeholder="1447/03/01" />
+              </div>
+            )}
 
             {tripEntrantOnly ? (
               <>
-                <div className="bg-brand-50 border border-brand-100 rounded-xl px-3.5 py-3 mb-3 text-xs text-brand-800 leading-6">
-                  أنت تُدخِل مصروفات هذه السفرة: تضيف المصروف باسمك، وترى ما أدخلتَه أنت فقط. الحساب والتسويات عند صاحب الفريق.
-                </div>
-                <TripItems
-                  title="ما أدخلتَه" subtitle="مصروفاتٌ أضفتَها أنت. لا تُعدَّل ولا تُحذف من هنا."
-                  items={trip.expenseItems} tone="red"
-                  onAdd={trip.closed ? null : () => {
-                    setForm({ itemKey: 'expenseItems', day: currentDay(trip), cat: '', sub: '', paidBy: '' });
-                    setModal('addTripItem');
-                  }}
-                  onRemove={null} />
+                {(() => {
+                  const canEnter = (trip.entrants || []).includes(effectiveUser?.id);
+                  const me = tripBalances(trip).find((b) => b.name === (effectiveUser?.payerName || '').trim());
+                  return (
+                    <>
+                      {/* حسابه هو: ما دفع وما استلم وما بقي له — وحده */}
+                      {me && <TripMyAccount balance={me} />}
+                      {canEnter && !me && (
+                        <div className="bg-brand-50 border border-brand-100 rounded-xl px-3.5 py-3 mb-3 text-xs text-brand-800 leading-6">
+                          تُدخِل هنا مصروفاتك فقط، والحساب عند صاحب الفريق.
+                        </div>
+                      )}
+                      <TripItems
+                        title={canEnter ? 'مصروفاتك' : 'ما دفعتَه'} subtitle={canEnter ? 'ما أدخلتَه وما دُفع باسمك.' : 'ما دُفع باسمك.'}
+                        items={trip.expenseItems} tone="red"
+                        onAdd={canEnter && !trip.closed ? () => {
+                          setForm({ itemKey: 'expenseItems', day: currentDay(trip), cat: '', sub: '', paidBy: '' });
+                          setModal('addTripItem');
+                        } : null}
+                        onRemove={null} />
+                    </>
+                  );
+                })()}
               </>
             ) : (<>
             <div className="grid grid-cols-3 gap-2 mb-4">
@@ -11059,6 +11102,16 @@ export default function App() {
                 </div>
               );
             })())}
+          </Field>
+          <Field label="اسمه في السفرات" hint="لو يدفع في السفرات اربطه باسمه: يدخل بحسابه فيرى ما دفع وما استلم وما بقي له (وحده، لا غيره).">
+            <div className="flex flex-wrap gap-1.5" data-testid="payer-link">
+              {[...new Set([...TRIP_CREW, ...(data.trips || []).flatMap((t) => tripPeople(t))])].map((n) => (
+                <button key={n} type="button" data-testid={`link-${n}`}
+                  className={`px-3 py-2 rounded-lg text-xs font-semibold border ${form.payerName === n ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`}
+                  onClick={() => setForm({ ...form, payerName: form.payerName === n ? '' : n })}>{n}</button>
+              ))}
+            </div>
+            <input className={inputCls + ' mt-2'} value={form.payerName || ''} onChange={(e) => setForm({ ...form, payerName: e.target.value })} placeholder="أو اكتب الاسم كما يُكتب دافعًا" />
           </Field>
           {/* مخرجٌ لمن لا يحضر يوم البرنامج، فلا تصير البطاقة ضجيجًا يُتجاهَل */}
           <Field label="تقرير اليوم">
