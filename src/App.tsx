@@ -12963,6 +12963,14 @@ function CashScreen({ rows, totals, handovers, settle, onSettle, onOpen, onHando
             {settle.items.length} مشتركًا دفعوا باقاتٍ لأيامٍ ما نزل لها صف، وأسابيع برامجهم كلها مقفلة فلن يجيء بعدها يوم.
             إنزالها يجعلها إيرادًا لبرامجها ويصفّر «المحفوظ»، ولا يغيّر رصيد أي حساب.
           </div>
+          <ul className="mt-2 text-xs space-y-0.5" data-testid="settle-by-program">
+            {Object.entries(settle.items.reduce((m, i) => ({ ...m, [i.programName]: (m[i.programName] || 0) + i.amount }), {})).map(([name, sum]) => (
+              <li key={name} className="flex justify-between gap-2"><span>{name}</span><span className="tabular-nums font-bold">{fmt(sum)} ر.س</span></li>
+            ))}
+          </ul>
+          {settle.pendingLeft > 0 && (
+            <div className="text-xs mt-2 text-amber-800">ويبقى {fmt(settle.pendingLeft)} ر.س عند صفوفٍ «مدفوع مقدّمًا» لم يُسجَّل حضورها أو غيابها، فسجّلها أولًا.</div>
+          )}
           <button onClick={() => onSettle(settle)} className="mt-3 text-xs font-bold bg-amber-600 text-white px-3 py-2.5 rounded-lg">أنزلها إيرادًا</button>
         </div>
       )}
