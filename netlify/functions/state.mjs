@@ -17,7 +17,7 @@ import { runBackup, backupStatus, readSnapshot, writeUndo, UNDO } from '../lib/b
 import { hash, verify, isHashed } from '../lib/password.mjs';
 import { loginBlocked, noteFail, clearFails, recordLogin } from '../../src/login.js';
 import { countVisit, dayKey } from '../../src/visits.js';
-import { managedIds, tripsSeen, tripsKept } from '../../src/tripaccess.js';
+import { managedIds, enteredIds, tripsSeen, tripsKept } from '../../src/tripaccess.js';
 import { moneyChanged, moneyRows, moneyMissing, moneySum, blindMoney, restoreMoney, PART_MONEY } from '../../src/money.js';
 import { vapid, saveSub, dropSub, subsOf, whoHasPush, notifyNewNotices } from '../lib/push.mjs';
 import { TRASH_DAYS } from '../../src/trash.js';
@@ -436,7 +436,7 @@ const strip = (data, me) => {
   // والمال: من ليست عنده صلاحيتُه لا يصله منه شيء — لا يُخفى في الشاشة، بل لا يُرسل
   const shown = seesMoney(me) ? out : blindMoney(out, moneyFieldsFor(me));
   // والسفرة يديرها حسابٌ بعينه: يأخذها كاملةً وهي وحدها، ولا يُفتح له بها مالُ غيرها
-  return { ...shown, trips: tripsSeen(data?.trips, shown.trips, me, allowed(me, 'السفرات')) };
+  return { ...shown, trips: tripsSeen(data?.trips, shown.trips, me, allowed(me, 'السفرات'), allowed(me, 'السفرات') && seesMoney(me)) };
 };
 
 /** صلاحيةُ المال: أيٌّ من البابين يفتحه، وسواهما لا يراه. */
@@ -771,9 +771,9 @@ const guard = (incoming, current, me) => {
   // والصندوق لا يُمحى بحفظة — لا من قائدٍ ولا من مدير
   out.trash = trashKeep(incoming, current);
   // والسفرات: من يعدّلها، ومن يديرها، وما لا يُقبل من غيرهما — ولا يعيّن أحدٌ نفسه مسؤولًا
-  out.trips = tripsKept(out.trips, current?.trips, me, allowed(me, 'السفرات'));
+  out.trips = tripsKept(out.trips, current?.trips, me, allowed(me, 'السفرات'), seesMoney(me));
   // وما حُجب عنه من المال يُردّ، وإلا محته حفظةُ حضورٍ من جهازٍ ما رآه
-  return seesMoney(me) ? out : restoreMoney(out, current, moneyFieldsFor(me), managedIds(current?.trips, me));
+  return seesMoney(me) ? out : restoreMoney(out, current, moneyFieldsFor(me), [...managedIds(current?.trips, me), ...enteredIds(current?.trips, me)]);
 };
 
 /**

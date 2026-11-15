@@ -1499,30 +1499,45 @@ function FaidAnalysis({ breakdown, onDrill }) {
  */
 function TripManagers({ trip, users, onChange }) {
   const list = (users || []).filter((u) => u.role !== 'مدير' && u.status !== 'غير نشط');
-  const on = trip.managers || [];
-  const toggle = (id) => onChange(on.includes(id) ? on.filter((x) => x !== id) : [...on, id]);
+  const managers = trip.managers || [];
+  const entrants = trip.entrants || [];
+  // مستوًى واحد لكل حساب: لا يراها، أو يُدخِل فقط، أو يدير
+  const levelOf = (id) => (managers.includes(id) ? 'manage' : entrants.includes(id) ? 'enter' : 'none');
+  const setLevel = (id, level) => onChange({
+    managers: level === 'manage' ? [...managers.filter((x) => x !== id), id] : managers.filter((x) => x !== id),
+    entrants: level === 'enter' ? [...entrants.filter((x) => x !== id), id] : entrants.filter((x) => x !== id),
+  });
+  const LEVELS3 = [['none', 'لا يراها'], ['enter', 'يُدخِل فقط'], ['manage', 'يدير']];
   return (
     <div className={cardCls + ' mb-3'} data-testid="trip-managers">
-      <div className="text-sm font-semibold text-slate-700">من يدير هذه السفرة؟</div>
+      <div className="text-sm font-semibold text-slate-700">من يشارك في هذه السفرة؟</div>
       <div className="text-xs text-slate-400 mt-0.5 mb-3 leading-6">
-        الحساب الذي تختاره يرى كل شيء في هذه السفرة فقط (المصروفات والشباب والتسويات) ويسجّل فيها،
-        وأنت غائب عنها. ولا يرى مال البرامج ولا فيض ولا سفرةً أخرى.
+        <b>يُدخِل فقط:</b> يضيف مصروفًا باسمه ويرى ما أدخله هو فقط، ولا يرى غيره ولا الحساب ولا التسويات.<br />
+        <b>يدير:</b> يرى كل شيء في هذه السفرة ويسجّل فيها.<br />
+        ولا أحد يرى مال البرامج ولا فيض ولا سفرةً أخرى. وكل شيء غير ذلك لك أنت وحدك.
       </div>
       {list.length === 0 ? (
         <div className="text-sm text-slate-400">ما عندك حسابات بعد. أضفها من الإعدادات ← المستخدمون.</div>
       ) : (
         <div className="space-y-2">
-          {list.map((u) => (
-            <button key={u.id} type="button" onClick={() => toggle(u.id)} data-testid={`mgr-${u.username}`}
-              className={`w-full flex items-center justify-between gap-2 rounded-xl border px-3.5 py-3 text-right ${on.includes(u.id) ? 'bg-brand-600 border-brand-600 text-white' : 'border-slate-200 text-slate-700'}`}>
-              <span className="font-semibold">{u.name || u.username}</span>
-              <span className="text-xs">{on.includes(u.id) ? 'يدير هذه السفرة ✓' : 'لا يراها'}</span>
-            </button>
-          ))}
+          {list.map((u) => {
+            const lv = levelOf(u.id);
+            return (
+              <div key={u.id} className="border border-slate-100 rounded-xl p-3" data-testid={`mgr-${u.username}`}>
+                <div className="font-semibold text-slate-800 mb-2">{u.name || u.username}</div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {LEVELS3.map(([k, label]) => (
+                    <button key={k} type="button" data-testid={`lv-${u.username}-${k}`} onClick={() => setLevel(u.id, k)}
+                      className={`rounded-lg py-2 text-xs font-semibold border ${lv === k ? 'bg-brand-600 border-brand-600 text-white' : 'border-slate-200 text-slate-600'}`}>{label}</button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
-      {on.length > 0 && (
-        <div className="text-[11px] text-slate-400 mt-2">تسحبه بضغطة على اسمه، فتختفي السفرة من عنده عند تحديثه التالي.</div>
+      {(managers.length > 0 || entrants.length > 0) && (
+        <div className="text-[11px] text-slate-400 mt-2">يتغيّر ما يراه الحساب عند تحديثه التالي.</div>
       )}
     </div>
   );
@@ -3412,7 +3427,7 @@ export default function App() {
       if (form.cat === 'أخرى' && !form.name?.trim()) { setForm({ ...form, error: 'اكتب وش شريت بالضبط' }); return; }
       if (!(Number(form.amount) > 0)) { setForm({ ...form, error: 'اكتب المبلغ' }); return; }
       // اليوم والنوع ومن دفع: بهم يعرف كم لكل واحدٍ من الشباب
-      const item = makeExpense({ id: uid(), name: form.cat === 'أخرى' ? form.name : (form.sub || form.cat), amount: form.amount, day: form.day || currentDay(trip), cat: form.cat, paidBy: form.paidBy, sub: form.cat === 'أكل وشرب' ? form.sub : '' });
+      const item = makeExpense({ id: uid(), name: form.cat === 'أخرى' ? form.name : (form.sub || form.cat), amount: form.amount, day: form.day || currentDay(trip), cat: form.cat, paidBy: form.paidBy, sub: form.cat === 'أكل وشرب' ? form.sub : '', by: effectiveUser?.id });
       patchTrip({
         expenseItems: [...(trip.expenseItems || []), item],
         ...(item.paidBy && !(trip.people || []).includes(item.paidBy) ? { people: [...new Set([...(trip.people || []), item.paidBy])] } : {}),
@@ -4672,13 +4687,17 @@ export default function App() {
    * مسؤول سفرةٍ بعينها: يفتح السفرات وفيها سفرته وحدها (الخادم لا يرسل له غيرها)،
    * بلا أن يملك «السفرات» ولا صلاحية المال. فالمنع في الخادم، وهذا لإظهار الشاشة له.
    */
-  const isTripManager = (data.trips || []).some((t) => effectiveUser?.id && (t.managers || []).includes(effectiveUser.id));
+  const isTripManager = (data.trips || []).some((t) => effectiveUser?.id && ((t.managers || []).includes(effectiveUser.id) || (t.entrants || []).includes(effectiveUser.id)));
   const canTrips = can('السفرات') || isTripManager;
   /**
    * هل يكتب مبالغ السفرة المفتوحة؟ المدير، أو مسؤولها، أو من عنده «السفرات» مع صلاحية المال.
    * ومن عنده «السفرات» وحدها يرى السفرة بلا مبالغ (الخادم يحجبها)، فما يكتبه يُردّ — فلا
    * نُظهر له زرًّا يُضيّع ما يكتب.
    */
+  /** مُدخِلٌ في هذه السفرة وليس مسؤولًا عنها ولا يرى كل شيء بصلاحيته: يضيف ويرى ما أدخله وحده. */
+  const tripEntrantOnly = Boolean(trip && !isAdmin && (trip.entrants || []).includes(effectiveUser?.id)
+    && !(trip.managers || []).includes(effectiveUser?.id)
+    && !(can('السفرات') && (can('المصروفات والتقارير') || can('فيض - الإيرادات والمصروفات'))));
   const tripWrite = Boolean(isAdmin || (trip?.managers || []).includes(effectiveUser?.id)
     || (can('السفرات') && (can('المصروفات والتقارير') || can('فيض - الإيرادات والمصروفات'))));
   const canSeeWeek = (programId, weekId) => isAdmin || effectiveUser?.accessScope === 'all' || (effectiveUser?.allowedWeeks || []).some((a) => a.programId === programId && a.weekId === weekId);
@@ -9196,6 +9215,21 @@ export default function App() {
               <input className={inputCls} value={trip.date} onChange={(e) => typeTrip({ date: e.target.value })} placeholder="1447/03/01" />
             </div>
 
+            {tripEntrantOnly ? (
+              <>
+                <div className="bg-brand-50 border border-brand-100 rounded-xl px-3.5 py-3 mb-3 text-xs text-brand-800 leading-6">
+                  أنت تُدخِل مصروفات هذه السفرة: تضيف المصروف باسمك، وترى ما أدخلتَه أنت فقط. الحساب والتسويات عند صاحب الفريق.
+                </div>
+                <TripItems
+                  title="ما أدخلتَه" subtitle="مصروفاتٌ أضفتَها أنت. لا تُعدَّل ولا تُحذف من هنا."
+                  items={trip.expenseItems} tone="red"
+                  onAdd={() => {
+                    setForm({ itemKey: 'expenseItems', day: currentDay(trip), cat: '', sub: '', paidBy: '' });
+                    setModal('addTripItem');
+                  }}
+                  onRemove={null} />
+              </>
+            ) : (<>
             <div className="grid grid-cols-3 gap-2 mb-4">
               <MiniStat label="الإيراد" value={fmt(tripIncome(trip))} icon={TrendingUp} tone="green" />
               <MiniStat label="المصروفات" value={fmt(tripExpenses(trip))} icon={TrendingDown} tone="red" />
@@ -9209,7 +9243,7 @@ export default function App() {
             )}
             {/* من يدير السفرة: لصاحب التطبيق وحده، والحجب في الخادم لا هنا */}
             {isAdmin ? (
-              <TripManagers trip={trip} users={data.users || []} onChange={(managers) => patchTrip({ managers })} />
+              <TripManagers trip={trip} users={data.users || []} onChange={(patch) => patchTrip(patch)} />
             ) : (trip.managers || []).includes(effectiveUser?.id) && (
               <div className="bg-brand-50 border border-brand-100 rounded-xl px-3.5 py-3 mb-3 text-xs text-brand-800 leading-6">
                 أنت مسؤول عن هذه السفرة: ترى كل شيء فيها وتسجّل المصروفات والتسويات. ولا ترى غيرها.
@@ -9245,6 +9279,7 @@ export default function App() {
               items={trip.incomeItems} tone="green"
               onAdd={!tripWrite ? null : () => { setForm({ itemKey: 'incomeItems' }); setModal('addTripItem'); }}
               onRemove={!tripWrite ? null : (id) => removeTripItem('incomeItems', id)} />
+            </>)}
           </div>
         )}
 

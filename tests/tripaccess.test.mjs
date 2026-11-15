@@ -1,6 +1,6 @@
 /** اختبارات «مسؤول السفرة»: من يرى سفرةً كاملة، ومن يكتب، وما لا يُقبل من غيرهما. */
 import assert from 'node:assert/strict';
-import { manages, managedIds, tripsSeen, tripsKept } from '../src/tripaccess.js';
+import { manages, enters, managedIds, enteredIds, entrantView, tripsSeen, tripsKept } from '../src/tripaccess.js';
 import { blindMoney, restoreMoney } from '../src/money.js';
 
 let passed = 0;
@@ -94,6 +94,73 @@ test('manages لا تقبل حسابًا بلا معرّف ولا سفرةً ب�
   assert.equal(manages({ managers: [undefined] }, {}), false);
   assert.equal(manages({}, saad), false);
   assert.deepEqual(managedIds([{ id: 'x' }], saad), []);
+});
+
+/* ---------------- المُدخِل: يضيف ويرى ما أدخله هو وحده ---------------- */
+const alawan = { id: 'u4', role: 'مسجل حضور', permissions: [] };
+const withEntrant = () => {
+  const ts = trips();
+  ts[1].entrants = ['u4'];
+  ts[1].expenseItems = [{ id: 'e2', name: 'بنزين', amount: 150, paidBy: 'تركي', by: 'u1' }, { id: 'm1', name: 'سكن', amount: 90, paidBy: 'العلوان', by: 'u4' }];
+  ts[1].settlements = [{ id: 's2', person: 'تركي', amount: 70 }];
+  ts[1].people = ['تركي', 'العلوان'];
+  return ts;
+};
+
+test('المُدخِل يرى ما أدخله هو وحده: لا مصروف غيره ولا تسوية ولا شباب ولا إيراد', () => {
+  const ts = withEntrant();
+  const seen = tripsSeen(ts, blind(ts), alawan, false);
+  assert.deepEqual(seen.map((t) => t.id), ['t2'], 'سفرته وحدها');
+  assert.deepEqual(seen[0].expenseItems.map((x) => x.id), ['m1'], 'ما أدخله هو');
+  assert.deepEqual([seen[0].settlements, seen[0].people, seen[0].incomeItems], [[], [], []]);
+  assert.deepEqual([enters(ts[1], alawan), manages(ts[1], alawan), enteredIds(ts, alawan)], [true, false, ['t2']]);
+});
+
+test('المُدخِل يضيف بنودًا جديدة: تُكتب باسمه ولو ادّعى غيره، وما كان يبقى كما هو', () => {
+  const cur = withEntrant();
+  const mine = entrantView(cur[1], alawan);
+  const inc = [{ ...mine, expenseItems: [...mine.expenseItems, { id: 'n1', name: 'ماء', amount: 30, paidBy: 'العلوان', by: 'u1', evil: 'x' }] }];
+  const kept = tripsKept(inc, cur, alawan, false);
+  const t2 = kept.find((t) => t.id === 't2');
+  assert.deepEqual(t2.expenseItems.map((x) => x.id), ['e2', 'm1', 'n1'], 'بنود غيره باقية، وبنده أُضيف');
+  const n1 = t2.expenseItems.find((x) => x.id === 'n1');
+  assert.equal(n1.by, 'u4', 'مُدخِلُه هو لا ما ادّعاه');
+  assert.equal(n1.evil, undefined, 'حقولٌ لا يعرفها لا تدخل');
+  assert.equal(t2.settlements.length, 1, 'وتسوياتهم كما كانت');
+  assert.deepEqual(t2.people, ['تركي', 'العلوان']);
+});
+
+test('المُدخِل لا يعدّل بندًا قائمًا ولا يحذفه ولا يمسّ التسويات والمسؤولين', () => {
+  const cur = withEntrant();
+  const inc = [{ ...cur[1], name: 'اخترقت', expenseItems: [{ id: 'm1', name: 'سكن', amount: 1 }], settlements: [], managers: ['u4'], entrants: ['u4', 'u3'] }];
+  const kept = tripsKept(inc, cur, alawan, false).find((t) => t.id === 't2');
+  assert.equal(kept.name, 'الجنوب', 'الاسم كما كان');
+  assert.deepEqual(kept.expenseItems.map((x) => [x.id, x.amount]), [['e2', 150], ['m1', 90]], 'لا تعديل ولا حذف');
+  assert.equal(kept.settlements.length, 1);
+  assert.deepEqual([kept.managers, kept.entrants], [[], ['u4']], 'لا يعيّن أحدًا');
+});
+
+test('المُدخِل لا يمسّ سفرةً غير سفرته، ولا يحذف شيئًا', () => {
+  const cur = withEntrant();
+  assert.deepEqual(tripsKept([], cur, alawan, false).map((t) => t.id).sort(), ['t1', 't2']);
+  const forged = [{ ...cur[0], name: 'مزوّرة', expenseItems: [] }];
+  assert.deepEqual(tripsKept(forged, cur, alawan, false).find((t) => t.id === 't1'), cur[0]);
+});
+
+test('وما يُلقى من بنودٍ كثيرة يُقطع عند حدّ', () => {
+  const cur = withEntrant();
+  const spam = Array.from({ length: 100 }, (_, i) => ({ id: 'z' + i, name: 'x', amount: 1 }));
+  const kept = tripsKept([{ ...cur[1], expenseItems: spam }], cur, alawan, false).find((t) => t.id === 't2');
+  assert.equal(kept.expenseItems.length, 2 + 40);
+});
+
+test('من عنده «السفرات» مع المال يرى كل شيء ولو كان مُدخِلًا، والمدير يعيّن المُدخِلين', () => {
+  const cur = withEntrant();
+  const rich = { id: 'u4', role: 'مسؤول فيض', permissions: ['السفرات'] };
+  assert.equal(tripsSeen(cur, cur, rich, true, true).length, 2);
+  const inc = [{ ...cur[1], entrants: ['u4', 'u3'] }];
+  assert.deepEqual(tripsKept(inc, cur, admin, true)[0].entrants, ['u4', 'u3']);
+  assert.deepEqual(tripsKept(inc, cur, rich, true, true).find((t) => t.id === 't2').entrants, ['u4'], 'غير المدير لا يعيّن');
 });
 
 console.log(`\n✅ ${passed} اختبارًا لمسؤول السفرة`);

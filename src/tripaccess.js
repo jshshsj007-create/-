@@ -14,40 +14,85 @@
 
 const isAdmin = (u) => u?.role === 'مدير';
 
-/** هل هذا الحساب مسؤولٌ عن هذه السفرة؟ */
+/** هل هذا الحساب مسؤولٌ عن هذه السفرة؟ يرى كل شيء فيها ويكتب. */
 export const manages = (trip, me) => Boolean(me?.id) && (trip?.managers || []).includes(me.id);
+
+/**
+ * هل هو مُدخِلٌ فيها؟ يضيف مصروفًا ويرى ما أدخله هو وحده.
+ *
+ * أراد صاحب الفريق أن يُدخِل بعض الشباب مصروفاتهم بأنفسهم، دون أن يروا حساب غيرهم ولا
+ * ما أُعطيَه الآخرون ولا مجموع السفرة. فلا يرى كل شيءٍ إلا المدير ومسؤولُها.
+ */
+export const enters = (trip, me) => Boolean(me?.id) && (trip?.entrants || []).includes(me.id);
 
 /** معرّفات السفرات التي يديرها. */
 export const managedIds = (trips, me) => (trips || []).filter((t) => manages(t, me)).map((t) => t.id);
+
+/** معرّفات السفرات التي يُدخِل فيها وليس مسؤولًا عنها. */
+export const enteredIds = (trips, me) => (trips || []).filter((t) => enters(t, me) && !manages(t, me)).map((t) => t.id);
+
+/** ما يراه المُدخِل من السفرة: ما أدخله هو، لا غيره ولا إيراداتها ولا تسوياتها ولا شبابها. */
+export const entrantView = (trip, me) => ({
+  ...trip,
+  expenseItems: (trip?.expenseItems || []).filter((x) => x?.by === me?.id),
+  incomeItems: [],
+  settlements: [],
+  people: [],
+  managers: [],
+  // يعرف الجهاز أنه مُدخِلٌ فيها بمعرّفه هو وحده، لا بقائمة غيره
+  entrants: [me?.id],
+});
 
 /**
  * السفرات التي تُرسل لهذا الحساب.
  *
  * `original` سفراتُ المخزن كاملة، و`visible` ما تبقّى منها بعد حجب المال عمّن لا
- * يراه. فالمسؤول عن سفرةٍ يأخذ نسختها **كاملة** من الأصل، ومن عنده «السفرات»
- * يأخذ الباقي كما حُجب، ومن ليست له الصلاحية ولا هو مسؤول فلا سفرة تصله أصلًا.
+ * يراه. فالمسؤول عن سفرةٍ يأخذ نسختها **كاملة** من الأصل، والمُدخِل يأخذ ما أدخله هو
+ * وحده، ومن عنده «السفرات» بلا مالٍ يأخذ الباقي كما حُجب، ومن ليست له صلاحيةٌ ولا
+ * إدخال فلا سفرة تصله أصلًا. و`fullAccess` لمن يرى كل شيء بصلاحيته (السفرات مع المال).
  */
-export const tripsSeen = (original, visible, me, hasTripPerm) => {
-  if (isAdmin(me)) return visible || [];
+export const tripsSeen = (original, visible, me, hasTripPerm, fullAccess = false) => {
+  if (isAdmin(me) || fullAccess) return visible || [];
   const full = new Map((original || []).map((t) => [t.id, t]));
   return (visible || []).flatMap((t) => {
-    if (manages(full.get(t.id), me)) return [full.get(t.id)];
+    const whole = full.get(t.id);
+    if (manages(whole, me)) return [whole];
+    if (enters(whole, me)) return [entrantView(whole, me)];
     return hasTripPerm ? [t] : [];
   });
 };
+
+/** أقصى ما يُقبل من مُدخِلٍ في حفظةٍ واحدة، فلا تنفجر السفرة ببنودٍ مرمية. */
+const ENTRANT_MAX = 40;
+
+/** بندٌ جديد من مُدخِل: الحقول المعروفة وحدها، ومُدخِلُه هو لا ما ادّعاه. */
+const cleanItem = (x, me) => ({
+  id: String(x.id),
+  name: String(x.name ?? '').slice(0, 80),
+  amount: Math.max(0, Number(x.amount) || 0),
+  ...(x.day ? { day: String(x.day).slice(0, 40) } : {}),
+  ...(x.cat ? { cat: String(x.cat).slice(0, 40) } : {}),
+  ...(x.paidBy ? { paidBy: String(x.paidBy).slice(0, 40) } : {}),
+  ...(x.sub ? { sub: String(x.sub).slice(0, 40) } : {}),
+  by: me.id,
+});
 
 /**
  * ما يُقبل من حفظةِ هذا الحساب في السفرات.
  *
  * - المدير: كل شيء.
- * - من عنده «السفرات»: يكتب فيها، لكن **لا يغيّر من يديرها**، ولا يعيّن نفسه.
- * - المسؤول: يكتب في سفرته وحدها، ولا يغيّر من يديرها، ولا يحذفها.
- * - غيرهما: ما يصله منها شيء، فما يعود منه شيءٌ يُقبل — تبقى كما كانت.
+ * - من عنده «السفرات» مع المال: يكتب فيها، لكن **لا يغيّر من يديرها ولا من يُدخِل**.
+ * - المسؤول: يكتب في سفرته وحدها، ولا يغيّر من يديرها ولا يحذفها.
+ * - المُدخِل: **يضيف بنودًا جديدة فقط**، مكتوبًا عليها اسمُه، ولا يعدّل ما كان ولا يحذفه
+ *   ولا يمسّ تسويةً ولا إيرادًا ولا شبابًا ولا مسؤولين.
+ * - من عنده «السفرات» بلا مال: يكتب الاسم والتاريخ، وما حُجب عنه من المال يُردّ.
+ * - غيرهم: ما يصلهم منها شيء، فما يعود منهم شيءٌ يُقبل — تبقى كما كانت.
  *
- * والسفرة الجديدة لا تُولد بمسؤولين: تعيينهم للمدير وحده.
+ * والسفرة الجديدة لا تُولد بمسؤولين ولا مُدخِلين: تعيينهم للمدير وحده.
  */
-export const tripsKept = (incoming, current, me, hasTripPerm) => {
+export const tripsKept = (incoming, current, me, hasTripPerm, seesMoney = false) => {
   if (isAdmin(me)) return incoming;
+  const full = hasTripPerm && seesMoney;
   const was = new Map((current || []).map((t) => [t.id, t]));
   const seen = new Set();
   const out = [];
@@ -55,10 +100,16 @@ export const tripsKept = (incoming, current, me, hasTripPerm) => {
     seen.add(t.id);
     const old = was.get(t.id);
     if (!old) {
-      if (hasTripPerm) out.push({ ...t, managers: [] });
+      if (hasTripPerm) out.push({ ...t, managers: [], entrants: [] });
       continue;
     }
-    if (manages(old, me) || hasTripPerm) out.push({ ...t, managers: old.managers || [] });
+    const roles = { managers: old.managers || [], entrants: old.entrants || [] };
+    if (manages(old, me) || full) out.push({ ...t, ...roles });
+    else if (enters(old, me)) {
+      const have = new Set((old.expenseItems || []).map((x) => x.id));
+      const fresh = (t.expenseItems || []).filter((x) => x?.id && !have.has(x.id)).slice(0, ENTRANT_MAX).map((x) => cleanItem(x, me));
+      out.push({ ...old, expenseItems: [...(old.expenseItems || []), ...fresh] });
+    } else if (hasTripPerm) out.push({ ...t, ...roles });
     else out.push(old);
   }
   // ما غاب من الوارد: صاحب الصلاحية يحذف (والحارس يسجّله)، وغيره لا يحذف شيئًا

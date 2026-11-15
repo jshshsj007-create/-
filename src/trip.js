@@ -115,7 +115,7 @@ export const tripCats = (trip) => {
  * بندٌ جديد. المبلغ موجبٌ دائمًا، والاسم مطلوب، والدافع إن لم يُكتب فهو من
  * صندوق السفرة نفسه لا من جيب أحد.
  */
-export const makeExpense = ({ id, name, amount, day, cat, paidBy, sub }) => ({
+export const makeExpense = ({ id, name, amount, day, cat, paidBy, sub, by }) => ({
   id,
   name: str(name),
   amount: Math.max(0, num(amount)),
@@ -123,6 +123,8 @@ export const makeExpense = ({ id, name, amount, day, cat, paidBy, sub }) => ({
   ...(str(cat) ? { cat: str(cat) } : {}),
   ...(str(paidBy) ? { paidBy: str(paidBy) } : {}),
   ...(str(sub) ? { sub: str(sub) } : {}),
+  // من أدخله: يُعرف به مُدخِلُه، وبه يرى المُدخِل ما أدخله هو وحده
+  ...(str(by) ? { by: str(by) } : {}),
 });
 
 /** كيف سُدِّد: نقدًا أو تحويلًا أو غير ذلك. */

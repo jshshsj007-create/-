@@ -28,7 +28,8 @@ let d = r.body.data; rev = r.body.rev;
 d.users = [...d.users,
   { id: 'u1', name: 'سعد', username: 'saad', password: 'pw1', role: 'مشرف برنامج', permissions: [], status: 'نشط' },
   { id: 'u2', name: 'خالد', username: 'khalid', password: 'pw2', role: 'مسؤول فيض', permissions: ['السفرات'], status: 'نشط' },
-  { id: 'u3', name: 'نورة', username: 'noura', password: 'pw3', role: 'مسجل حضور', permissions: [], status: 'نشط' }];
+  { id: 'u3', name: 'نورة', username: 'noura', password: 'pw3', role: 'مسجل حضور', permissions: [], status: 'نشط' },
+  { id: 'u4', name: 'العلوان', username: 'alawan', password: 'pw4', role: 'مسجل حضور', permissions: [], status: 'نشط' }];
 r = await call({ op: 'push', token: adminTok, baseRev: rev, data: d });
 check('المدير يضيف الحسابات', r.status === 200, JSON.stringify(r.body).slice(0, 200)); rev = r.body.rev;
 
@@ -92,6 +93,37 @@ r = await call({ op: 'pull', token: noura, sinceRev: 0 });
 check('المدير عيّن نورة: ترى الجنوب وحدها كاملة', r.body.data.trips.length === 1 && r.body.data.trips[0].id === 't2' && r.body.data.trips[0].expenseItems.length === 1);
 r = await call({ op: 'pull', token: saad, sinceRev: 0 });
 check('وسعد ما زال يرى الشرقية وحدها', r.body.data.trips.length === 1 && r.body.data.trips[0].id === 't1');
+
+// ---- المُدخِل: يضيف ويرى ما أدخله هو وحده ----
+r = await call({ op: 'pull', token: adminTok, sinceRev: 0 });
+const ad3 = JSON.parse(JSON.stringify(r.body.data));
+const g = ad3.trips.find((t) => t.id === 't1');
+g.entrants = ['u4']; g.settlements = [{ id: 'sx', person: 'تركي', amount: 60 }];
+r = await call({ op: 'push', token: adminTok, baseRev: r.body.rev, data: ad3 });
+const alawan = await login('alawan', 'pw4');
+r = await call({ op: 'pull', token: alawan, sinceRev: 0 });
+let od = r.body.data;
+check('المُدخِل: سفرته وحدها', od.trips.length === 1 && od.trips[0].id === 't1', JSON.stringify(od.trips.map((t) => t.id)));
+check('المُدخِل: لا يرى مصروفات غيره ولا التسويات ولا الشباب', od.trips[0].expenseItems.length === 0 && od.trips[0].settlements.length === 0 && od.trips[0].people.length === 0);
+check('المُدخِل: لا يرى مال البرامج ولا فيض', od.faidAdjustments.length === 0 && !JSON.stringify(od.programs).includes('321'));
+
+const mineAdd = JSON.parse(JSON.stringify(od));
+mineAdd.trips[0].expenseItems.push({ id: 'al1', name: 'غداء', amount: 120, cat: 'أكل وشرب', sub: 'غداء', day: 'اليوم الأول', paidBy: 'العلوان', by: 'u1' });
+mineAdd.trips[0].settlements.push({ id: 'evil', person: 'العلوان', amount: 999 });   // محاولة تسوية لنفسه
+mineAdd.trips[0].entrants = ['u4', 'u1'];
+mineAdd.trips[0].managers = ['u4'];
+r = await call({ op: 'pull', token: alawan, sinceRev: 0 });
+r = await call({ op: 'push', token: alawan, baseRev: r.body.rev, data: mineAdd });
+check('حفظة المُدخِل تُقبل', r.status === 200, JSON.stringify(r.body).slice(0, 200));
+r = await call({ op: 'pull', token: adminTok, sinceRev: 0 });
+const ta = r.body.data.trips.find((t) => t.id === 't1');
+const al1 = ta.expenseItems.find((x) => x.id === 'al1');
+check('البند الجديد حُفظ باسمه', Boolean(al1) && al1.by === 'u4' && al1.amount === 120 && al1.paidBy === 'العلوان', JSON.stringify(al1));
+check('وبنود غيره وتسوياتهم كما كانت', ta.expenseItems.length === 3 && ta.expenseItems.some((x) => x.id === 'et1') && ta.expenseItems.some((x) => x.id === 'new1') && ta.settlements.length === 1 && ta.settlements[0].id === 'sx', JSON.stringify(ta.settlements));
+check('ولم يعيّن مسؤولًا ولا مُدخِلًا', JSON.stringify(ta.managers) === '["u1"]' && JSON.stringify(ta.entrants) === '["u4"]', JSON.stringify([ta.managers, ta.entrants]));
+r = await call({ op: 'pull', token: alawan, sinceRev: 0 });
+check('ويرى بنده هو بعد الحفظ، لا غيره', r.body.data.trips[0].expenseItems.length === 1 && r.body.data.trips[0].expenseItems[0].id === 'al1');
+check('ومال البرامج وفيض ما زالا سليمين', (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data.faidAdjustments.length === 1);
 
 console.log(`\n${bad ? '✗' : '✅'} ${ok} نجح، ${bad} فشل`);
 process.exit(bad ? 1 : 0);
