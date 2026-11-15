@@ -1664,7 +1664,7 @@ function TripDays({ trip }) {
   );
 }
 
-function TripItems({ title, subtitle, items, tone, onAdd, onRemove }) {
+function TripItems({ title, subtitle, items, tone, onAdd, onRemove, users }) {
   const list = items || [];
   const total = sumAmt(list);
   const color = tone === 'red' ? 'text-red-600' : 'text-green-600';
@@ -1689,9 +1689,11 @@ function TripItems({ title, subtitle, items, tone, onAdd, onRemove }) {
             <div key={it.id} className="flex items-center justify-between text-sm border-b border-slate-50 pb-2 gap-2">
               <span className="min-w-0">
                 <span className="text-slate-700 font-medium block truncate">{it.name}</span>
-                {(it.day || it.cat || it.paidBy) && (
+                {(it.day || it.cat || it.paidBy || it.by) && (
                   <span className="text-[11px] text-slate-400 block truncate">
-                    {[it.day, it.cat, it.paidBy ? `دفع ${it.paidBy}` : ''].filter(Boolean).join(' · ')}
+                    {[it.day, it.cat, it.paidBy ? `دفع ${it.paidBy}` : '',
+                      // من سجّله غير من دفعه: قد يسجّل المقوشي أن العلوان دفع
+                      it.by && users ? `أدخله ${(users.find((u) => u.id === it.by) || {}).name || ''}`.trim() : ''].filter(Boolean).join(' · ')}
                   </span>
                 )}
               </span>
@@ -9265,7 +9267,7 @@ export default function App() {
 
             <TripItems
               title="المصروفات" subtitle="كل بند باسمه: أكل، سكن، مواصلات… ومن دفعه ولأي يوم"
-              items={trip.expenseItems} tone="red"
+              items={trip.expenseItems} tone="red" users={data.users || []}
               onAdd={!tripWrite ? null : () => {
                 setForm({ itemKey: 'expenseItems', day: currentDay(trip), cat: '', sub: '', paidBy: '' });
                 setModal('addTripItem');
