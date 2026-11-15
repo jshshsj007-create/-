@@ -552,6 +552,7 @@ export default function SignupPage({ token }) {
 
   const [goWa, setGoWa] = useState('');
   const [closedWa, setClosedWa] = useState('');
+  const [closedGroup, setClosedGroup] = useState('');
   const [closedTexts, setClosedTexts] = useState({ title: '', text: '', why: '' });
 
   /**
@@ -578,6 +579,7 @@ export default function SignupPage({ token }) {
       } else if (r.status === 404) {
         // الرابط مقفل، لكن الخادم يرجّع رقم الفريق عشان يبقى له طريق يوصلنا منه
         setClosedWa(r.body?.wa || '');
+        setClosedGroup(r.body?.group || '');
         setClosedTexts({ title: r.body?.closedTitle || '', text: r.body?.closedText || '', why: r.body?.why || '' });
         setState('closed');
       } else setState('error');
@@ -620,7 +622,8 @@ export default function SignupPage({ token }) {
   }
 
   if (state === 'closed') {
-    const href = waLink(closedWa, '');
+    // القروب إن كتبه صاحب الفريق، وإلا رقم الفريق فلا يبقى الزر بلا وجهة
+    const href = closedGroup || waLink(closedWa, '');
     // ما كتبه صاحب الفريق أولًا، وإلا نصُّ الحال نفسها، وإلا العام
     const why = CLOSED_WHY[closedTexts.why] || CLOSED;
     return (

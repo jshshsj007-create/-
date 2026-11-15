@@ -6701,6 +6701,14 @@ export default function App() {
                               onChange={(e) => saveTyping({ ...data, closedText: e.target.value })}
                               placeholder={CLOSED.text} />
                           </Field>
+                          <Field label="رابط قروب الأهالي لصفحة «التسجيل مقفل»" hint="لو كتبته يوديهم زر «تواصل معنا» إلى القروب بدل رقم الفريق. رابط chat.whatsapp.com فقط.">
+                            <input className={inputCls} dir="ltr" value={data.closedLink ?? ''}
+                              onChange={(e) => saveTyping({ ...data, closedLink: e.target.value })}
+                              placeholder="https://chat.whatsapp.com/..." />
+                            {data.closedLink && !waGroupLink(data.closedLink) && (
+                              <div className="text-red-500 text-xs mt-1.5">الرابط مو واضح. لازم يبدأ بـ chat.whatsapp.com</div>
+                            )}
+                          </Field>
                         </div>
 
                         <Toggle label="زر «تواصل معنا» في صفحة التسجيل" on={s.waContact !== false}

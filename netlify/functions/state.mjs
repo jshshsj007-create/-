@@ -10,7 +10,7 @@
 import { getStore } from '@netlify/blobs';
 import crypto from 'node:crypto';
 import { isAdmin, allowed, canWrite, readsReports } from '../../src/perms.js';
-import { programFor, publicView, validateSubmission, applySubmission, normalizeSubmission, rateLimited, waIntl, isReceipt, closureOf, makeToken as makeSignupToken } from '../../src/signup.js';
+import { programFor, publicView, validateSubmission, applySubmission, normalizeSubmission, rateLimited, waIntl, waGroupLink, isReceipt, closureOf, makeToken as makeSignupToken } from '../../src/signup.js';
 import { questionView, validateAnswer, applyAnswer, answersRateLimited, makeDrawMany, applyDrawMany, drawWinnersNow } from '../../src/club.js';
 import { dedupeByPhone, remapParticipants } from '../../src/people.js';
 import { runBackup, backupStatus, readSnapshot, writeUndo, UNDO } from '../lib/backup.mjs';
@@ -871,6 +871,8 @@ export default async (req) => {
         error: 'closed',
         why,
         wa: waIntl(doc?.data?.waNumber),
+        // قروب الأهالي: من فتح رابطًا مقفولًا يُوجَّه إليه بدل رقمٍ يسأله فرادى
+        group: waGroupLink(doc?.data?.closedLink),
         closedTitle: doc?.data?.closedTitle || '',
         closedText: doc?.data?.closedText || '',
       }, 404);
