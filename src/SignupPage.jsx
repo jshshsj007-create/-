@@ -634,7 +634,7 @@ export default function SignupPage({ token }) {
           {(closedTexts.text || why.text) !== '' && (
             <div className="text-sm text-slate-500 mb-5 whitespace-pre-wrap">{closedTexts.text || why.text}</div>
           )}
-          <WaButton href={href}>{TEXTS.contact}</WaButton>
+          <WaButton href={href}>{closedGroup ? 'انضم للقروب' : TEXTS.contact}</WaButton>
         </div>
       </Shell>
     );
