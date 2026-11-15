@@ -4772,11 +4772,18 @@ export default function App() {
    * يضغط «السفرات» فيجد قائمةً فيها «قطر» وحدها، ثم يضغط عليها: ضغطةٌ زائدةٌ لا تفيد. فصار يدخل
    * سفرته من أول ضغطة، ولمن عنده أكثر من واحدة قائمتُه كما كانت.
    */
-  const myOnlyTrip = (() => {
-    if (isAdmin || can('السفرات') || !effectiveUser?.id) return null;
-    const mine = (data.trips || []).filter((t) => (t.managers || []).includes(effectiveUser.id) || (t.entrants || []).includes(effectiveUser.id));
-    return mine.length === 1 ? mine[0] : null;
-  })();
+  /**
+   * ما يراه المشارك (مسؤولًا أو مُدخِلًا): سفراته المفتوحة فقط.
+   *
+   * تكثر السفرات المقفلة بمرور الوقت، ولا يريد من يُدخِل مصروفه في سوقٍ أن يفتّش بينها. فتُخفى عنه
+   * المقفلة، وإذا بقيت مفتوحةٌ واحدة فُتحت له مباشرةً ولو كان له عشرٌ مقفلة. أما المدير ومن عنده
+   * «السفرات» فيرون كل شيء كما كانوا.
+   */
+  const participantOnly = Boolean(!isAdmin && !can('السفرات') && effectiveUser?.id);
+  const openMine = participantOnly
+    ? (data.trips || []).filter((t) => !t.closed && ((t.managers || []).includes(effectiveUser.id) || (t.entrants || []).includes(effectiveUser.id)))
+    : [];
+  const myOnlyTrip = participantOnly && openMine.length === 1 ? openMine[0] : null;
   const openTrips = () => {
     if (myOnlyTrip) { setSelectedTripId(myOnlyTrip.id); goto('tripDetail'); return; }
     goto('trips');
@@ -9230,8 +9237,9 @@ export default function App() {
         })()}
 
         {view === 'trips' && canTrips && (() => {
-          const income = tripsInScope.reduce((n, t) => n + tripIncome(t), 0);
-          const spent = tripsInScope.reduce((n, t) => n + tripExpenses(t), 0);
+          const listed = participantOnly ? openMine : tripsInScope;
+          const income = listed.reduce((n, t) => n + tripIncome(t), 0);
+          const spent = listed.reduce((n, t) => n + tripExpenses(t), 0);
           const net = income - spent;
           return (
           <div>
@@ -9241,6 +9249,7 @@ export default function App() {
             </div>
             <div className="text-sm text-slate-400 mb-4">إيرادات ومصروفات كل سفرة على حدة - مستقلة عن فيض</div>
 
+            {!participantOnly && (
             <FilterChips
               options={[
                 { id: 'term', label: `الترم ${data.currentTerm} ${data.currentYear} هـ`, count: data.trips.filter((t) => t.termKey === termKey).length },
@@ -9249,6 +9258,7 @@ export default function App() {
                   ? [{ id: 'none', label: 'بلا موسم', count: data.trips.filter((t) => !t.termKey).length }] : []),
               ]}
               value={tripScope} onChange={setTripScope} />
+            )}
 
             {/* الصافي كلمة قبل أن يكون رقمًا: فائض أو عجز */}
             <div className="grid grid-cols-3 gap-2 my-4">
@@ -9257,15 +9267,15 @@ export default function App() {
               <MiniStat label={net < 0 ? 'عجز' : 'فائض'} value={fmt(Math.abs(net))} icon={Wallet} tone={net < 0 ? 'red' : 'green'} />
             </div>
 
-            {tripScope === 'none' && tripsInScope.length > 0 && (
+            {tripScope === 'none' && listed.length > 0 && (
               <button className="w-full text-right bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 mb-4 text-sm text-amber-900"
                 onClick={() => save({ ...data, trips: data.trips.map((t) => (t.termKey ? t : { ...t, termKey })) })}>
                 حدّد موسم هذي السفرات كلها: <b>الترم {data.currentTerm} {data.currentYear} هـ</b>
               </button>
             )}
 
-            {tripsInScope.length === 0 ? (
-              <div className={emptyCls}>{data.trips.length === 0 ? 'لا توجد سفرات بعد. أضف أول سفرة.' : 'ما فيه سفرات في هذا النطاق.'}</div>
+            {listed.length === 0 ? (
+              <div className={emptyCls}>{participantOnly ? 'ما فيه سفرة مفتوحة الآن.' : data.trips.length === 0 ? 'لا توجد سفرات بعد. أضف أول سفرة.' : 'ما فيه سفرات في هذا النطاق.'}</div>
             ) : (
               <div className="bg-white rounded-2xl border border-slate-100 overflow-x-auto">
                 <table className="w-full text-sm min-w-[620px]">
@@ -9278,7 +9288,7 @@ export default function App() {
                     <th className="text-right px-4 py-3 font-medium"></th>
                   </tr></thead>
                   <tbody>
-                    {tripsInScope.map((t) => (
+                    {listed.map((t) => (
                       <tr key={t.id} className="border-t border-slate-50 hover:bg-slate-50/50 cursor-pointer" onClick={() => { setSelectedTripId(t.id); goto('tripDetail'); }}>
                         <td className="px-4 py-3 font-semibold text-slate-800">{t.name}{t.closed && <span className="mr-2 text-[10px] font-bold bg-slate-100 text-slate-500 rounded px-1.5 py-0.5 align-middle">مقفلة</span>}</td>
                         <td className="px-4 py-3 text-slate-500">{t.date || '-'}</td>
