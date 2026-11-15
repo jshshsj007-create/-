@@ -1498,6 +1498,7 @@ function FaidAnalysis({ breakdown, onDrill }) {
  */
 function TripCrew({ trip, onSettle, onAddPerson, onRemoveSettlement, onCopy }) {
   const [name, setName] = useState('');
+  const [copied, setCopied] = useState('');
   const rows = tripBalances(trip);
   const owed = tripOwedTotal(trip);
   const settlements = trip.settlements || [];
@@ -1508,9 +1509,6 @@ function TripCrew({ trip, onSettle, onAddPerson, onRemoveSettlement, onCopy }) {
           <div className="text-sm font-semibold text-slate-700">الحساب مع الرفقة</div>
           <div className="text-xs text-slate-400 mt-0.5">من دفع من جيبه وكم بقي له عليك.</div>
         </div>
-        {rows.length > 0 && (
-          <button onClick={onCopy} className="text-xs text-brand-700 font-semibold shrink-0 bg-brand-50 px-3 py-1.5 rounded-lg">انسخ الحساب</button>
-        )}
       </div>
 
       {rows.length > 0 && (
@@ -1533,9 +1531,16 @@ function TripCrew({ trip, onSettle, onAddPerson, onRemoveSettlement, onCopy }) {
                 </span>
               </div>
               <div className="text-[11px] text-slate-400 mt-1">دفع {fmt(b.paid)} · أُعطي {fmt(b.settled)}</div>
-              {b.owed > 0 && (
-                <button onClick={() => onSettle(b.name, b.owed)} className="mt-2 text-xs font-bold text-white bg-brand-600 px-3 py-2 rounded-lg">سدّدت له</button>
-              )}
+              <div className="flex flex-wrap gap-2">
+                {b.owed > 0 && (
+                  <button onClick={() => onSettle(b.name, b.owed)} className="mt-2 text-xs font-bold text-white bg-brand-600 px-3 py-2 rounded-lg">سدّدت له</button>
+                )}
+                {/* حسابه هو وحده: لا مجموع المصروفات ولا ما دفعه غيره */}
+                <button data-testid={`copy-${b.name}`} onClick={() => { onCopy(b.name); setCopied(b.name); setTimeout(() => setCopied(''), 1800); }}
+                  className="mt-2 text-xs font-semibold text-brand-700 bg-brand-50 px-3 py-2 rounded-lg">
+                  {copied === b.name ? 'تم النسخ ✓' : 'انسخ حسابه'}
+                </button>
+              </div>
               {b.owed <= 0 && b.paid === 0 && (
                 <button onClick={() => onSettle(b.name, 0)} className="mt-2 text-xs font-semibold text-brand-700 bg-brand-50 px-3 py-2 rounded-lg">سلفة</button>
               )}
@@ -9153,7 +9158,7 @@ export default function App() {
               onSettle={(person, owed) => { setForm({ person, amount: owed > 0 ? owed : '', date: trip.date || '' }); setModal('tripSettle'); }}
               onAddPerson={addTripPerson}
               onRemoveSettlement={(sid) => askConfirm('حذف هذه التسوية؟', () => removeTripSettlement(sid))}
-              onCopy={() => { try { navigator.clipboard?.writeText(tripShareText(trip, fmt)); } catch { /* لا شيء */ } }} />
+              onCopy={(person) => { try { navigator.clipboard?.writeText(tripShareText(trip, person, fmt)); } catch { /* لا شيء */ } }} />
 
             <div className="h-3" />
 

@@ -81,10 +81,22 @@ test('سفرةٌ قديمة بلا رفقة ولا تسويات لا تنكسر'
   assert.deepEqual(tripBalances({}), []);
 });
 
-test('نص المشاركة يُقرأ بلا شرح', () => {
-  const txt = tripShareText(trip(), (n) => String(n));
-  assert.match(txt, /العلوان: دفع 160، أُعطي 100، باقي له 60/);
-  assert.match(txt, /تركي: دفع 300، أُعطي 0، باقي له 300/);
+test('نص المشاركة لواحدٍ بعينه: حسابه هو، بلا غيره ولا مجموع السفرة', () => {
+  const txt = tripShareText(trip(), 'العلوان', (n) => String(n));
+  assert.match(txt, /دفعتَ: 160/);
+  assert.match(txt, /استلمتَ: 100/);
+  assert.match(txt, /الباقي لك: 60/);
+  assert.ok(!txt.includes('تركي') && !txt.includes('أبو فارس'), 'لا اسم غيره');
+  assert.ok(!txt.includes('800') && !txt.includes('800'), 'لا مجموع للمصروفات');
+  assert.equal(tripShareText(trip(), 'غائب'), '', 'من ليس في السفرة لا نص له');
+});
+
+test('من سُدِّد حسابه يُقال له مسدَّد، ومن أُعطي زيادة يُقال له ذلك', () => {
+  const t = trip();
+  t.settlements.push({ id: 's9', person: 'العلوان', amount: 60 });
+  assert.match(tripShareText(t, 'العلوان'), /حسابك مسدَّد/);
+  t.settlements.push({ id: 's10', person: 'العلوان', amount: 10 });
+  assert.match(tripShareText(t, 'العلوان'), /أُعطيتَ زيادة: 10/);
 });
 
 test('الرفقة المعتادة والتصنيفات كما حدّدها صاحب الفريق', () => {
