@@ -169,9 +169,38 @@ const dayLine = (d) => Object.entries(d.cats).map(([c, v]) => {
 }).join(' · ');
 
 /**
+ * كم صُرف على كل نوعٍ في السفرة كلها: السكن، والبنزين، والأكل (مفصّلًا فطورًا وغداءً وعشاءً)، وأخرى
+ * (مفصّلةً ببنودها بأسمائها لأن صاحبها كتبها بيده). وآخرها الإجمالي.
+ *
+ * هذا ما يُسأل عنه بعد انتهاء السفرة: «السكن كم؟ والأكل كم؟»، لا من دفع ولا من أُعطي — فبعد
+ * أن تنتهي يكون كل شيءٍ قد قُفل.
+ */
+export const tripCatRows = (trip) => {
+  const rows = [];
+  const items = trip?.expenseItems || [];
+  const total = items.reduce((s, x) => s + num(x?.amount), 0);
+  for (const { cat, total: t } of tripCats(trip)) {
+    rows.push([cat, `${fmtN(t)} ر.س`]);
+    const mine = items.filter((x) => (str(x?.cat) || 'أخرى') === cat);
+    if (cat === 'أكل وشرب') {
+      const subs = {};
+      for (const x of mine) if (str(x?.sub)) subs[str(x.sub)] = (subs[str(x.sub)] || 0) + num(x?.amount);
+      for (const k of FOOD_SUBS.filter((k) => subs[k])) rows.push([`منها: ${k}`, `${fmtN(subs[k])} ر.س`]);
+      const plain = mine.filter((x) => !str(x?.sub)).reduce((s, x) => s + num(x?.amount), 0);
+      if (plain && Object.keys(subs).length) rows.push(['منها: غير مفصّل', `${fmtN(plain)} ر.س`]);
+    } else if (cat === 'أخرى' || !TRIP_CATS.includes(cat)) {
+      for (const x of mine) rows.push([`منها: ${str(x?.name) || 'بند'}`, `${fmtN(num(x?.amount))} ر.س`]);
+    }
+  }
+  if (rows.length) rows.push(['الإجمالي', `${fmtN(total)} ر.س`, true]);
+  return rows;
+};
+
+/**
  * ورقة السفرة كما يُرسلها صاحب الفريق: أقسامٌ تدخل `paperSheet` كما هي.
  *
- * المالية، ثم حساب الشباب (دفع وأُعطي والباقي)، ثم مصاريف كل يوم، ثم التسويات.
+ * المالية، ثم المصروفات حسب النوع، ثم مصاريف كل يوم، ثم التسويات. وليس فيها حساب الشباب: تُرسل
+ * بعد أن تنتهي السفرة ويُقفل كل شيء، فلا يُسأل عن الباقي.
  * وكل قسمٍ فاضٍ يُسقط، فلا تُطبع ورقةٌ فيها عناوين بلا شيء.
  */
 export const tripSheetSections = (trip) => {
@@ -184,17 +213,9 @@ export const tripSheetSections = (trip) => {
     ['الصافي', `${fmtN(income - spent)} ر.س`, true],
   ] });
 
-  const bal = tripBalances(trip);
-  if (bal.length) {
-    out.push({
-      title: 'الحساب مع الشباب',
-      cols: [{ label: 'الاسم', w: 31 }, { label: 'دفع', w: 23 }, { label: 'أُعطي', w: 23 }, { label: 'الباقي له', w: 23 }],
-      grid: [
-        ...bal.map((b) => [b.name, fmtN(b.paid), fmtN(b.settled), b.owed < 0 ? `زيادة ${fmtN(-b.owed)}` : fmtN(b.owed)]),
-        ['الباقي عليك للكل', '', '', fmtN(tripOwedTotal(trip))],
-      ],
-    });
-  }
+  // كم صُرف على كل نوع: السكن والأكل والبنزين وأخرى
+  const catRows = tripCatRows(trip);
+  if (catRows.length) out.push({ title: 'المصروفات حسب النوع', rows: catRows });
 
   const days = tripDays(trip);
   if (days.length) {
@@ -222,13 +243,10 @@ export const tripReportText = (trip) => {
   const spent = (trip?.expenseItems || []).reduce((s, x) => s + num(x?.amount), 0);
   const lines = [`تقرير ${trip?.name || 'السفرة'}${trip?.date ? ` — ${trip.date}` : ''}`, '',
     `الإيراد: ${fmtN(income)} ر.س`, `المصروفات: ${fmtN(spent)} ر.س`, `الصافي: ${fmtN(income - spent)} ر.س`];
-  const bal = tripBalances(trip);
-  if (bal.length) {
-    lines.push('', 'الشباب:');
-    for (const b of bal) {
-      lines.push(`- ${b.name}: دفع ${fmtN(b.paid)}، أُعطي ${fmtN(b.settled)}، ${b.owed > 0 ? `له ${fmtN(b.owed)}` : b.owed < 0 ? `زيادة ${fmtN(-b.owed)}` : 'مسدَّد'}`);
-    }
-    lines.push(`الباقي علينا للكل: ${fmtN(tripOwedTotal(trip))} ر.س`);
+  const catLines = tripCatRows(trip).filter((r) => !r[0].startsWith('منها: ') && r[0] !== 'الإجمالي');
+  if (catLines.length) {
+    lines.push('', 'حسب النوع:');
+    for (const r of catLines) lines.push(`- ${r[0]}: ${r[1]}`);
   }
   const days = tripDays(trip);
   if (days.length) {

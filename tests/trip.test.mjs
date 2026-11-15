@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {
   tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement, NO_DAY,
-  TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, PRE_DAY, editExpense, tripSheetSections, tripReportText, nextDay, currentDay, dayName,
+  TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, PRE_DAY, editExpense, tripSheetSections, tripReportText, tripCatRows, nextDay, currentDay, dayName,
 } from '../src/trip.js';
 
 let passed = 0;
@@ -137,27 +137,47 @@ test('تعديل بند: يبقى معرّفه ومن أدخله، وتوضع ع
   assert.equal(editExpense(old, { amount: -5 }).amount, 0, 'والسالب يُصفَّر كالإضافة');
 });
 
-test('ورقة السفرة: المالية والشباب والأيام والتسويات، وما فاض يُسقط', () => {
+test('كم على كل نوع: السكن والأكل (مفصّلًا) وأخرى ببنودها، وآخرها الإجمالي', () => {
+  const t = { expenseItems: [
+    { id: '1', name: 'سكن', amount: 600, cat: 'سكن' },
+    { id: '2', name: 'حجز', amount: 200, cat: 'سكن' },
+    { id: '3', name: 'فطور', amount: 85, cat: 'أكل وشرب', sub: 'فطور' },
+    { id: '4', name: 'غداء', amount: 140, cat: 'أكل وشرب', sub: 'غداء' },
+    { id: '5', name: 'أكل وشرب', amount: 50, cat: 'أكل وشرب' },
+    { id: '6', name: 'بنزين', amount: 150, cat: 'بنزين' },
+    { id: '7', name: 'تذاكر الملاهي', amount: 90, cat: 'أخرى' },
+  ] };
+  assert.deepEqual(tripCatRows(t), [
+    ['سكن', '800 ر.س'], ['بنزين', '150 ر.س'],
+    ['أكل وشرب', '275 ر.س'], ['منها: فطور', '85 ر.س'], ['منها: غداء', '140 ر.س'], ['منها: غير مفصّل', '50 ر.س'],
+    ['أخرى', '90 ر.س'], ['منها: تذاكر الملاهي', '90 ر.س'],
+    ['الإجمالي', '1,315 ر.س', true],
+  ]);
+  assert.deepEqual(tripCatRows({ expenseItems: [] }), [], 'سفرة بلا مصروف: لا صفوف');
+});
+
+test('ورقة السفرة: المالية ثم الأنواع ثم الأيام ثم التسويات، وبلا حساب الشباب', () => {
   const t = trip();
   t.settlements.push({ id: 's2', person: 'تركي', amount: 40, how: 'تحويل', date: '1448/06/04' });
   const secs = tripSheetSections(t);
-  assert.deepEqual(secs.map((s) => s.title), ['المالية', 'الحساب مع الشباب', 'مصاريف الأيام', 'ما أُعطيَه الشباب']);
+  assert.deepEqual(secs.map((s) => s.title), ['المالية', 'المصروفات حسب النوع', 'مصاريف الأيام', 'ما أُعطيَه الشباب']);
+  assert.ok(!secs.some((s) => s.title === 'الحساب مع الشباب'), 'لا حساب شباب فيها');
   assert.deepEqual(secs[0].rows.map((r) => r[1]), ['0 ر.س', '800 ر.س', '-800 ر.س']);
-  const crew = secs[1].grid;
-  assert.deepEqual(crew[0], ['العلوان', '160', '100', '60']);
-  assert.equal(crew.at(-1)[3], String(60 + 300 - 40 + 250), 'الباقي علينا للكل');
+  assert.ok(secs[1].rows.some((r) => r[0] === 'سكن' && r[1] === '120 ر.س'));
   assert.equal(secs[2].grid[0][0], 'اليوم الأول');
   assert.ok(secs[3].grid.some((r) => r[0] === 'تركي' && r[2] === 'تحويل'));
   const bare = tripSheetSections({ name: 'فاضية', expenseItems: [], incomeItems: [] });
   assert.deepEqual(bare.map((s) => s.title), ['المالية'], 'لا عناوين بلا شيء');
 });
 
-test('نص التقرير يُقرأ في الواتس: الصافي والشباب والأيام', () => {
+test('نص التقرير: الصافي ثم كم على كل نوع ثم الأيام، بلا الشباب', () => {
   const txt = tripReportText(trip());
   assert.match(txt, /تقرير سفرة الشرقية/);
   assert.match(txt, /المصروفات: 800 ر.س/);
-  assert.match(txt, /- العلوان: دفع 160، أُعطي 100، له 60/);
+  assert.match(txt, /- سكن: 120 ر.س/);
+  assert.match(txt, /- أكل وشرب: 550 ر.س/);
   assert.match(txt, /- اليوم الأول: 460/);
+  assert.ok(!txt.includes('الشباب:') && !txt.includes('أُعطي'), 'لا حساب شباب');
 });
 
 console.log(`\n✅ ${passed} اختبارًا لحساب السفرة`);
