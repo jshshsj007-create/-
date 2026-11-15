@@ -156,16 +156,16 @@ test('كم على كل نوع: السكن والأكل (مفصّلًا) وأخر
   assert.deepEqual(tripCatRows({ expenseItems: [] }), [], 'سفرة بلا مصروف: لا صفوف');
 });
 
-test('ورقة السفرة: المالية ثم الأنواع ثم الأيام ثم التسويات، وبلا حساب الشباب', () => {
+test('ورقة السفرة مرجعٌ بعد إقفالها: المالية والأنواع والأيام فقط، بلا حساب الشباب ولا تسوياتهم', () => {
   const t = trip();
   t.settlements.push({ id: 's2', person: 'تركي', amount: 40, how: 'تحويل', date: '1448/06/04' });
   const secs = tripSheetSections(t);
-  assert.deepEqual(secs.map((s) => s.title), ['المالية', 'المصروفات حسب النوع', 'مصاريف الأيام', 'ما أُعطيَه الشباب']);
+  assert.deepEqual(secs.map((s) => s.title), ['المالية', 'المصروفات حسب النوع', 'مصاريف الأيام']);
   assert.ok(!secs.some((s) => s.title === 'الحساب مع الشباب'), 'لا حساب شباب فيها');
   assert.deepEqual(secs[0].rows.map((r) => r[1]), ['0 ر.س', '800 ر.س', '-800 ر.س']);
   assert.ok(secs[1].rows.some((r) => r[0] === 'سكن' && r[1] === '120 ر.س'));
   assert.equal(secs[2].grid[0][0], 'اليوم الأول');
-  assert.ok(secs[3].grid.some((r) => r[0] === 'تركي' && r[2] === 'تحويل'));
+  assert.ok(!JSON.stringify(secs).includes('تحويل') && !JSON.stringify(secs).includes('تركي'), 'لا تسويات ولا أسماء شباب');
   const bare = tripSheetSections({ name: 'فاضية', expenseItems: [], incomeItems: [] });
   assert.deepEqual(bare.map((s) => s.title), ['المالية'], 'لا عناوين بلا شيء');
 });
