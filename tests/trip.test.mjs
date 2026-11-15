@@ -32,7 +32,7 @@ test('ما دفعه الفريق نفسه (بلا دافع) لا يُحسب لأ
   assert.equal(tripOwedTotal(trip()), 60 + 300 + 250);
 });
 
-test('من لم يُكتب في الرفقة ودفع بندًا يظهر مع ذلك', () => {
+test('من لم يُكتب في الشباب ودفع بندًا يظهر مع ذلك', () => {
   const t = trip();
   t.expenseItems.push({ id: 'f', name: 'بنزين', amount: 80, paidBy: 'فهد' });
   assert.ok(tripPeople(t).includes('فهد'));
@@ -73,7 +73,7 @@ test('المبلغ السالب يُصفَّر، والخانات الفاضية
   assert.deepEqual(s, { id: '2', person: 'سعد', amount: 75 });
 });
 
-test('سفرةٌ قديمة بلا رفقة ولا تسويات لا تنكسر', () => {
+test('سفرةٌ قديمة بلا شباب ولا تسويات لا تنكسر', () => {
   const old = { name: 'قديمة', expenseItems: [{ id: 'x', name: 'أكل', amount: 50 }], incomeItems: [] };
   assert.deepEqual(tripBalances(old), []);
   assert.equal(tripOwedTotal(old), 0);
@@ -99,7 +99,7 @@ test('من سُدِّد حسابه يُقال له مسدَّد، ومن أُع�
   assert.match(tripShareText(t, 'العلوان'), /أُعطيتَ زيادة: 10/);
 });
 
-test('الرفقة المعتادة والتصنيفات كما حدّدها صاحب الفريق', () => {
+test('الشباب المعتادون والتصنيفات كما حدّدها صاحب الفريق', () => {
   assert.deepEqual(TRIP_CREW, ['العلوان', 'تركي', 'أبو فارس']);
   assert.deepEqual(TRIP_CATS, ['سكن', 'بنزين', 'أكل وشرب', 'أخرى']);
 });

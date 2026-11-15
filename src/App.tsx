@@ -1491,7 +1491,7 @@ function FaidAnalysis({ breakdown, onDrill }) {
 
 /** بنود سفرة بأسماء حرة (أكل، سكن…) مع مجموعها. */
 /**
- * الحساب مع الرفقة: كم دفع كل واحدٍ من جيبه، وكم أُعطي، وكم بقي له.
+ * الحساب مع الشباب: كم دفع كل واحدٍ من جيبه، وكم أُعطي، وكم بقي له.
  *
  * يحاسبهم صاحب الفريق بعد كل يومٍ أو بعد فترة، فالتسوية تُسجَّل وقت ما تقع
  * وتنقص الباقي، والمصروف نفسه يبقى في السفرة كما هو.
@@ -1506,14 +1506,14 @@ function TripCrew({ trip, onSettle, onAddPerson, onRemoveSettlement, onCopy }) {
     <div className={cardCls} data-testid="trip-crew">
       <div className="flex items-start justify-between gap-3 mb-3">
         <div>
-          <div className="text-sm font-semibold text-slate-700">الحساب مع الرفقة</div>
+          <div className="text-sm font-semibold text-slate-700">الحساب مع الشباب</div>
           <div className="text-xs text-slate-400 mt-0.5">من دفع من جيبه وكم بقي له عليك.</div>
         </div>
       </div>
 
       {rows.length > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-3 mb-3 flex items-center justify-between">
-          <span className="text-xs text-amber-900">الباقي عليك لكل الرفقة</span>
+          <span className="text-xs text-amber-900">الباقي عليك لكل الشباب</span>
           <span className="font-extrabold text-amber-900 tabular-nums">{fmt(owed)} ر.س</span>
         </div>
       )}
@@ -3375,7 +3375,7 @@ export default function App() {
       if (!form.cat) { setForm({ ...form, error: 'اختر وش شريت' }); return; }
       if (form.cat === 'أخرى' && !form.name?.trim()) { setForm({ ...form, error: 'اكتب وش شريت بالضبط' }); return; }
       if (!(Number(form.amount) > 0)) { setForm({ ...form, error: 'اكتب المبلغ' }); return; }
-      // اليوم والنوع ومن دفع: بهم يعرف كم لكل واحدٍ من الرفقة
+      // اليوم والنوع ومن دفع: بهم يعرف كم لكل واحدٍ من الشباب
       const item = makeExpense({ id: uid(), name: form.cat === 'أخرى' ? form.name : (form.sub || form.cat), amount: form.amount, day: form.day || currentDay(trip), cat: form.cat, paidBy: form.paidBy, sub: form.cat === 'أكل وشرب' ? form.sub : '' });
       patchTrip({
         expenseItems: [...(trip.expenseItems || []), item],
@@ -11716,7 +11716,7 @@ export default function App() {
                 {crew.map((n) => (
                   <button key={n} type="button" className={chip(form.paidBy === n)} onClick={() => setForm({ ...form, paidBy: form.paidBy === n ? '' : n, other: false, error: '' })}>{n}</button>
                 ))}
-                {/* دفع غير هؤلاء: يكتب اسمه هنا ويُحفظ في رفقة السفرة فيظهر خيارًا بعدها */}
+                {/* دفع غير هؤلاء: يكتب اسمه هنا ويُحفظ في شباب السفرة فيظهر خيارًا بعدها */}
                 <button type="button" data-testid="payer-plus" className={chip(form.other)}
                   onClick={() => setForm({ ...form, other: !form.other, paidBy: form.other ? '' : (crew.includes(form.paidBy) ? '' : form.paidBy), error: '' })}>+ آخر</button>
               </div>

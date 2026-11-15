@@ -15,7 +15,7 @@ export const TRIP_CATS = ['سكن', 'بنزين', 'أكل وشرب', 'أخرى']
 /** إذا اختار «أكل وشرب» ظهرت له هذي الخيارات بضغطة، فيعرف ما أُنفق على الفطور من الغداء. */
 export const FOOD_SUBS = ['فطور', 'غداء', 'عشاء', 'مفرحات', 'ماء'];
 
-/** الرفقة المعتادة: تظهر خياراتٍ عند إضافة مصروفٍ ولو لم تُكتب في السفرة بعد. */
+/** الشباب المعتادون: تظهر خياراتٍ عند إضافة مصروفٍ ولو لم تُكتب في السفرة بعد. */
 export const TRIP_CREW = ['العلوان', 'تركي', 'أبو فارس'];
 
 /**
@@ -42,7 +42,7 @@ const str = (v) => String(v ?? '').trim();
 /** اسم اليوم كما كتبه صاحبه، أو «بلا يوم» لما لم يُحدَّد. */
 export const NO_DAY = 'بلا يوم';
 
-/** رفقة السفرة: من كتبهم صاحبها، ثم كل من دفع بندًا أو أخذ تسوية ولم يُكتب. */
+/** شباب السفرة: من كتبهم صاحبها، ثم كل من دفع بندًا أو أخذ تسوية ولم يُكتب. */
 export const tripPeople = (trip) => {
   const out = [];
   const add = (n) => { const s = str(n); if (s && !out.includes(s)) out.push(s); };
@@ -64,7 +64,7 @@ export const tripBalances = (trip) => tripPeople(trip).map((name) => {
   return { name, paid, settled, owed: paid - settled };
 });
 
-/** مجموع ما بقي عليك لكل الرفقة. */
+/** مجموع ما بقي عليك لكل الشباب. */
 export const tripOwedTotal = (trip) => tripBalances(trip).reduce((s, b) => s + Math.max(0, b.owed), 0);
 
 /** مصاريف كل يوم: مجموعه، ومجموع كل تصنيف فيه. اليوم بلا اسمٍ يأتي آخرًا. */
@@ -116,7 +116,7 @@ export const makeExpense = ({ id, name, amount, day, cat, paidBy, sub }) => ({
   ...(str(sub) ? { sub: str(sub) } : {}),
 });
 
-/** تسوية: ما أُعطيه واحدٌ من الرفقة. */
+/** تسوية: ما أُعطيه واحدٌ من الشباب. */
 export const makeSettlement = ({ id, person, amount, date, note }) => ({
   id,
   person: str(person),
@@ -126,7 +126,7 @@ export const makeSettlement = ({ id, person, amount, date, note }) => ({
 });
 
 /**
- * نصٌّ يُرسل لواحدٍ من الرفقة: حسابه هو وحده.
+ * نصٌّ يُرسل لواحدٍ من الشباب: حسابه هو وحده.
  *
  * لا مجموع المصروفات ولا ما دفعه غيره: كل واحدٍ يعرف ما دفع وما أخذ وما بقي له،
  * وما عدا ذلك ليس من شأنه. ولهذا لا يوجد نصٌّ واحد للجميع.
