@@ -4759,6 +4759,21 @@ export default function App() {
   const isTripManager = (data.trips || []).some((t) => effectiveUser?.id && ((t.managers || []).includes(effectiveUser.id) || (t.entrants || []).includes(effectiveUser.id)));
   const canTrips = can('السفرات') || isTripManager;
   /**
+   * من يشارك في سفرةٍ واحدة وحدها (ولا يملك «السفرات»): تُفتح له مباشرةً.
+   *
+   * يضغط «السفرات» فيجد قائمةً فيها «قطر» وحدها، ثم يضغط عليها: ضغطةٌ زائدةٌ لا تفيد. فصار يدخل
+   * سفرته من أول ضغطة، ولمن عنده أكثر من واحدة قائمتُه كما كانت.
+   */
+  const myOnlyTrip = (() => {
+    if (isAdmin || can('السفرات') || !effectiveUser?.id) return null;
+    const mine = (data.trips || []).filter((t) => (t.managers || []).includes(effectiveUser.id) || (t.entrants || []).includes(effectiveUser.id));
+    return mine.length === 1 ? mine[0] : null;
+  })();
+  const openTrips = () => {
+    if (myOnlyTrip) { setSelectedTripId(myOnlyTrip.id); goto('tripDetail'); return; }
+    goto('trips');
+  };
+  /**
    * هل يكتب مبالغ السفرة المفتوحة؟ المدير، أو مسؤولها، أو من عنده «السفرات» مع صلاحية المال.
    * ومن عنده «السفرات» وحدها يرى السفرة بلا مبالغ (الخادم يحجبها)، فما يكتبه يُردّ — فلا
    * نُظهر له زرًّا يُضيّع ما يكتب.
@@ -5616,7 +5631,7 @@ export default function App() {
 
             <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(9.25rem,1fr))]">
               {sections.map((c) => (
-                <SectionTile key={c.id} icon={c.icon} title={c.label} note={c.desc} badge={c.badge} onClick={() => goto(c.id)} />
+                <SectionTile key={c.id} icon={c.icon} title={c.label} note={c.desc} badge={c.badge} onClick={() => (c.id === 'trips' ? openTrips() : goto(c.id))} />
               ))}
             </div>
           </div>
@@ -9273,7 +9288,7 @@ export default function App() {
 
         {view === 'tripDetail' && trip && (
           <div>
-            <Breadcrumb items={[{ label: 'السفرات', onClick: () => goto('trips') }, { label: trip.name }]} />
+            <Breadcrumb items={[{ label: 'السفرات', onClick: () => goto(myOnlyTrip ? 'home' : 'trips') }, { label: trip.name }]} />
             <div className="flex items-center gap-2 mb-5 mt-2">
               <h2 className="text-lg sm:text-xl font-bold text-slate-800">{trip.name}</h2>
               {isAdmin && <button onClick={() => askConfirm(`حذف سفرة «${trip.name}»؟`, () => removeTrip(trip.id))} className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>}
