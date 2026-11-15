@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Home, BookOpen, Wallet, Settings, Plus, X, Check, ChevronLeft, Trash2, Pencil,
+  Home, BookOpen, Wallet, Settings, Plus, X, Check, ChevronLeft, ChevronUp, ChevronDown, Trash2, Pencil,
   Users as UsersIcon, Calendar, TrendingUp, TrendingDown, Layers, ShieldCheck,
   Lock, Unlock, Trophy, LogOut, KeyRound, Plane, Search, AlertTriangle, Send,
   RotateCcw, Wand2, CalendarDays, FileText, Copy, Clock, BookMarked, Eye, EyeOff, Link2, MapPin, Paperclip,
@@ -1498,6 +1498,7 @@ function FaidAnalysis({ breakdown, onDrill }) {
  * من «الصلاحيات»: هناك اسمٌ عامٌّ لكل قسم، وهنا حسابٌ لسفرةٍ بعينها.
  */
 function TripManagers({ trip, users, onChange }) {
+  const [open, setOpen] = useState(false);
   const list = (users || []).filter((u) => u.role !== 'مدير' && u.status !== 'غير نشط');
   const managers = trip.managers || [];
   const entrants = trip.entrants || [];
@@ -1507,37 +1508,45 @@ function TripManagers({ trip, users, onChange }) {
     managers: level === 'manage' ? [...managers.filter((x) => x !== id), id] : managers.filter((x) => x !== id),
     entrants: level === 'enter' ? [...entrants.filter((x) => x !== id), id] : entrants.filter((x) => x !== id),
   });
-  const LEVELS3 = [['none', 'لا يراها'], ['enter', 'يُدخِل فقط'], ['manage', 'يدير']];
+  const LABEL = { none: 'لا يراها', enter: 'يُدخِل فقط', manage: 'يدير' };
+  const assigned = list.filter((u) => levelOf(u.id) !== 'none');
   return (
-    <div className={cardCls + ' mb-3'} data-testid="trip-managers">
-      <div className="text-sm font-semibold text-slate-700">من يشارك في هذه السفرة؟</div>
-      <div className="text-xs text-slate-400 mt-0.5 mb-3 leading-6">
-        <b>يُدخِل فقط:</b> يضيف مصروفًا باسمه ويرى ما أدخله هو فقط، ولا يرى غيره ولا الحساب ولا التسويات.<br />
-        <b>يدير:</b> يرى كل شيء في هذه السفرة ويسجّل فيها.<br />
-        ولا أحد يرى مال البرامج ولا فيض ولا سفرةً أخرى. وكل شيء غير ذلك لك أنت وحدك.
-      </div>
-      {list.length === 0 ? (
-        <div className="text-sm text-slate-400">ما عندك حسابات بعد. أضفها من الإعدادات ← المستخدمون.</div>
-      ) : (
-        <div className="space-y-2">
-          {list.map((u) => {
-            const lv = levelOf(u.id);
-            return (
-              <div key={u.id} className="border border-slate-100 rounded-xl p-3" data-testid={`mgr-${u.username}`}>
-                <div className="font-semibold text-slate-800 mb-2">{u.name || u.username}</div>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {LEVELS3.map(([k, label]) => (
-                    <button key={k} type="button" data-testid={`lv-${u.username}-${k}`} onClick={() => setLevel(u.id, k)}
-                      className={`rounded-lg py-2 text-xs font-semibold border ${lv === k ? 'bg-brand-600 border-brand-600 text-white' : 'border-slate-200 text-slate-600'}`}>{label}</button>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
+    <div className="mb-3" data-testid="trip-managers">
+      {/* زرٌّ صغير: الشاشة طويلة بقائمة الحسابات كلها، فلا تُفتح إلا حين تُطلب */}
+      <button type="button" data-testid="trip-managers-toggle" onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm">
+        <span className="font-semibold text-slate-700">المشاركون في السفرة{assigned.length > 0 ? ` (${assigned.length})` : ''}</span>
+        <span className="flex items-center gap-1.5 text-xs text-brand-700 font-semibold">{open ? 'إغلاق' : 'تعديل'} {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</span>
+      </button>
+      {!open && assigned.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {assigned.map((u) => (
+            <span key={u.id} className="text-[11px] bg-brand-50 text-brand-800 rounded-md px-2 py-1">{u.name || u.username} · {LABEL[levelOf(u.id)]}</span>
+          ))}
         </div>
       )}
-      {(managers.length > 0 || entrants.length > 0) && (
-        <div className="text-[11px] text-slate-400 mt-2">يتغيّر ما يراه الحساب عند تحديثه التالي.</div>
+      {open && (
+        <div className={cardCls + ' mt-2'}>
+          <div className="text-[11px] text-slate-400 mb-2 leading-5">
+            «يُدخِل فقط» يضيف باسمه ويرى ما أدخله وحده. «يدير» يرى كل شيء في هذه السفرة. غير ذلك لك وحدك.
+          </div>
+          {list.length === 0 ? (
+            <div className="text-sm text-slate-400">ما عندك حسابات بعد. أضفها من الإعدادات ← المستخدمون.</div>
+          ) : (
+            <div className="divide-y divide-slate-50" data-testid="trip-managers-list">
+              {list.map((u) => (
+                <div key={u.id} className="flex items-center justify-between gap-2 py-1.5" data-testid={`mgr-${u.username}`}>
+                  <span className="text-sm text-slate-800 min-w-0 truncate">{u.name || u.username}</span>
+                  <select data-testid={`sel-${u.username}`} value={levelOf(u.id)} onChange={(e) => setLevel(u.id, e.target.value)}
+                    className={`shrink-0 rounded-lg border px-2 py-1.5 text-xs font-semibold ${levelOf(u.id) === 'none' ? 'border-slate-200 text-slate-500' : 'border-brand-600 bg-brand-600 text-white'}`}>
+                    {Object.entries(LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </select>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="text-[11px] text-slate-400 mt-2">يتغيّر ما يراه الحساب عند تحديثه التالي.</div>
+        </div>
       )}
     </div>
   );
