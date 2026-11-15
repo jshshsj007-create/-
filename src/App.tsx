@@ -46,7 +46,7 @@ import { DEFAULT_WUDU_STEPS, wuduDone, wuduPercent, wuduMastered, wuduStats } fr
 import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 import PdfFirstPage from './pdfview.jsx';
 import { say } from './adad.js';
-import { TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, nextDay, currentDay, tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement } from './trip.js';
+import { TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, PRE_DAY, nextDay, currentDay, tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement } from './trip.js';
 import { weekReport } from './report.js';
 import { pushStatus, PUSH_TEXTS, HOME_STEPS, readEnv, currentSub, enablePush, disablePush, healPush } from './notify.js';
 import {
@@ -1534,7 +1534,7 @@ function TripManagers({ trip, users, onChange }) {
  * يحاسبهم صاحب الفريق بعد كل يومٍ أو بعد فترة، فالتسوية تُسجَّل وقت ما تقع
  * وتنقص الباقي، والمصروف نفسه يبقى في السفرة كما هو.
  */
-function TripCrew({ trip, onSettle, onAddPerson, onRemoveSettlement }) {
+function TripCrew({ trip, readOnly, onSettle, onAddPerson, onRemoveSettlement }) {
   const [name, setName] = useState('');
   const rows = tripBalances(trip);
   const owed = tripOwedTotal(trip);
@@ -1569,11 +1569,11 @@ function TripCrew({ trip, onSettle, onAddPerson, onRemoveSettlement }) {
               </div>
               <div className="text-[11px] text-slate-400 mt-1">دفع {fmt(b.paid)} · أُعطي {fmt(b.settled)}</div>
               <div className="flex flex-wrap gap-2">
-                {b.owed > 0 && (
+                {!readOnly && b.owed > 0 && (
                   <button onClick={() => onSettle(b.name, b.owed)} className="mt-2 text-xs font-bold text-white bg-brand-600 px-3 py-2 rounded-lg">سدّدت له</button>
                 )}
               </div>
-              {b.owed <= 0 && b.paid === 0 && (
+              {!readOnly && b.owed <= 0 && b.paid === 0 && (
                 <button onClick={() => onSettle(b.name, 0)} className="mt-2 text-xs font-semibold text-brand-700 bg-brand-50 px-3 py-2 rounded-lg">سلفة</button>
               )}
             </div>
@@ -1581,10 +1581,12 @@ function TripCrew({ trip, onSettle, onAddPerson, onRemoveSettlement }) {
         </div>
       )}
 
-      <div className="flex gap-2">
-        <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="اسم من معك في السفرة" />
-        <button onClick={() => { onAddPerson(name); setName(''); }} className="text-xs font-bold text-brand-700 bg-brand-50 px-4 rounded-lg shrink-0">إضافة</button>
-      </div>
+      {!readOnly && (
+        <div className="flex gap-2">
+          <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="اسم من معك في السفرة" />
+          <button onClick={() => { onAddPerson(name); setName(''); }} className="text-xs font-bold text-brand-700 bg-brand-50 px-4 rounded-lg shrink-0">إضافة</button>
+        </div>
+      )}
 
       {settlements.length > 0 && (
         <div className="mt-4 pt-3 border-t border-slate-100">
@@ -1595,7 +1597,7 @@ function TripCrew({ trip, onSettle, onAddPerson, onRemoveSettlement }) {
                 <span className="text-slate-700 min-w-0 truncate">{x.person}{x.how ? ` · ${x.how}` : ''}{x.date ? ` · ${x.date}` : ''}{x.note ? ` · ${x.note}` : ''}</span>
                 <span className="flex items-center gap-2 shrink-0">
                   <span className="font-semibold text-slate-800">{fmt(x.amount)} ر.س</span>
-                  <button onClick={() => onRemoveSettlement(x.id)} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>
+                  {!readOnly && <button onClick={() => onRemoveSettlement(x.id)} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>}
                 </span>
               </div>
             ))}
@@ -1658,9 +1660,11 @@ function TripItems({ title, subtitle, items, tone, onAdd, onRemove }) {
           <div className="text-sm font-semibold text-slate-700">{title}</div>
           <div className="text-xs text-slate-400 mt-0.5">{subtitle}</div>
         </div>
-        <button onClick={onAdd} className="text-xs text-brand-700 font-semibold flex items-center gap-1 shrink-0 bg-brand-50 px-3 py-1.5 rounded-lg">
-          <Plus size={14} /> إضافة
-        </button>
+        {onAdd && (
+          <button onClick={onAdd} className="text-xs text-brand-700 font-semibold flex items-center gap-1 shrink-0 bg-brand-50 px-3 py-1.5 rounded-lg">
+            <Plus size={14} /> إضافة
+          </button>
+        )}
       </div>
       {!list.length ? (
         <div className="text-sm text-slate-400">ما فيه بنود بعد.</div>
@@ -1678,7 +1682,7 @@ function TripItems({ title, subtitle, items, tone, onAdd, onRemove }) {
               </span>
               <span className="flex items-center gap-2 shrink-0">
                 <span className={`font-semibold ${color}`}>{fmt(it.amount)} ر.س</span>
-                <button onClick={() => onRemove(it.id)} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>
+                {onRemove && <button onClick={() => onRemove(it.id)} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>}
               </span>
             </div>
           ))}
@@ -4670,6 +4674,13 @@ export default function App() {
    */
   const isTripManager = (data.trips || []).some((t) => effectiveUser?.id && (t.managers || []).includes(effectiveUser.id));
   const canTrips = can('السفرات') || isTripManager;
+  /**
+   * هل يكتب مبالغ السفرة المفتوحة؟ المدير، أو مسؤولها، أو من عنده «السفرات» مع صلاحية المال.
+   * ومن عنده «السفرات» وحدها يرى السفرة بلا مبالغ (الخادم يحجبها)، فما يكتبه يُردّ — فلا
+   * نُظهر له زرًّا يُضيّع ما يكتب.
+   */
+  const tripWrite = Boolean(isAdmin || (trip?.managers || []).includes(effectiveUser?.id)
+    || (can('السفرات') && (can('المصروفات والتقارير') || can('فيض - الإيرادات والمصروفات'))));
   const canSeeWeek = (programId, weekId) => isAdmin || effectiveUser?.accessScope === 'all' || (effectiveUser?.allowedWeeks || []).some((a) => a.programId === programId && a.weekId === weekId);
   const canMoney = can('المصروفات والتقارير');
   /**
@@ -9191,6 +9202,11 @@ export default function App() {
               <MiniStat label="الصافي" value={fmt(tripNet(trip))} icon={Wallet} tone={tripNet(trip) >= 0 ? 'brand' : 'red'} />
             </div>
 
+            {!tripWrite && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-3 mb-3 text-xs text-amber-900 leading-6">
+                المبالغ محجوبة عنك في هذه السفرة، فلا تسجّل فيها. يسجّل فيها المدير أو من اختاره مسؤولًا عنها.
+              </div>
+            )}
             {/* من يدير السفرة: لصاحب التطبيق وحده، والحجب في الخادم لا هنا */}
             {isAdmin ? (
               <TripManagers trip={trip} users={data.users || []} onChange={(managers) => patchTrip({ managers })} />
@@ -9202,6 +9218,7 @@ export default function App() {
 
             <TripCrew
               trip={trip}
+              readOnly={!tripWrite}
               onSettle={(person, owed) => { setForm({ person, amount: owed > 0 ? owed : '', date: trip.date || '' }); setModal('tripSettle'); }}
               onAddPerson={addTripPerson}
               onRemoveSettlement={(sid) => askConfirm('حذف هذه التسوية؟', () => removeTripSettlement(sid))} />
@@ -9215,19 +9232,19 @@ export default function App() {
             <TripItems
               title="المصروفات" subtitle="كل بند باسمه: أكل، سكن، مواصلات… ومن دفعه ولأي يوم"
               items={trip.expenseItems} tone="red"
-              onAdd={() => {
+              onAdd={!tripWrite ? null : () => {
                 setForm({ itemKey: 'expenseItems', day: currentDay(trip), cat: '', sub: '', paidBy: '' });
                 setModal('addTripItem');
               }}
-              onRemove={(id) => removeTripItem('expenseItems', id)} />
+              onRemove={!tripWrite ? null : (id) => removeTripItem('expenseItems', id)} />
 
             <div className="h-3" />
 
             <TripItems
               title="الإيرادات" subtitle="اشتراكات المشاركين، دعم، أي دخل للسفرة"
               items={trip.incomeItems} tone="green"
-              onAdd={() => { setForm({ itemKey: 'incomeItems' }); setModal('addTripItem'); }}
-              onRemove={(id) => removeTripItem('incomeItems', id)} />
+              onAdd={!tripWrite ? null : () => { setForm({ itemKey: 'incomeItems' }); setModal('addTripItem'); }}
+              onRemove={!tripWrite ? null : (id) => removeTripItem('incomeItems', id)} />
           </div>
         )}
 
@@ -11802,9 +11819,10 @@ export default function App() {
  <Field label="المبلغ (ر.س)">
               <input id="trip-amount" type="number" inputMode="numeric" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value, error: '' })} />
             </Field>
-            <Field label="اليوم" hint="يقع في آخر يوم كتبته. وإذا بدأ يوم جديد اضغط «+ يوم جديد» وكل ما بعده يقع فيه.">
+            <Field label="اليوم" hint="يقع في آخر يوم كتبته. وإذا بدأ يوم جديد اضغط «+ يوم جديد». وما صُرف قبل السفرة (حجز وتجهيز) اختر له «قبل السفرة».">
               <div className="flex flex-wrap gap-1.5">
-                {days.map((d) => (
+                <button type="button" data-testid="pre-day" className={chip(form.day === PRE_DAY)} onClick={() => setForm({ ...form, day: PRE_DAY })}>{PRE_DAY}</button>
+                {days.filter((d) => d !== PRE_DAY).map((d) => (
                   <button key={d} type="button" className={chip(form.day === d)} onClick={() => setForm({ ...form, day: d })}>{d}</button>
                 ))}
                 {!days.includes(next) && (

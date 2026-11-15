@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {
   tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement, NO_DAY,
-  TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, nextDay, currentDay, dayName,
+  TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, PRE_DAY, nextDay, currentDay, dayName,
 } from '../src/trip.js';
 
 let passed = 0;
@@ -115,6 +115,18 @@ test('التسوية تحمل كيف سُدِّدت: كاش أو تحويل أو
   assert.deepEqual(HOW, ['كاش', 'تحويل', 'غير ذلك']);
   assert.equal(makeSettlement({ id: '1', person: 'تركي', amount: 150, how: 'تحويل' }).how, 'تحويل');
   assert.equal(makeSettlement({ id: '2', person: 'تركي', amount: 150 }).how, undefined, 'بلا اختيار لا تُكتب');
+});
+
+test('مصروف قبل السفرة: أولًا، ولا يُعدّ يومًا ولا يزيح اليوم الأول', () => {
+  const t = trip();
+  t.expenseItems.push({ id: 'p', name: 'حجز السكن', amount: 200, day: PRE_DAY, cat: 'سكن', paidBy: 'تركي' });
+  const days = tripDays(t);
+  assert.equal(days[0].day, PRE_DAY, 'أول البطاقات');
+  assert.equal(days[0].total, 200);
+  assert.deepEqual(days.slice(1).map((d) => d.day), ['اليوم الأول', 'اليوم الثاني']);
+  assert.equal(nextDay(t), 'اليوم الثالث', 'ولا يُحسب يومًا');
+  assert.equal(currentDay({ expenseItems: [{ id: 'q', amount: 5, day: PRE_DAY }] }), 'اليوم الأول', 'ومن لم يبدأ يومه يبدأ بالأول');
+  assert.equal(tripBalances(t).find((b) => b.name === 'تركي').paid, 300 + 200, 'ويدخل حساب من دفعه');
 });
 
 console.log(`\n✅ ${passed} اختبارًا لحساب السفرة`);

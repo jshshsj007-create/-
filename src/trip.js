@@ -28,11 +28,11 @@ const ORDINALS = ['الأول', 'الثاني', 'الثالث', 'الرابع', 
 export const dayName = (n) => (n >= 1 && n <= ORDINALS.length ? `اليوم ${ORDINALS[n - 1]}` : `اليوم ${n}\u200F`);
 
 /** اسم اليوم التالي، فيقع المصروف في يومه بلا كتابة. */
-export const nextDay = (trip) => dayName(new Set((trip?.expenseItems || []).map((x) => str(x?.day)).filter(Boolean)).size + 1);
+export const nextDay = (trip) => dayName(new Set((trip?.expenseItems || []).map((x) => str(x?.day)).filter((d) => d && d !== PRE_DAY)).size + 1);
 
 /** اليوم الذي يبدأ به المصروف الجديد: آخر يومٍ كُتب، وإلا اليوم الأول. */
 export const currentDay = (trip) => {
-  const last = (trip?.expenseItems || []).map((x) => str(x?.day)).filter(Boolean).slice(-1)[0];
+  const last = (trip?.expenseItems || []).map((x) => str(x?.day)).filter((d) => d && d !== PRE_DAY).slice(-1)[0];
   return last || dayName(1);
 };
 
@@ -41,6 +41,14 @@ const str = (v) => String(v ?? '').trim();
 
 /** اسم اليوم كما كتبه صاحبه، أو «بلا يوم» لما لم يُحدَّد. */
 export const NO_DAY = 'بلا يوم';
+
+/**
+ * ما صُرف قبل أن تبدأ السفرة: حجزٌ وتجهيزاتٌ وما يُشترى مسبقًا.
+ *
+ * ليس يومًا من أيامها، فلا يُعدّ فيها ولا يزيح «اليوم الأول» عن مكانه، لكنه من مصروف
+ * السفرة ويدخل حساب من دفعه كغيره.
+ */
+export const PRE_DAY = 'قبل السفرة';
 
 /** شباب السفرة: من كتبهم صاحبها، ثم كل من دفع بندًا أو أخذ تسوية ولم يُكتب. */
 export const tripPeople = (trip) => {
@@ -86,7 +94,8 @@ export const tripDays = (trip) => {
     d.items.push(x);
   }
   const days = order.map((k) => map.get(k));
-  return [...days.filter((d) => d.day !== NO_DAY), ...days.filter((d) => d.day === NO_DAY)];
+  // قبل السفرة أولًا، ثم الأيام بترتيبها، ثم ما بلا يومٍ آخرًا
+  return [...days.filter((d) => d.day === PRE_DAY), ...days.filter((d) => d.day !== NO_DAY && d.day !== PRE_DAY), ...days.filter((d) => d.day === NO_DAY)];
 };
 
 /** مجموع كل تصنيف في السفرة كلها. */
