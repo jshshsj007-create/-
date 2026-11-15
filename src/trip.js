@@ -115,7 +115,7 @@ export const tripCats = (trip) => {
  * بندٌ جديد. المبلغ موجبٌ دائمًا، والاسم مطلوب، والدافع إن لم يُكتب فهو من
  * صندوق السفرة نفسه لا من جيب أحد.
  */
-export const makeExpense = ({ id, name, amount, day, cat, paidBy, sub, by }) => ({
+export const makeExpense = ({ id, name, amount, day, cat, paidBy, sub, by, edited }) => ({
   id,
   name: str(name),
   amount: Math.max(0, num(amount)),
@@ -125,6 +125,8 @@ export const makeExpense = ({ id, name, amount, day, cat, paidBy, sub, by }) => 
   ...(str(sub) ? { sub: str(sub) } : {}),
   // من أدخله: يُعرف به مُدخِلُه، وبه يرى المُدخِل ما أدخله هو وحده
   ...(str(by) ? { by: str(by) } : {}),
+  // عُدّل بعد إدخاله: تبقى علامةٌ تحته، فلا يُظنّ البند كما أُدخل أول مرة
+  ...(edited ? { edited: true } : {}),
 });
 
 /** كيف سُدِّد: نقدًا أو تحويلًا أو غير ذلك. */
@@ -139,3 +141,99 @@ export const makeSettlement = ({ id, person, amount, date, note, how }) => ({
   ...(str(how) ? { how: str(how) } : {}),
   ...(str(note) ? { note: str(note) } : {}),
 });
+
+/**
+ * تعديل بندٍ قائم: يبقى معرّفه ومن أدخله، وتُوضع عليه علامة «عُدّل».
+ *
+ * فمن أدخله المقوشي وعدّله المدير يبقى مكتوبًا «أدخله المقوشي»، وتُعرف أنه تغيّر. والحذف
+ * وإعادة الإدخال كانا يمحوان هذا كله، ويُضيّعان من أدخله.
+ */
+export const editExpense = (old, patch) => makeExpense({
+  id: old?.id,
+  name: patch?.name ?? old?.name,
+  amount: patch?.amount ?? old?.amount,
+  day: patch?.day ?? old?.day,
+  cat: patch?.cat ?? old?.cat,
+  paidBy: patch?.paidBy ?? old?.paidBy,
+  sub: patch?.sub ?? old?.sub,
+  by: old?.by,
+  edited: true,
+});
+
+const fmtN = (n) => Number(n || 0).toLocaleString('en-US');
+
+/** كم صُرف: «سكن ٦٠٠ · أكل وشرب ٣٤٥ (فطور ٨٥ · غداء ١٤٠)». */
+const dayLine = (d) => Object.entries(d.cats).map(([c, v]) => {
+  const sub = d.subs?.[c] ? ` (${Object.entries(d.subs[c]).map(([k, n]) => `${k} ${fmtN(n)}`).join(' · ')})` : '';
+  return `${c} ${fmtN(v)}${sub}`;
+}).join(' · ');
+
+/**
+ * ورقة السفرة كما يُرسلها صاحب الفريق: أقسامٌ تدخل `paperSheet` كما هي.
+ *
+ * المالية، ثم حساب الشباب (دفع وأُعطي والباقي)، ثم مصاريف كل يوم، ثم التسويات.
+ * وكل قسمٍ فاضٍ يُسقط، فلا تُطبع ورقةٌ فيها عناوين بلا شيء.
+ */
+export const tripSheetSections = (trip) => {
+  const out = [];
+  const income = (trip?.incomeItems || []).reduce((s, x) => s + num(x?.amount), 0);
+  const spent = (trip?.expenseItems || []).reduce((s, x) => s + num(x?.amount), 0);
+  out.push({ title: 'المالية', rows: [
+    ['الإيراد', `${fmtN(income)} ر.س`],
+    ['المصروفات', `${fmtN(spent)} ر.س`],
+    ['الصافي', `${fmtN(income - spent)} ر.س`, true],
+  ] });
+
+  const bal = tripBalances(trip);
+  if (bal.length) {
+    out.push({
+      title: 'الحساب مع الشباب',
+      cols: [{ label: 'الاسم', w: 31 }, { label: 'دفع', w: 23 }, { label: 'أُعطي', w: 23 }, { label: 'الباقي له', w: 23 }],
+      grid: [
+        ...bal.map((b) => [b.name, fmtN(b.paid), fmtN(b.settled), b.owed < 0 ? `زيادة ${fmtN(-b.owed)}` : fmtN(b.owed)]),
+        ['الباقي عليك للكل', '', '', fmtN(tripOwedTotal(trip))],
+      ],
+    });
+  }
+
+  const days = tripDays(trip);
+  if (days.length) {
+    out.push({
+      title: 'مصاريف الأيام',
+      cols: [{ label: 'اليوم', w: 24 }, { label: 'المجموع', w: 18 }, { label: 'التفصيل', w: 58 }],
+      grid: days.map((d) => [d.day, fmtN(d.total), dayLine(d)]),
+    });
+  }
+
+  const st = trip?.settlements || [];
+  if (st.length) {
+    out.push({
+      title: 'ما أُعطيَه الشباب',
+      cols: [{ label: 'الاسم', w: 26 }, { label: 'المبلغ', w: 16 }, { label: 'كيف', w: 16 }, { label: 'التاريخ', w: 20 }, { label: 'ملاحظة', w: 22 }],
+      grid: st.map((x) => [str(x.person), fmtN(x.amount), str(x.how), str(x.date), str(x.note)]),
+    });
+  }
+  return out;
+};
+
+/** نصٌّ للمشاركة: سطورٌ قصيرة تُقرأ في الواتس. */
+export const tripReportText = (trip) => {
+  const income = (trip?.incomeItems || []).reduce((s, x) => s + num(x?.amount), 0);
+  const spent = (trip?.expenseItems || []).reduce((s, x) => s + num(x?.amount), 0);
+  const lines = [`تقرير ${trip?.name || 'السفرة'}${trip?.date ? ` — ${trip.date}` : ''}`, '',
+    `الإيراد: ${fmtN(income)} ر.س`, `المصروفات: ${fmtN(spent)} ر.س`, `الصافي: ${fmtN(income - spent)} ر.س`];
+  const bal = tripBalances(trip);
+  if (bal.length) {
+    lines.push('', 'الشباب:');
+    for (const b of bal) {
+      lines.push(`- ${b.name}: دفع ${fmtN(b.paid)}، أُعطي ${fmtN(b.settled)}، ${b.owed > 0 ? `له ${fmtN(b.owed)}` : b.owed < 0 ? `زيادة ${fmtN(-b.owed)}` : 'مسدَّد'}`);
+    }
+    lines.push(`الباقي علينا للكل: ${fmtN(tripOwedTotal(trip))} ر.س`);
+  }
+  const days = tripDays(trip);
+  if (days.length) {
+    lines.push('', 'الأيام:');
+    for (const d of days) lines.push(`- ${d.day}: ${fmtN(d.total)} (${dayLine(d)})`);
+  }
+  return lines.join('\n');
+};

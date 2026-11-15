@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {
   tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement, NO_DAY,
-  TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, PRE_DAY, nextDay, currentDay, dayName,
+  TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, PRE_DAY, editExpense, tripSheetSections, tripReportText, nextDay, currentDay, dayName,
 } from '../src/trip.js';
 
 let passed = 0;
@@ -127,6 +127,37 @@ test('مصروف قبل السفرة: أولًا، ولا يُعدّ يومًا 
   assert.equal(nextDay(t), 'اليوم الثالث', 'ولا يُحسب يومًا');
   assert.equal(currentDay({ expenseItems: [{ id: 'q', amount: 5, day: PRE_DAY }] }), 'اليوم الأول', 'ومن لم يبدأ يومه يبدأ بالأول');
   assert.equal(tripBalances(t).find((b) => b.name === 'تركي').paid, 300 + 200, 'ويدخل حساب من دفعه');
+});
+
+test('تعديل بند: يبقى معرّفه ومن أدخله، وتوضع عليه علامة «عُدّل»', () => {
+  const old = makeExpense({ id: 'x1', name: 'سكن', amount: 600, day: 'اليوم الأول', cat: 'سكن', paidBy: 'العلوان', by: 'u4' });
+  const now = editExpense(old, { amount: 650, paidBy: 'تركي' });
+  assert.deepEqual([now.id, now.by, now.amount, now.paidBy, now.cat, now.day, now.edited], ['x1', 'u4', 650, 'تركي', 'سكن', 'اليوم الأول', true]);
+  assert.equal(old.edited, undefined, 'الأصل لا يتغيّر');
+  assert.equal(editExpense(old, { amount: -5 }).amount, 0, 'والسالب يُصفَّر كالإضافة');
+});
+
+test('ورقة السفرة: المالية والشباب والأيام والتسويات، وما فاض يُسقط', () => {
+  const t = trip();
+  t.settlements.push({ id: 's2', person: 'تركي', amount: 40, how: 'تحويل', date: '1448/06/04' });
+  const secs = tripSheetSections(t);
+  assert.deepEqual(secs.map((s) => s.title), ['المالية', 'الحساب مع الشباب', 'مصاريف الأيام', 'ما أُعطيَه الشباب']);
+  assert.deepEqual(secs[0].rows.map((r) => r[1]), ['0 ر.س', '800 ر.س', '-800 ر.س']);
+  const crew = secs[1].grid;
+  assert.deepEqual(crew[0], ['العلوان', '160', '100', '60']);
+  assert.equal(crew.at(-1)[3], String(60 + 300 - 40 + 250), 'الباقي علينا للكل');
+  assert.equal(secs[2].grid[0][0], 'اليوم الأول');
+  assert.ok(secs[3].grid.some((r) => r[0] === 'تركي' && r[2] === 'تحويل'));
+  const bare = tripSheetSections({ name: 'فاضية', expenseItems: [], incomeItems: [] });
+  assert.deepEqual(bare.map((s) => s.title), ['المالية'], 'لا عناوين بلا شيء');
+});
+
+test('نص التقرير يُقرأ في الواتس: الصافي والشباب والأيام', () => {
+  const txt = tripReportText(trip());
+  assert.match(txt, /تقرير سفرة الشرقية/);
+  assert.match(txt, /المصروفات: 800 ر.س/);
+  assert.match(txt, /- العلوان: دفع 160، أُعطي 100، له 60/);
+  assert.match(txt, /- اليوم الأول: 460/);
 });
 
 console.log(`\n✅ ${passed} اختبارًا لحساب السفرة`);

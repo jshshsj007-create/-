@@ -46,7 +46,7 @@ import { DEFAULT_WUDU_STEPS, wuduDone, wuduPercent, wuduMastered, wuduStats } fr
 import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 import PdfFirstPage from './pdfview.jsx';
 import { say } from './adad.js';
-import { TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, PRE_DAY, nextDay, currentDay, tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement } from './trip.js';
+import { TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, PRE_DAY, editExpense, tripSheetSections, tripReportText, nextDay, currentDay, tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement } from './trip.js';
 import { weekReport } from './report.js';
 import { pushStatus, PUSH_TEXTS, HOME_STEPS, readEnv, currentSub, enablePush, disablePush, healPush } from './notify.js';
 import {
@@ -1491,6 +1491,49 @@ function FaidAnalysis({ breakdown, onDrill }) {
 
 /** بنود سفرة بأسماء حرة (أكل، سكن…) مع مجموعها. */
 /**
+ * تقرير السفرة: نصٌّ للواتس وورقةٌ PDF.
+ *
+ * يرفعه صاحب الفريق لمن فوقه أو يحفظه: المالية، وحساب الشباب، ومصاريف كل يوم، وما أُعطيَه
+ * كلٌّ منهم. وهو لك أنت والمسؤول، لا للمُدخِل.
+ */
+function TripReport({ trip }) {
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const say2 = (t) => { setMsg(t); setTimeout(() => setMsg(''), 3500); };
+  const text = async () => {
+    const body = tripReportText(trip);
+    try {
+      if (navigator.share) { await shareText({ title: `تقرير ${trip.name}`, text: body }); return; }
+      await navigator.clipboard.writeText(body);
+      say2('اننسخ التقرير، الصقه وين ما تبي');
+    } catch { say2('ما قدر ينسخ. جرّب مرة ثانية.'); }
+  };
+  const sheet = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const blob = await paperSheet({
+        sub: trip.name, title: 'تقرير السفرة', date: trip.date || hijri(Date.now()),
+        sections: tripSheetSections(trip), fileTitle: `تقرير ${trip.name}`,
+      }, { logo: LOGO_MARK_WHITE, team: TEAM_NAME, stamp: hijri(Date.now()), fit: false });
+      const how = await shareFile(blob, sheetFileName(trip.date || hijri(Date.now())), `تقرير ${trip.name}`);
+      say2(how === 'downloaded' ? 'نزلت الورقة' : '');
+    } catch { say2('ما قدرنا نجهّز الورقة. جرّب مرة ثانية.'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="mb-3 flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5" data-testid="trip-report">
+      <span className="text-sm font-semibold text-slate-700">تقرير السفرة</span>
+      <span className="flex items-center gap-1.5">
+        {msg && <span className="text-[11px] text-green-600">{msg}</span>}
+        <button type="button" onClick={text} data-testid="trip-report-text" className="text-xs font-semibold text-brand-700 bg-brand-50 px-3 py-1.5 rounded-lg">نص</button>
+        <button type="button" onClick={sheet} disabled={busy} data-testid="trip-report-pdf" className="text-xs font-semibold text-brand-700 bg-brand-50 px-3 py-1.5 rounded-lg disabled:opacity-50">{busy ? '…' : 'ورقة PDF'}</button>
+      </span>
+    </div>
+  );
+}
+
+/**
  * من يدير هذه السفرة؟
  *
  * صاحب الفريق قد لا يسافر، فيختار حسابًا من حساباته يرى كل شيء في هذه السفرة وحدها
@@ -1673,7 +1716,7 @@ function TripDays({ trip }) {
   );
 }
 
-function TripItems({ title, subtitle, items, tone, onAdd, onRemove, users }) {
+function TripItems({ title, subtitle, items, tone, onAdd, onRemove, onEdit, users }) {
   const list = items || [];
   const total = sumAmt(list);
   const color = tone === 'red' ? 'text-red-600' : 'text-green-600';
@@ -1698,16 +1741,18 @@ function TripItems({ title, subtitle, items, tone, onAdd, onRemove, users }) {
             <div key={it.id} className="flex items-center justify-between text-sm border-b border-slate-50 pb-2 gap-2">
               <span className="min-w-0">
                 <span className="text-slate-700 font-medium block truncate">{it.name}</span>
-                {(it.day || it.cat || it.paidBy || it.by) && (
+                {(it.day || it.cat || it.paidBy || it.by || it.edited) && (
                   <span className="text-[11px] text-slate-400 block truncate">
                     {[it.day, it.cat, it.paidBy ? `دفع ${it.paidBy}` : '',
                       // من سجّله غير من دفعه: قد يسجّل المقوشي أن العلوان دفع
-                      it.by && users ? `أدخله ${(users.find((u) => u.id === it.by) || {}).name || ''}`.trim() : ''].filter(Boolean).join(' · ')}
+                      it.by && users ? `أدخله ${(users.find((u) => u.id === it.by) || {}).name || ''}`.trim() : '',
+                      it.edited ? 'عُدّل' : ''].filter(Boolean).join(' · ')}
                   </span>
                 )}
               </span>
               <span className="flex items-center gap-2 shrink-0">
                 <span className={`font-semibold ${color}`}>{fmt(it.amount)} ر.س</span>
+                {onEdit && <button onClick={() => onEdit(it)} data-testid={`edit-${it.id}`} className="text-slate-300 hover:text-brand-600"><Pencil size={14} /></button>}
                 {onRemove && <button onClick={() => onRemove(it.id)} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>}
               </span>
             </div>
@@ -3438,7 +3483,14 @@ export default function App() {
       if (form.cat === 'أخرى' && !form.name?.trim()) { setForm({ ...form, error: 'اكتب وش شريت بالضبط' }); return; }
       if (!(Number(form.amount) > 0)) { setForm({ ...form, error: 'اكتب المبلغ' }); return; }
       // اليوم والنوع ومن دفع: بهم يعرف كم لكل واحدٍ من الشباب
-      const item = makeExpense({ id: uid(), name: form.cat === 'أخرى' ? form.name : (form.sub || form.cat), amount: form.amount, day: form.day || currentDay(trip), cat: form.cat, paidBy: form.paidBy, sub: form.cat === 'أكل وشرب' ? form.sub : '', by: effectiveUser?.id });
+      const fields = { name: form.cat === 'أخرى' ? form.name : (form.sub || form.cat), amount: form.amount, day: form.day || currentDay(trip), cat: form.cat, paidBy: form.paidBy, sub: form.cat === 'أكل وشرب' ? form.sub : '' };
+      // تعديل بندٍ قائم: يبقى معرّفه ومن أدخله وتُوضع عليه علامة «عُدّل»
+      if (form.editId) {
+        patchTrip({ expenseItems: (trip.expenseItems || []).map((x) => (x.id === form.editId ? editExpense(x, fields) : x)) });
+        closeModal();
+        return;
+      }
+      const item = makeExpense({ id: uid(), ...fields, by: effectiveUser?.id });
       patchTrip({
         expenseItems: [...(trip.expenseItems || []), item],
         ...(item.paidBy && !(trip.people || []).includes(item.paidBy) ? { people: [...new Set([...(trip.people || []), item.paidBy])] } : {}),
@@ -3464,6 +3516,12 @@ export default function App() {
     closeModal();
   };
   const removeTripSettlement = (sid) => patchTrip({ settlements: (trip.settlements || []).filter((x) => x.id !== sid) });
+  const openEditExpense = (it) => {
+    const known = TRIP_CATS.includes(it.cat);
+    // ما كُتب قديمًا بنوعٍ خارج القائمة يُفتح «أخرى» باسمه، فلا يضيع ما كُتب
+    setForm({ itemKey: 'expenseItems', editId: it.id, cat: known ? it.cat : 'أخرى', name: (!known || it.cat === 'أخرى') ? it.name : '', sub: it.sub || '', paidBy: it.paidBy || '', amount: it.amount, day: it.day || currentDay(trip) });
+    setModal('addTripItem');
+  };
   const removeTripItem = (key, itemId) => patchTrip({ [key]: (trip[key] || []).filter((x) => x.id !== itemId) });
   const removeTrip = (tid) => {
     const gone = data.trips.find((t) => t.id === tid);
@@ -9247,6 +9305,7 @@ export default function App() {
               <MiniStat label="الصافي" value={fmt(tripNet(trip))} icon={Wallet} tone={tripNet(trip) >= 0 ? 'brand' : 'red'} />
             </div>
 
+            {tripWrite && <TripReport trip={trip} />}
             {!tripWrite && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-3 mb-3 text-xs text-amber-900 leading-6">
                 المبالغ محجوبة عنك في هذه السفرة، فلا تسجّل فيها. يسجّل فيها المدير أو من اختاره مسؤولًا عنها.
@@ -9281,6 +9340,7 @@ export default function App() {
                 setForm({ itemKey: 'expenseItems', day: currentDay(trip), cat: '', sub: '', paidBy: '' });
                 setModal('addTripItem');
               }}
+              onEdit={!tripWrite ? null : openEditExpense}
               onRemove={!tripWrite ? null : (id) => removeTripItem('expenseItems', id)} />
 
             <div className="h-3" />
@@ -11828,7 +11888,7 @@ export default function App() {
         const crew = [...new Set([...TRIP_CREW, ...tripPeople(trip)])];
         const chip = (on) => `px-4 py-2.5 rounded-lg text-sm font-semibold border ${on ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`;
         return (
-          <Modal title="مصروف جديد" onClose={closeModal}>
+          <Modal title={form.editId ? 'تعديل مصروف' : 'مصروف جديد'} onClose={closeModal}>
             <Field label="من دفع؟">
               <div className="flex flex-wrap gap-1.5">
                 {crew.map((n) => (
@@ -11879,9 +11939,9 @@ export default function App() {
             {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
             {form.added > 0 && <div className="text-green-600 text-xs mb-2">أُضيف {say(form.added, 'item')} — كمّل أو أغلق.</div>}
             <div className="flex gap-2 mt-5">
-              <button className={btnPrimary + ' flex-1'} onClick={() => addTripItem(form.itemKey)}>إضافة</button>
-              <button className={btnGhost + ' !text-brand-700 font-bold'} data-testid="add-again" onClick={() => addTripItem(form.itemKey, true)}>إضافة وآخر</button>
-              <button className={btnGhost} onClick={closeModal}>إغلاق</button>
+              <button className={btnPrimary + ' flex-1'} data-testid="trip-item-save" onClick={() => addTripItem(form.itemKey)}>{form.editId ? 'حفظ التعديل' : 'إضافة'}</button>
+              {!form.editId && <button className={btnGhost + ' !text-brand-700 font-bold'} data-testid="add-again" onClick={() => addTripItem(form.itemKey, true)}>إضافة وآخر</button>}
+              <button className={btnGhost} onClick={closeModal}>{form.editId ? 'إلغاء' : 'إغلاق'}</button>
             </div>
           </Modal>
         );
