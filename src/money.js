@@ -36,6 +36,7 @@ export const MONEY_KINDS = {
   quick: 'إيراد سريع',
   tripIn: 'إيراد رحلة',
   tripOut: 'مصروف رحلة',
+  tripPaid: 'تسوية رحلة',
 };
 
 /**
@@ -128,6 +129,8 @@ export const moneyRows = (data) => {
     const where = { tripId: str(t?.id), tripName: str(t?.name) };
     for (const x of t?.incomeItems || []) push('tripIn', x?.id, { amount: num(x?.amount), note: str(x?.name), where });
     for (const x of t?.expenseItems || []) push('tripOut', x?.id, { amount: num(x?.amount), note: str(x?.name), where });
+    // ما أُعطيه الرفقة: مالٌ خرج، فيُكتب كغيره ولا يُمحى بحذف
+    for (const x of t?.settlements || []) push('tripPaid', x?.id, { amount: num(x?.amount), note: str(x?.person), where });
   }
 
   return out;
@@ -213,7 +216,7 @@ export const blindMoney = (data, fields = PART_MONEY) => {
       const q = blindLedger(p, fields);
       return { ...q, weeks: (q.weeks || []).map((w) => blindLedger(w, fields)) };
     }),
-    trips: (data.trips || []).map((t) => ({ ...t, incomeItems: [], expenseItems: [] })),
+    trips: (data.trips || []).map((t) => ({ ...t, incomeItems: [], expenseItems: [], settlements: [] })),
   };
 };
 
@@ -264,7 +267,7 @@ export const restoreMoney = (incoming, current, fields = PART_MONEY) => {
     }),
     trips: (incoming.trips || []).map((t) => {
       const was = wasTrip.get(t.id);
-      return was ? { ...t, incomeItems: was.incomeItems || [], expenseItems: was.expenseItems || [] } : t;
+      return was ? { ...t, incomeItems: was.incomeItems || [], expenseItems: was.expenseItems || [], settlements: was.settlements || [] } : t;
     }),
   };
 };

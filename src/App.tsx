@@ -46,6 +46,7 @@ import { DEFAULT_WUDU_STEPS, wuduDone, wuduPercent, wuduMastered, wuduStats } fr
 import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 import PdfFirstPage from './pdfview.jsx';
 import { say } from './adad.js';
+import { TRIP_CATS, tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement, tripShareText } from './trip.js';
 import { weekReport } from './report.js';
 import { pushStatus, PUSH_TEXTS, HOME_STEPS, readEnv, currentSub, enablePush, disablePush, healPush } from './notify.js';
 import {
@@ -1489,6 +1490,123 @@ function FaidAnalysis({ breakdown, onDrill }) {
 }
 
 /** بنود سفرة بأسماء حرة (أكل، سكن…) مع مجموعها. */
+/**
+ * الحساب مع الرفقة: كم دفع كل واحدٍ من جيبه، وكم أُعطي، وكم بقي له.
+ *
+ * يحاسبهم صاحب الفريق بعد كل يومٍ أو بعد فترة، فالتسوية تُسجَّل وقت ما تقع
+ * وتنقص الباقي، والمصروف نفسه يبقى في السفرة كما هو.
+ */
+function TripCrew({ trip, onSettle, onAddPerson, onRemoveSettlement, onCopy }) {
+  const [name, setName] = useState('');
+  const rows = tripBalances(trip);
+  const owed = tripOwedTotal(trip);
+  const settlements = trip.settlements || [];
+  return (
+    <div className={cardCls} data-testid="trip-crew">
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div>
+          <div className="text-sm font-semibold text-slate-700">الحساب مع الرفقة</div>
+          <div className="text-xs text-slate-400 mt-0.5">من دفع من جيبه وكم بقي له عليك.</div>
+        </div>
+        {rows.length > 0 && (
+          <button onClick={onCopy} className="text-xs text-brand-700 font-semibold shrink-0 bg-brand-50 px-3 py-1.5 rounded-lg">انسخ الحساب</button>
+        )}
+      </div>
+
+      {rows.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-3 mb-3 flex items-center justify-between">
+          <span className="text-xs text-amber-900">الباقي عليك لكل الرفقة</span>
+          <span className="font-extrabold text-amber-900 tabular-nums">{fmt(owed)} ر.س</span>
+        </div>
+      )}
+
+      {rows.length === 0 ? (
+        <div className="text-sm text-slate-400 mb-3">أضف الرفقة (سعد، خالد…) أو اختر من دفع عند إضافة مصروف.</div>
+      ) : (
+        <div className="space-y-2 mb-3">
+          {rows.map((b) => (
+            <div key={b.name} className="border border-slate-100 rounded-xl p-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-bold text-slate-800">{b.name}</span>
+                <span className={`text-lg font-extrabold tabular-nums ${b.owed > 0 ? 'text-amber-700' : b.owed < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                  {b.owed > 0 ? `له ${fmt(b.owed)}` : b.owed < 0 ? `زيادة ${fmt(-b.owed)}` : 'مسدَّد'}
+                </span>
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1">دفع {fmt(b.paid)} · أُعطي {fmt(b.settled)}</div>
+              {b.owed > 0 && (
+                <button onClick={() => onSettle(b.name, b.owed)} className="mt-2 text-xs font-bold text-white bg-brand-600 px-3 py-2 rounded-lg">سدّدت له</button>
+              )}
+              {b.owed <= 0 && b.paid === 0 && (
+                <button onClick={() => onSettle(b.name, 0)} className="mt-2 text-xs font-semibold text-brand-700 bg-brand-50 px-3 py-2 rounded-lg">سلفة</button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="اسم من معك في السفرة" />
+        <button onClick={() => { onAddPerson(name); setName(''); }} className="text-xs font-bold text-brand-700 bg-brand-50 px-4 rounded-lg shrink-0">إضافة</button>
+      </div>
+
+      {settlements.length > 0 && (
+        <div className="mt-4 pt-3 border-t border-slate-100">
+          <div className="text-xs font-semibold text-slate-500 mb-2">ما أعطيته لهم</div>
+          <div className="space-y-1.5">
+            {settlements.map((x) => (
+              <div key={x.id} className="flex items-center justify-between text-sm gap-2">
+                <span className="text-slate-700 min-w-0 truncate">{x.person}{x.date ? ` · ${x.date}` : ''}{x.note ? ` · ${x.note}` : ''}</span>
+                <span className="flex items-center gap-2 shrink-0">
+                  <span className="font-semibold text-slate-800">{fmt(x.amount)} ر.س</span>
+                  <button onClick={() => onRemoveSettlement(x.id)} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** مصاريف كل يوم: المجموع، وتحته كل نوع (فطور، غداء، ماء…). */
+function TripDays({ trip }) {
+  const days = tripDays(trip);
+  const cats = tripCats(trip);
+  if (!days.length) return null;
+  return (
+    <div className={cardCls} data-testid="trip-days">
+      <div className="text-sm font-semibold text-slate-700">مصاريف الأيام</div>
+      <div className="text-xs text-slate-400 mt-0.5 mb-3">كم صُرف كل يوم، وعلى ماذا.</div>
+      <div className="space-y-2.5">
+        {days.map((d) => (
+          <div key={d.day} className="border border-slate-100 rounded-xl p-3">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-slate-800">{d.day}</span>
+              <span className="font-extrabold text-red-600 tabular-nums">{fmt(d.total)} ر.س</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {Object.entries(d.cats).map(([c, v]) => (
+                <span key={c} className="text-[11px] bg-slate-50 text-slate-600 rounded-md px-2 py-1">{c} {fmt(v)}</span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      {cats.length > 1 && (
+        <div className="mt-3 pt-3 border-t border-slate-100">
+          <div className="text-xs font-semibold text-slate-500 mb-2">للسفرة كلها</div>
+          <div className="flex flex-wrap gap-1.5">
+            {cats.map((c) => (
+              <span key={c.cat} className="text-[11px] bg-brand-50 text-brand-800 rounded-md px-2 py-1">{c.cat} {fmt(c.total)}</span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TripItems({ title, subtitle, items, tone, onAdd, onRemove }) {
   const list = items || [];
   const total = sumAmt(list);
@@ -1510,7 +1628,14 @@ function TripItems({ title, subtitle, items, tone, onAdd, onRemove }) {
         <div className="space-y-2">
           {list.map((it) => (
             <div key={it.id} className="flex items-center justify-between text-sm border-b border-slate-50 pb-2 gap-2">
-              <span className="text-slate-700 font-medium min-w-0 truncate">{it.name}</span>
+              <span className="min-w-0">
+                <span className="text-slate-700 font-medium block truncate">{it.name}</span>
+                {(it.day || it.cat || it.paidBy) && (
+                  <span className="text-[11px] text-slate-400 block truncate">
+                    {[it.day, it.cat, it.paidBy ? `دفع ${it.paidBy}` : ''].filter(Boolean).join(' · ')}
+                  </span>
+                )}
+              </span>
               <span className="flex items-center gap-2 shrink-0">
                 <span className={`font-semibold ${color}`}>{fmt(it.amount)} ر.س</span>
                 <button onClick={() => onRemove(it.id)} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>
@@ -3238,9 +3363,31 @@ export default function App() {
   /** بنود السفرة: كل بند باسمه ومبلغه، عشان تعرف كل سفرة وين راحت فلوسها. */
   const addTripItem = (key) => {
     if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب اسم البند' }); return; }
+    if (key === 'expenseItems') {
+      // اليوم والتصنيف ومن دفع: بهم يعرف كم لكل واحدٍ من الرفقة
+      const item = makeExpense({ id: uid(), name: form.name, amount: form.amount, day: form.day, cat: form.cat, paidBy: form.paidBy });
+      patchTrip({
+        expenseItems: [...(trip.expenseItems || []), item],
+        ...(item.paidBy && !(trip.people || []).includes(item.paidBy) ? { people: [...new Set([...(trip.people || []), item.paidBy])] } : {}),
+      });
+      closeModal();
+      return;
+    }
     patchTrip({ [key]: [...(trip[key] || []), { id: uid(), name: form.name.trim(), amount: Number(form.amount || 0) }] });
     closeModal();
   };
+  const addTripPerson = (name) => {
+    const n = String(name || '').trim();
+    if (!n || tripPeople(trip).includes(n)) return;
+    patchTrip({ people: [...(trip.people || []), n] });
+  };
+  const addTripSettlement = () => {
+    if (!form.person) { setForm({ ...form, error: 'اختر من أعطيته' }); return; }
+    if (!(Number(form.amount) > 0)) { setForm({ ...form, error: 'اكتب المبلغ' }); return; }
+    patchTrip({ settlements: [...(trip.settlements || []), makeSettlement({ id: uid(), person: form.person, amount: form.amount, date: form.date, note: form.note })] });
+    closeModal();
+  };
+  const removeTripSettlement = (sid) => patchTrip({ settlements: (trip.settlements || []).filter((x) => x.id !== sid) });
   const removeTripItem = (key, itemId) => patchTrip({ [key]: (trip[key] || []).filter((x) => x.id !== itemId) });
   const removeTrip = (tid) => {
     const gone = data.trips.find((t) => t.id === tid);
@@ -8992,10 +9139,27 @@ export default function App() {
               <MiniStat label="الصافي" value={fmt(tripNet(trip))} icon={Wallet} tone={tripNet(trip) >= 0 ? 'brand' : 'red'} />
             </div>
 
+            <TripCrew
+              trip={trip}
+              onSettle={(person, owed) => { setForm({ person, amount: owed > 0 ? owed : '', date: trip.date || '' }); setModal('tripSettle'); }}
+              onAddPerson={addTripPerson}
+              onRemoveSettlement={(sid) => askConfirm('حذف هذه التسوية؟', () => removeTripSettlement(sid))}
+              onCopy={() => { try { navigator.clipboard?.writeText(tripShareText(trip, fmt)); } catch { /* لا شيء */ } }} />
+
+            <div className="h-3" />
+
+            <TripDays trip={trip} />
+
+            <div className="h-3" />
+
             <TripItems
-              title="المصروفات" subtitle="كل بند باسمه: أكل، سكن، مواصلات…"
+              title="المصروفات" subtitle="كل بند باسمه: أكل، سكن، مواصلات… ومن دفعه ولأي يوم"
               items={trip.expenseItems} tone="red"
-              onAdd={() => { setForm({ itemKey: 'expenseItems' }); setModal('addTripItem'); }}
+              onAdd={() => {
+                const last = (trip.expenseItems || []).filter((x) => x.day).slice(-1)[0];
+                setForm({ itemKey: 'expenseItems', day: last?.day || '', cat: '', paidBy: '' });
+                setModal('addTripItem');
+              }}
               onRemove={(id) => removeTripItem('expenseItems', id)} />
 
             <div className="h-3" />
@@ -11482,6 +11646,33 @@ export default function App() {
         </Modal>
       )}
 
+      {modal === 'tripSettle' && trip && (() => {
+        const b = tripBalances(trip).find((x) => x.name === form.person);
+        return (
+          <Modal title={`سدّدت لـ ${form.person || ''}`} onClose={closeModal}>
+            {b && (
+              <div className="bg-slate-50 rounded-xl p-3 mb-4 text-xs text-slate-600 leading-6">
+                دفع {fmt(b.paid)} · أُعطي {fmt(b.settled)} · الباقي له <b className="text-slate-800">{fmt(b.owed)}</b> ر.س
+              </div>
+            )}
+            <Field label="المبلغ الذي أعطيته (ر.س)" hint="المبلغ يبدأ بالباقي له كاملًا، وغيّره لو أعطيته جزءًا.">
+              <input type="number" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value, error: '' })} />
+            </Field>
+            <Field label="التاريخ (هـ)">
+              <input className={inputCls} value={form.date || ''} onChange={(e) => setForm({ ...form, date: e.target.value })} placeholder="1448/06/04" />
+            </Field>
+            <Field label="ملاحظة">
+              <input className={inputCls} value={form.note || ''} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="مثال: حساب اليوم الأول" />
+            </Field>
+            {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+            <div className="flex gap-2 mt-5">
+              <button className={btnPrimary + ' flex-1'} onClick={addTripSettlement}>سجّل التسوية</button>
+              <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+            </div>
+          </Modal>
+        );
+      })()}
+
       {modal === 'addTripItem' && (
         <Modal title={form.itemKey === 'expenseItems' ? 'مصروف جديد' : 'إيراد جديد'} onClose={closeModal}>
           <Field label="البند" hint={form.itemKey === 'expenseItems' ? 'مثال: أكل، سكن، مواصلات، تذاكر' : 'مثال: اشتراكات المشاركين، دعم'}>
@@ -11491,6 +11682,41 @@ export default function App() {
           <Field label="المبلغ (ر.س)">
             <input type="number" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
           </Field>
+          {form.itemKey === 'expenseItems' && trip && (() => {
+            const days = [...new Set((trip.expenseItems || []).map((x) => x.day).filter(Boolean))];
+            const next = `اليوم ${days.length + 1}`;
+            const chip = (on) => `px-3 py-1.5 rounded-lg text-xs font-semibold border ${on ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`;
+            return (
+              <>
+                <Field label="اليوم">
+                  <input className={inputCls} value={form.day || ''} onChange={(e) => setForm({ ...form, day: e.target.value })} placeholder="اليوم الأول" />
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {[...days, ...(days.includes(next) ? [] : [next])].map((d) => (
+                      <button key={d} type="button" className={chip(form.day === d)} onClick={() => setForm({ ...form, day: d })}>{d}</button>
+                    ))}
+                  </div>
+                </Field>
+                <Field label="النوع">
+                  <div className="flex flex-wrap gap-1.5">
+                    {TRIP_CATS.map((c) => (
+                      <button key={c} type="button" className={chip(form.cat === c)}
+                        onClick={() => setForm({ ...form, cat: form.cat === c ? '' : c, name: form.name || (c === 'أخرى' ? '' : c) })}>{c}</button>
+                    ))}
+                  </div>
+                </Field>
+                <Field label="من دفع؟" hint="اتركه فاضيًا لو دفعته أنت أو من صندوق السفرة.">
+                  <div className="flex flex-wrap gap-1.5">
+                    <button type="button" className={chip(!form.paidBy)} onClick={() => setForm({ ...form, paidBy: '' })}>أنا / الصندوق</button>
+                    {tripPeople(trip).map((n) => (
+                      <button key={n} type="button" className={chip(form.paidBy === n)} onClick={() => setForm({ ...form, paidBy: n })}>{n}</button>
+                    ))}
+                  </div>
+                  <input className={inputCls + ' mt-2'} value={tripPeople(trip).includes(form.paidBy) ? '' : (form.paidBy || '')}
+                    onChange={(e) => setForm({ ...form, paidBy: e.target.value })} placeholder="أو اكتب اسمًا جديدًا" />
+                </Field>
+              </>
+            );
+          })()}
           {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
           <div className="flex gap-2 mt-5">
             <button className={btnPrimary + ' flex-1'} onClick={() => addTripItem(form.itemKey)}>إضافة</button>

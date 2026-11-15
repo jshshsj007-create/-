@@ -67,6 +67,7 @@ node tests/place.test.mjs
 node tests/receipt.test.mjs
 node tests/nadi.test.mjs
 node tests/cash.test.mjs
+node tests/trip.test.mjs
 node tests/perms.test.mjs
 node tests/login.test.mjs
 node tests/visits.test.mjs
