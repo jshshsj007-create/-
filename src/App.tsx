@@ -46,7 +46,7 @@ import { DEFAULT_WUDU_STEPS, wuduDone, wuduPercent, wuduMastered, wuduStats } fr
 import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 import PdfFirstPage from './pdfview.jsx';
 import { say } from './adad.js';
-import { TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, nextDay, currentDay, tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement, tripShareText } from './trip.js';
+import { TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, nextDay, currentDay, tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement } from './trip.js';
 import { weekReport } from './report.js';
 import { pushStatus, PUSH_TEXTS, HOME_STEPS, readEnv, currentSub, enablePush, disablePush, healPush } from './notify.js';
 import {
@@ -1534,9 +1534,8 @@ function TripManagers({ trip, users, onChange }) {
  * يحاسبهم صاحب الفريق بعد كل يومٍ أو بعد فترة، فالتسوية تُسجَّل وقت ما تقع
  * وتنقص الباقي، والمصروف نفسه يبقى في السفرة كما هو.
  */
-function TripCrew({ trip, onSettle, onAddPerson, onRemoveSettlement, onCopy }) {
+function TripCrew({ trip, onSettle, onAddPerson, onRemoveSettlement }) {
   const [name, setName] = useState('');
-  const [copied, setCopied] = useState('');
   const rows = tripBalances(trip);
   const owed = tripOwedTotal(trip);
   const settlements = trip.settlements || [];
@@ -1573,11 +1572,6 @@ function TripCrew({ trip, onSettle, onAddPerson, onRemoveSettlement, onCopy }) {
                 {b.owed > 0 && (
                   <button onClick={() => onSettle(b.name, b.owed)} className="mt-2 text-xs font-bold text-white bg-brand-600 px-3 py-2 rounded-lg">سدّدت له</button>
                 )}
-                {/* حسابه هو وحده: لا مجموع المصروفات ولا ما دفعه غيره */}
-                <button data-testid={`copy-${b.name}`} onClick={() => { onCopy(b.name); setCopied(b.name); setTimeout(() => setCopied(''), 1800); }}
-                  className="mt-2 text-xs font-semibold text-brand-700 bg-brand-50 px-3 py-2 rounded-lg">
-                  {copied === b.name ? 'تم النسخ ✓' : 'انسخ حسابه'}
-                </button>
               </div>
               {b.owed <= 0 && b.paid === 0 && (
                 <button onClick={() => onSettle(b.name, 0)} className="mt-2 text-xs font-semibold text-brand-700 bg-brand-50 px-3 py-2 rounded-lg">سلفة</button>
@@ -9210,8 +9204,7 @@ export default function App() {
               trip={trip}
               onSettle={(person, owed) => { setForm({ person, amount: owed > 0 ? owed : '', date: trip.date || '' }); setModal('tripSettle'); }}
               onAddPerson={addTripPerson}
-              onRemoveSettlement={(sid) => askConfirm('حذف هذه التسوية؟', () => removeTripSettlement(sid))}
-              onCopy={(person) => { try { navigator.clipboard?.writeText(tripShareText(trip, person, fmt)); } catch { /* لا شيء */ } }} />
+              onRemoveSettlement={(sid) => askConfirm('حذف هذه التسوية؟', () => removeTripSettlement(sid))} />
 
             <div className="h-3" />
 

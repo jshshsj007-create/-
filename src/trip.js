@@ -128,20 +128,3 @@ export const makeSettlement = ({ id, person, amount, date, note, how }) => ({
   ...(str(how) ? { how: str(how) } : {}),
   ...(str(note) ? { note: str(note) } : {}),
 });
-
-/**
- * نصٌّ يُرسل لواحدٍ من الشباب: حسابه هو وحده.
- *
- * لا مجموع المصروفات ولا ما دفعه غيره: كل واحدٍ يعرف ما دفع وما أخذ وما بقي له،
- * وما عدا ذلك ليس من شأنه. ولهذا لا يوجد نصٌّ واحد للجميع.
- */
-export const tripShareText = (trip, person, fmt = (n) => String(n)) => {
-  const b = tripBalances(trip).find((x) => x.name === person);
-  if (!b) return '';
-  return [
-    `حسابك في ${trip?.name || 'السفرة'}`,
-    `دفعتَ: ${fmt(b.paid)} ر.س`,
-    `استلمتَ: ${fmt(b.settled)} ر.س`,
-    b.owed > 0 ? `الباقي لك: ${fmt(b.owed)} ر.س` : b.owed < 0 ? `أُعطيتَ زيادة: ${fmt(-b.owed)} ر.س` : 'حسابك مسدَّد',
-  ].join('\n');
-};
