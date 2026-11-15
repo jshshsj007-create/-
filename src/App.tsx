@@ -1491,6 +1491,96 @@ function FaidAnalysis({ breakdown, onDrill }) {
 
 /** بنود سفرة بأسماء حرة (أكل، سكن…) مع مجموعها. */
 /**
+ * إدخالٌ سريع للشباب: النوع ← المبلغ ← حفظ.
+ *
+ * من يُدخِل مصروفه بنفسه لا يريد نموذجًا بخمس خطواتٍ في سوق أو بنزينة. فالدافع هو نفسه (ويُغيَّر
+ * بضغطة إن دفع عنه غيره)، واليوم هو آخر يومٍ كُتب، والنوع بضغطةٍ كبيرة، والمؤشر ينتقل وحده إلى
+ * المبلغ، وبعد الحفظ تفرغ الشاشة جاهزةً لما بعده بلا إغلاق.
+ */
+function TripQuickEntry({ trip, me, onSave }) {
+  const crew = [...new Set([...TRIP_CREW, ...tripPeople(trip)])];
+  const mine = me?.name || '';
+  const [cat, setCat] = useState('');
+  const [sub, setSub] = useState('');
+  const [other, setOther] = useState('');
+  const [amount, setAmount] = useState('');
+  const [payer, setPayer] = useState(mine);
+  const [pickPayer, setPickPayer] = useState(false);
+  const [pickDay, setPickDay] = useState(false);
+  const [day, setDay] = useState('');
+  const [done, setDone] = useState('');
+  const theDay = day || currentDay(trip);
+  const days = [...new Set((trip.expenseItems || []).map((x) => x.day).filter((d) => d && d !== PRE_DAY))];
+  const next = nextDay(trip);
+  const ready = Boolean(cat) && Number(amount) > 0 && (cat !== 'أخرى' || other.trim());
+  const focusAmount = () => setTimeout(() => document.getElementById('quick-amount')?.focus(), 60);
+  const big = (on) => `rounded-xl py-4 text-base font-bold border ${on ? 'bg-brand-600 border-brand-600 text-white' : 'border-slate-200 text-slate-700 bg-white'}`;
+  const chip = (on) => `px-3.5 py-2 rounded-lg text-sm font-semibold border ${on ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`;
+  const save = () => {
+    if (!ready) return;
+    const name = cat === 'أخرى' ? other.trim() : (sub || cat);
+    onSave({ name, amount, cat, sub: cat === 'أكل وشرب' ? sub : '', paidBy: payer, day: theDay });
+    setDone(`${name} ${fmt(Number(amount))} ر.س`);
+    setTimeout(() => setDone(''), 2500);
+    setCat(''); setSub(''); setOther(''); setAmount('');
+  };
+  return (
+    <div className={cardCls} data-testid="quick-entry">
+      <div className="text-sm font-semibold text-slate-700 mb-3">وش شريت؟</div>
+      <div className="grid grid-cols-2 gap-2">
+        {TRIP_CATS.map((c) => (
+          <button key={c} type="button" data-testid={`q-${c}`} className={big(cat === c)}
+            onClick={() => { setCat(c); setSub(''); if (c !== 'أخرى') focusAmount(); }}>{c}</button>
+        ))}
+      </div>
+      {cat === 'أكل وشرب' && (
+        <div className="flex flex-wrap gap-1.5 mt-2" data-testid="q-subs">
+          {FOOD_SUBS.map((c) => (
+            <button key={c} type="button" className={chip(sub === c)} onClick={() => { setSub(sub === c ? '' : c); focusAmount(); }}>{c}</button>
+          ))}
+        </div>
+      )}
+      {cat === 'أخرى' && (
+        <input className={inputCls + ' mt-2'} value={other} onChange={(e) => setOther(e.target.value)} placeholder="اكتب وش شريت بالضبط" autoFocus />
+      )}
+
+      <div className="text-sm font-semibold text-slate-700 mt-4 mb-2">كم؟</div>
+      <input id="quick-amount" type="number" inputMode="numeric" className={inputCls + ' !text-2xl !py-4 text-center font-bold'}
+        value={amount} onChange={(e) => setAmount(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') save(); }} placeholder="٠" />
+
+      <button type="button" data-testid="q-save" disabled={!ready} onClick={save}
+        className="w-full mt-3 rounded-xl py-4 text-lg font-extrabold text-white bg-brand-600 disabled:opacity-30">حفظ</button>
+      {done && <div className="text-center text-green-600 font-bold text-sm mt-2" data-testid="q-done">تم ✓ {done}</div>}
+
+      <div className="mt-4 pt-3 border-t border-slate-100 space-y-2 text-sm">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-slate-500">الدافع: <b className="text-slate-800">{payer || '—'}</b>{payer && payer === mine ? ' (أنت)' : ''}</span>
+          <button type="button" className="text-xs font-semibold text-brand-700" onClick={() => setPickPayer(!pickPayer)}>{pickPayer ? 'تم' : 'غيري'}</button>
+        </div>
+        {pickPayer && (
+          <div className="flex flex-wrap gap-1.5">
+            {[mine, ...crew.filter((n) => n !== mine)].filter(Boolean).map((n) => (
+              <button key={n} type="button" className={chip(payer === n)} onClick={() => { setPayer(n); setPickPayer(false); }}>{n === mine ? `${n} (أنا)` : n}</button>
+            ))}
+          </div>
+        )}
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-slate-500">اليوم: <b className="text-slate-800">{theDay}</b></span>
+          <button type="button" className="text-xs font-semibold text-brand-700" onClick={() => setPickDay(!pickDay)}>{pickDay ? 'تم' : 'غيّر'}</button>
+        </div>
+        {pickDay && (
+          <div className="flex flex-wrap gap-1.5">
+            <button type="button" className={chip(theDay === PRE_DAY)} onClick={() => { setDay(PRE_DAY); setPickDay(false); }}>{PRE_DAY}</button>
+            {days.map((d) => <button key={d} type="button" className={chip(theDay === d)} onClick={() => { setDay(d); setPickDay(false); }}>{d}</button>)}
+            {!days.includes(next) && <button type="button" className={chip(theDay === next) + ' border-dashed'} onClick={() => { setDay(next); setPickDay(false); }}>+ يوم جديد</button>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
  * من يدير هذه السفرة؟
  *
  * صاحب الفريق قد لا يسافر، فيختار حسابًا من حساباته يرى كل شيء في هذه السفرة وحدها
@@ -9222,13 +9312,17 @@ export default function App() {
                 <div className="bg-brand-50 border border-brand-100 rounded-xl px-3.5 py-3 mb-3 text-xs text-brand-800 leading-6">
                   أنت تُدخِل مصروفات هذه السفرة: تضيف المصروف باسمك، وترى ما أدخلتَه أنت فقط. الحساب والتسويات عند صاحب الفريق.
                 </div>
+                <TripQuickEntry
+                  trip={trip} me={effectiveUser}
+                  onSave={(f) => {
+                    const item = makeExpense({ id: uid(), name: f.name, amount: f.amount, day: f.day, cat: f.cat, paidBy: f.paidBy, sub: f.sub, by: effectiveUser?.id });
+                    patchTrip({ expenseItems: [...(trip.expenseItems || []), item] });
+                  }} />
+                <div className="h-3" />
                 <TripItems
                   title="ما أدخلتَه" subtitle="مصروفاتٌ أضفتَها أنت. لا تُعدَّل ولا تُحذف من هنا."
                   items={trip.expenseItems} tone="red"
-                  onAdd={() => {
-                    setForm({ itemKey: 'expenseItems', day: currentDay(trip), cat: '', sub: '', paidBy: '' });
-                    setModal('addTripItem');
-                  }}
+                  onAdd={null}
                   onRemove={null} />
               </>
             ) : (<>
