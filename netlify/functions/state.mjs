@@ -17,7 +17,7 @@ import { runBackup, backupStatus, readSnapshot, writeUndo, UNDO } from '../lib/b
 import { hash, verify, isHashed } from '../lib/password.mjs';
 import { loginBlocked, noteFail, clearFails, recordLogin } from '../../src/login.js';
 import { countVisit, dayKey } from '../../src/visits.js';
-import { managedIds, enteredIds, tripsSeen, tripsKept } from '../../src/tripaccess.js';
+import { managedIds, enteredIds, paidIds, payerOf, manages, enters, tripsSeen, tripsKept } from '../../src/tripaccess.js';
 import { moneyChanged, moneyRows, moneyMissing, moneySum, blindMoney, restoreMoney, PART_MONEY } from '../../src/money.js';
 import { vapid, saveSub, dropSub, subsOf, whoHasPush, notifyNewNotices } from '../lib/push.mjs';
 import { TRASH_DAYS } from '../../src/trash.js';
@@ -773,7 +773,7 @@ const guard = (incoming, current, me) => {
   // والسفرات: من يعدّلها، ومن يديرها، وما لا يُقبل من غيرهما — ولا يعيّن أحدٌ نفسه مسؤولًا
   out.trips = tripsKept(out.trips, current?.trips, me, allowed(me, 'السفرات'), seesMoney(me));
   // وما حُجب عنه من المال يُردّ، وإلا محته حفظةُ حضورٍ من جهازٍ ما رآه
-  return seesMoney(me) ? out : restoreMoney(out, current, moneyFieldsFor(me), [...managedIds(current?.trips, me), ...enteredIds(current?.trips, me)]);
+  return seesMoney(me) ? out : restoreMoney(out, current, moneyFieldsFor(me), [...managedIds(current?.trips, me), ...enteredIds(current?.trips, me), ...paidIds(current?.trips, me)]);
 };
 
 /**
@@ -1403,7 +1403,12 @@ export default async (req) => {
 
   // رفع صورة برنامج: ترجع معرّفًا، وهو وحده اللي ينحفظ في البيانات
   if (op === 'img_put') {
-    if (!allowed(me, 'البرامج') && !allowed(me, 'الإعداد (المسابقات)')) return json({ error: 'forbidden' }, 403);
+    if (!allowed(me, 'البرامج') && !allowed(me, 'الإعداد (المسابقات)')) {
+      // وصورة الحوالة: لمن له في السفرات شأنٌ — دافعٌ مربوط أو مُدخِل أو مسؤول أو صاحب صلاحيتها
+      const trips = (await readDoc())?.data?.trips || [];
+      const tripUser = allowed(me, 'السفرات') || Boolean(payerOf(me)) || trips.some((t) => manages(t, me) || enters(t, me));
+      if (!tripUser) return json({ error: 'forbidden' }, 403);
+    }
     const raw = String(body.data || '');
     if (raw.length > IMG_CAP || !parseDataUrl(raw)) return json({ error: 'bad_image' }, 400);
     // المعرّف من المحتوى: نفس الصورة ما تتخزّن مرتين، والعنوان يبقى صالحًا للتخزين

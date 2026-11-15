@@ -30,7 +30,8 @@ d.users = [...d.users,
   { id: 'u2', name: 'خالد', username: 'khalid', password: 'pw2', role: 'مسؤول فيض', permissions: ['السفرات'], status: 'نشط' },
   { id: 'u3', name: 'نورة', username: 'noura', password: 'pw3', role: 'مسجل حضور', permissions: [], status: 'نشط' },
   { id: 'u7', name: 'تركي العريني', username: 'turki', password: 'pw7', role: 'مسجل حضور', permissions: [], payerName: 'تركي', status: 'نشط' },
-  { id: 'u4', name: 'العلوان', username: 'alawan', password: 'pw4', role: 'مسجل حضور', permissions: [], status: 'نشط' }];
+  { id: 'u4', name: 'العلوان', username: 'alawan', password: 'pw4', role: 'مسجل حضور', permissions: [], status: 'نشط' },
+  { id: 'u9', name: 'فهد', username: 'fahd', password: 'pw9', role: 'مسجل حضور', permissions: [], status: 'نشط' }];
 r = await call({ op: 'push', token: adminTok, baseRev: rev, data: d });
 check('المدير يضيف الحسابات', r.status === 200, JSON.stringify(r.body).slice(0, 200)); rev = r.body.rev;
 
@@ -184,11 +185,39 @@ check('وتسوياته هو، ولا شباب ولا إيراد ولا مسؤو
 check('ومال البرامج وفيض محجوب عنه', td.faidAdjustments.length === 0 && !JSON.stringify(td.programs).includes('321'));
 const tk = JSON.parse(JSON.stringify(td));
 tk.trips[0].expenseItems.push({ id: 'fake', name: 'مزوّر', amount: 9999, paidBy: 'تركي' });
-tk.trips[0].settlements.push({ id: 'fakeS', person: 'تركي', amount: 8888 });
+tk.trips[0].settlements.push({ id: 'fakeS', person: 'العلوان', amount: 8888 });
+tk.trips[0].incomeItems.push({ id: 'fakeI', name: 'مزوّر', amount: 5 });
 r = await call({ op: 'push', token: turki, baseRev: (await call({ op: 'pull', token: turki, sinceRev: 0 })).body.rev, data: tk });
 after = (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data.trips.find((t) => t.id === 't1');
-check('ولا يكتب شيئًا: القراءة فقط', !after.expenseItems.some((x) => x.id === 'fake') && !after.settlements.some((x) => x.id === 'fakeS'));
+check('ولا يكتب مصروفًا ولا إيرادًا ولا تسوية باسم غيره', !after.expenseItems.some((x) => x.id === 'fake') && !after.settlements.some((x) => x.id === 'fakeS') && !after.incomeItems.some((x) => x.id === 'fakeI'));
 check('وبقية حسابات الشباب باقية عند المدير', after.expenseItems.some((x) => x.paidBy === 'العلوان') && after.expenseItems.length >= 4);
+
+// ---- «سدّد لي»: يسجّل استلامه بنفسه ومعه صورة الحوالة ----
+const IMG = 'data:image/jpeg;base64,' + Buffer.from('fake-jpeg-bytes-for-test').toString('base64');
+r = await call({ op: 'img_put', token: turki, data: IMG });
+check('الدافع المربوط يرفع صورة الحوالة', r.status === 200 && Boolean(r.body.id), JSON.stringify(r.body));
+const slipId = r.body.id;
+const fahdTok = await login('fahd', 'pw9');
+r = await call({ op: 'img_put', token: fahdTok, data: IMG + 'AA' });
+check('ومن لا شأن له في السفرات لا يرفع', r.status === 403, String(r.status));
+let tk2 = (await call({ op: 'pull', token: turki, sinceRev: 0 })).body;
+const tkd = JSON.parse(JSON.stringify(tk2.data));
+tkd.trips[0].settlements.push({ id: 'rcv1', person: 'تركي', amount: 250, how: 'تحويل', receipt: { ref: slipId, name: 'h.jpg', type: 'image/jpeg' }, by: 'someone-else', self: false });
+tkd.trips[0].settlements.push({ id: 'rcv2', person: 'العلوان', amount: 777 });
+r = await call({ op: 'push', token: turki, baseRev: tk2.rev, data: tkd });
+after = (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data.trips.find((t) => t.id === 't1');
+const rc = after.settlements.find((x) => x.id === 'rcv1');
+check('يُقبل استلامه باسمه ومعه الصورة', Boolean(rc) && rc.amount === 250 && rc.receipt?.ref === slipId, JSON.stringify(rc));
+check('ويُوسَم «سجّله بنفسه» باسم حسابه هو لا ما ادّعاه', rc.self === true && rc.by === 'u7', JSON.stringify(rc));
+check('ولا يُقبل باسم غيره', !after.settlements.some((x) => x.id === 'rcv2'));
+check('وتسوية كتبها المدير باقية', after.settlements.some((x) => x.id === 'sx'));
+tk2 = (await call({ op: 'pull', token: turki, sinceRev: 0 })).body;
+const tkd2 = JSON.parse(JSON.stringify(tk2.data));
+tkd2.trips[0].settlements = tkd2.trips[0].settlements.filter((x) => x.id !== 'rcv1');
+r = await call({ op: 'push', token: turki, baseRev: tk2.rev, data: tkd2 });
+after = (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data.trips.find((t) => t.id === 't1');
+check('ويحذف ما كتبه هو إن أخطأ', !after.settlements.some((x) => x.id === 'rcv1'));
+check('وما كتبه المدير لا يحذفه ولو أرسل قائمةً بدونه', after.settlements.some((x) => x.id === 'sx'));
 
 // ---- المُدخِل يصحّح ما أدخله هو ----
 r = await call({ op: 'pull', token: alawan, sinceRev: 0 });

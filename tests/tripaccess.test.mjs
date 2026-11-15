@@ -238,13 +238,40 @@ test('حسابه من معاينته يطابق الحقيقة: دفع ١٩٠ و
   assert.deepEqual(row, { paid: 190, settled: 100, owed: 90 });
 });
 
-test('الدافع المربوط يقرأ فقط: لا يضيف ولا يعدّل ولا يسدّد', () => {
+test('الدافع المربوط لا يضيف مصروفًا ولا يعدّل، ولا يكتب تسوية باسم غيره', () => {
   const ls = ledger();
   const mine = tripsSeen(ls, blind(ls), turki, false);
-  const inc = [{ ...mine[0], expenseItems: [...mine[0].expenseItems, { id: 'n', name: 'مزوّر', amount: 9999, paidBy: 'تركي' }], settlements: [{ id: 'x', person: 'تركي', amount: 5000 }] }];
+  const inc = [{ ...mine[0], expenseItems: [...mine[0].expenseItems, { id: 'n', name: 'مزوّر', amount: 9999, paidBy: 'تركي' }], settlements: [{ id: 'x', person: 'العلوان', amount: 5000 }] }];
   const kept = tripsKept(inc, ls, turki, false);
   assert.deepEqual(kept.find((t) => t.id === 't1'), ls[0], 'السفرة كما كانت');
   assert.equal(kept.length, 2, 'وسفراته الأخرى باقية');
+});
+
+test('«سدّد لي»: يسجّل استلامه باسمه، موسومًا باسم حسابه ومعه الصورة، ولا يزوّر من كتبه', () => {
+  const ls = ledger();
+  const mine = tripsSeen(ls, blind(ls), turki, false)[0];
+  const inc = [{ ...mine, settlements: [...mine.settlements, { id: 'r1', person: 'تركي', amount: 250, how: 'تحويل', by: 'غيري', self: false, receipt: { ref: 'abcDEF123', name: 'h.jpg', type: 'image/jpeg' } }] }];
+  const t = tripsKept(inc, ls, turki, false).find((x) => x.id === 't1');
+  const r1 = t.settlements.find((x) => x.id === 'r1');
+  assert.equal(r1.amount, 250);
+  assert.equal(r1.self, true);
+  assert.equal(r1.by, turki.id);
+  assert.equal(r1.receipt.ref, 'abcDEF123');
+  assert.equal(t.expenseItems.length, ls[0].expenseItems.length, 'ولا مصروف');
+});
+
+test('«سدّد لي»: مرجعُ صورةٍ مشوَّه يُسقَط، والمبلغ الصفر يُردّ، وما كتبه هو يحذفه وغيره لا', () => {
+  const ls = ledger();
+  const mine = tripsSeen(ls, blind(ls), turki, false)[0];
+  const bad = [{ ...mine, settlements: [...mine.settlements, { id: 'b1', person: 'تركي', amount: 30, receipt: { ref: '../x', name: 'n', type: 't' } }, { id: 'z', person: 'تركي', amount: 0 }] }];
+  const t1 = tripsKept(bad, ls, turki, false).find((x) => x.id === 't1');
+  assert.equal(t1.settlements.find((x) => x.id === 'b1').receipt, undefined);
+  assert.ok(!t1.settlements.some((x) => x.id === 'z'));
+  // يحذف ما كتبه هو
+  const after = tripsKept([{ ...mine, settlements: mine.settlements }], t1 ? [t1, ...ls.slice(1)] : ls, turki, false).find((x) => x.id === 't1');
+  assert.ok(!after.settlements.some((x) => x.id === 'b1'), 'حذف ما كتبه هو');
+  // وتسوية المدير القديمة تبقى
+  assert.ok(ls[0].settlements.every((s) => after.settlements.some((y) => y.id === s.id)));
 });
 
 test('من لا اسم له في السفرات ولا إدخال: لا شيء يصله، ومن جمع الدور والاسم يرى الاثنين', () => {

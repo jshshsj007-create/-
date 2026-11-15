@@ -47,6 +47,9 @@ export const paysIn = (trip, me) => {
     || (trip?.people || []).some((x) => String(x ?? '').trim() === n);
 };
 
+/** معرّفات السفرات التي له فيها حساب كدافعٍ مربوط، وليس مسؤولًا عنها ولا مُدخِلًا. */
+export const paidIds = (trips, me) => (trips || []).filter((t) => paysIn(t, me) && !manages(t, me) && !enters(t, me)).map((t) => t.id);
+
 /**
  * ما يراه المُدخِل أو الدافع المربوط من السفرة: ما يخصّه وحده.
  *
@@ -106,6 +109,43 @@ const cleanItem = (x, me) => ({
 });
 
 /**
+ * «سدّد لي»: ما يكتبه الدافع المربوط عن نفسه حين يصله مالٌ ولا يسجّله المسؤول.
+ *
+ * يضيف استلامًا باسمه هو وحده، وقد يرفق صورة الحوالة ليُرجَع إليها. وهو يُنقص ما يطلبه من الفريق، فلا
+ * مصلحة له في المبالغة، ومع ذلك نحصره: لا يكتب باسم غيره، ولا يمسّ تسويةً لم يكتبها بنفسه، ولا يغيّر
+ * من كتبها. ويحذف ما كتبه هو إن أخطأ.
+ */
+const REF_RE = /^[A-Za-z0-9_-]{6,64}$/;
+const SELF_MAX = 10;
+
+const cleanSettle = (x, me) => ({
+  id: String(x.id),
+  person: payerOf(me),
+  amount: Math.max(0, Number(x.amount) || 0),
+  ...(x.how ? { how: String(x.how).slice(0, 40) } : {}),
+  ...(x.note ? { note: String(x.note).slice(0, 120) } : {}),
+  ...(x.date ? { date: String(x.date).slice(0, 40) } : {}),
+  ...(x.receipt && REF_RE.test(String(x.receipt.ref ?? ''))
+    ? { receipt: { ref: String(x.receipt.ref), name: String(x.receipt.name ?? '').slice(0, 120), type: String(x.receipt.type ?? '').slice(0, 40) } }
+    : {}),
+  self: true,
+  by: me.id,
+});
+
+export const selfSettlements = (old, t, me) => {
+  const n = payerOf(me);
+  const sent = new Set((t?.settlements || []).filter((x) => x?.id).map((x) => x.id));
+  // ما كتبه هو يُحذف إن غاب من الوارد، وما سواه يبقى كما هو
+  const kept = (old?.settlements || []).filter((x) => !(x?.self && x.by === me?.id) || sent.has(x.id));
+  if (!n) return kept;
+  const have = new Set((old?.settlements || []).map((x) => x?.id));
+  const fresh = (t?.settlements || [])
+    .filter((x) => x?.id && !have.has(x.id) && String(x.person ?? '').trim() === n && Number(x.amount) > 0)
+    .slice(0, SELF_MAX).map((x) => cleanSettle(x, me));
+  return [...kept, ...fresh];
+};
+
+/**
  * ما يُقبل من حفظةِ هذا الحساب في السفرات.
  *
  * - المدير: كل شيء، وهو وحده يُقفل السفرة ويفتحها.
@@ -152,7 +192,10 @@ export const tripsKept = (incoming, current, me, hasTripPerm, seesMoney = false)
       });
       const have = new Set((old.expenseItems || []).map((x) => x.id));
       const fresh = (t.expenseItems || []).filter((x) => x?.id && !have.has(x.id)).slice(0, ENTRANT_MAX).map((x) => cleanItem(x, me));
-      out.push({ ...old, expenseItems: [...kept, ...fresh] });
+      out.push({ ...old, expenseItems: [...kept, ...fresh], settlements: selfSettlements(old, t, me) });
+    } else if (!hasTripPerm && paysIn(old, me)) {
+      // دافعٌ مربوط بلا إدخال: لا يكتب إلا «سدّد لي» باسمه
+      out.push({ ...old, settlements: selfSettlements(old, t, me) });
     } else if (hasTripPerm) out.push({ ...t, ...roles });
     else out.push(old);
   }

@@ -1538,16 +1538,34 @@ function TripReport({ trip }) {
  *
  * يراه الدافع المربوط بحسابه، وما يصله من الخادم إلا ما يخصّه، فلا مجموع للسفرة ولا حساب غيره.
  */
-function TripMyAccount({ balance }) {
+function TripMyAccount({ balance, onReceive, received = [], onUndo }) {
   const { paid, settled, owed } = balance;
   // سطرٌ صغير: من يُدخِل في سوقٍ لا يريد بطاقةً تدفع زرّ الإضافة إلى أسفل الشاشة
   return (
-    <div className="mb-3 flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs" data-testid="trip-my-account">
-      <span className="font-bold text-slate-700">حسابك</span>
-      <span className="text-slate-500 tabular-nums">دفعتَ <b className="text-slate-800">{fmt(paid)}</b> · استلمتَ <b className="text-slate-800">{fmt(settled)}</b></span>
-      <span className={`font-extrabold tabular-nums ${owed > 0 ? 'text-amber-700' : owed < 0 ? 'text-red-600' : 'text-green-700'}`}>
-        {owed === 0 ? 'مسدَّد' : `${owed < 0 ? 'زيادة' : 'لك'} ${fmt(Math.abs(owed))}`}
-      </span>
+    <div className="mb-3" data-testid="trip-my-account-wrap">
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs" data-testid="trip-my-account">
+        <span className="font-bold text-slate-700">حسابك</span>
+        <span className="text-slate-500 tabular-nums">دفعتَ <b className="text-slate-800">{fmt(paid)}</b> · استلمتَ <b className="text-slate-800">{fmt(settled)}</b></span>
+        <span className={`font-extrabold tabular-nums ${owed > 0 ? 'text-amber-700' : owed < 0 ? 'text-red-600' : 'text-green-700'}`}>
+          {owed === 0 ? 'مسدَّد' : `${owed < 0 ? 'زيادة' : 'لك'} ${fmt(Math.abs(owed))}`}
+        </span>
+        {onReceive && (
+          <button type="button" data-testid="trip-receive" onClick={() => onReceive(owed)}
+            className="text-[11px] font-bold text-brand-700 bg-brand-50 px-2.5 py-1 rounded-lg">+ سدّد لي</button>
+        )}
+      </div>
+      {received.length > 0 && (
+        <div className="mt-1.5 space-y-1 px-1">
+          {received.map((x) => (
+            <div key={x.id} className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+              <span className="min-w-0 truncate">سدّد لك <b className="text-slate-700">{fmt(x.amount)}</b>{x.how ? ` · ${x.how}` : ''}
+                {x.receipt && <a href={slipSrc(x.receipt)} target="_blank" rel="noreferrer" className="text-brand-700 mr-1.5">📎 الحوالة</a>}
+              </span>
+              {onUndo && <button type="button" onClick={() => onUndo(x.id)} aria-label="حذف" className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 size={13} /></button>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1680,7 +1698,9 @@ function TripCrew({ trip, readOnly, onSettle, onAddPerson, onRemoveSettlement })
           <div className="space-y-1.5">
             {settlements.map((x) => (
               <div key={x.id} className="flex items-center justify-between text-sm gap-2">
-                <span className="text-slate-700 min-w-0 truncate">{x.person}{x.how ? ` · ${x.how}` : ''}{x.date ? ` · ${x.date}` : ''}{x.note ? ` · ${x.note}` : ''}</span>
+                <span className="text-slate-700 min-w-0 truncate">{x.person}{x.how ? ` · ${x.how}` : ''}{x.date ? ` · ${x.date}` : ''}{x.note ? ` · ${x.note}` : ''}
+                  {x.self && <span className="text-[10px] font-bold text-amber-700 bg-amber-50 rounded px-1.5 py-0.5 mr-1.5" data-testid={`self-${x.id}`}>سجّله بنفسه</span>}
+                  {x.receipt && <a href={slipSrc(x.receipt)} target="_blank" rel="noreferrer" data-testid={`slip-${x.id}`} className="text-brand-700 mr-1.5 text-xs">📎 الحوالة</a>}</span>
                 <span className="flex items-center gap-2 shrink-0">
                   <span className="font-semibold text-slate-800">{fmt(x.amount)} ر.س</span>
                   {!readOnly && <button onClick={() => onRemoveSettlement(x.id)} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>}
@@ -3579,6 +3599,30 @@ export default function App() {
     closeModal();
   };
   const removeTripSettlement = (sid) => patchTrip({ settlements: (trip.settlements || []).filter((x) => x.id !== sid) });
+  /**
+   * «سدّد لي»: الدافع المربوط يسجّل ما وصله، ومعه صورة الحوالة ليُرجَع إليها.
+   *
+   * يُسجَّل باسمه وحده (والخادم يتحقق)، فلا ينتظر مسؤولًا ما له خلق يدخل.
+   */
+  const attachSlip = async (file) => {
+    if (!file) return;
+    setForm((f) => ({ ...f, slipBusy: true, error: '' }));
+    try {
+      const dataUrl = await readImage(file, GALLERY);
+      const r = await api('img_put', { token: sess.current.token, data: dataUrl });
+      if (r.status !== 200 || !r.body?.id) throw new Error('x');
+      setForm((f) => ({ ...f, slipBusy: false, slip: { ref: r.body.id, name: String(file.name || '').slice(0, 120), type: dataUrl.slice(5, dataUrl.indexOf(';')) } }));
+    } catch {
+      setForm((f) => ({ ...f, slipBusy: false, error: 'ما وصلت الصورة. جرّب مرة ثانية.' }));
+    }
+  };
+  const saveReceived = () => {
+    const person = (effectiveUser?.payerName || '').trim();
+    if (!person) return;
+    if (!(Number(form.amount) > 0)) { setForm({ ...form, error: 'اكتب المبلغ الذي وصلك' }); return; }
+    patchTrip({ settlements: [...(trip.settlements || []), { ...makeSettlement({ id: uid(), person, amount: form.amount, how: form.how }), self: true, ...(form.slip ? { receipt: form.slip } : {}) }] });
+    closeModal();
+  };
   const openEditExpense = (it) => {
     const known = TRIP_CATS.includes(it.cat);
     // ما كُتب قديمًا بنوعٍ خارج القائمة يُفتح «أخرى» باسمه، فلا يضيع ما كُتب
@@ -9411,7 +9455,12 @@ export default function App() {
                   return (
                     <>
                       {/* حسابه هو: ما دفع وما استلم وما بقي له — وحده */}
-                      {me && <TripMyAccount balance={me} />}
+                      {me && (
+                        <TripMyAccount balance={me}
+                          onReceive={!trip.closed ? (owed) => { setForm({ amount: owed > 0 ? owed : '', how: '', slip: null }); setModal('tripReceive'); } : null}
+                          received={(trip.settlements || []).filter((x) => x.self)}
+                          onUndo={!trip.closed ? removeTripSettlement : null} />
+                      )}
                       <TripItems
                         title={canEnter ? 'مصروفاتك' : 'ما دفعتَه'} subtitle={canEnter ? 'تعدّل وتحذف ما أدخلتَه أنت.' : 'ما دُفع باسمك.'}
                         items={trip.expenseItems} tone="red"
@@ -12002,6 +12051,42 @@ export default function App() {
           </Modal>
         );
       })()}
+
+      {modal === 'tripReceive' && trip && (
+        <Modal title="سدّد لي" onClose={closeModal}>
+          <Field label="المبلغ الذي وصلك (ر.س)">
+            <input type="number" data-testid="receive-amount" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value, error: '' })} />
+          </Field>
+          <Field label="كيف سدّد لك؟">
+            <div className="flex flex-wrap gap-1.5">
+              {HOW.map((h) => (
+                <button key={h} type="button" data-testid={`receive-how-${h}`}
+                  className={`px-4 py-2.5 rounded-lg text-sm font-semibold border ${form.how === h ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`}
+                  onClick={() => setForm({ ...form, how: form.how === h ? '' : h })}>{h}</button>
+              ))}
+            </div>
+          </Field>
+          <Field label="صورة الحوالة" hint="ارفقها ليُرجع إليها بعدين.">
+            {form.slip ? (
+              <div className="flex items-center gap-3">
+                <img src={slipSrc(form.slip)} alt="" className="w-16 h-16 object-cover rounded-lg border border-slate-200" data-testid="receive-slip-preview" />
+                <button type="button" className="text-xs text-red-500" onClick={() => setForm({ ...form, slip: null })}>إزالة</button>
+              </div>
+            ) : (
+              <label className="block">
+                <span className={btnGhost + ' inline-block cursor-pointer'}>{form.slipBusy ? 'جاري الرفع...' : 'اختر صورة'}</span>
+                <input type="file" accept="image/*" data-testid="receive-slip" className="hidden" disabled={Boolean(form.slipBusy)}
+                  onChange={(e) => { attachSlip(e.target.files?.[0]); e.target.value = ''; }} />
+              </label>
+            )}
+          </Field>
+          {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+          <div className="flex gap-2 mt-5">
+            <button className={btnPrimary + ' flex-1'} data-testid="receive-save" disabled={Boolean(form.slipBusy)} onClick={saveReceived}>سجّل</button>
+            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+          </div>
+        </Modal>
+      )}
 
       {modal === 'addTripItem' && (() => {
         const isExp = form.itemKey === 'expenseItems';
