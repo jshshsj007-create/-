@@ -1968,6 +1968,9 @@ export default function App() {
   const revRef = useRef(0);
   const baseRef = useRef(null);   // آخر نسخة متفق عليها مع الخادم — مرجع الدمج
   const queueRef = useRef(null);  // آخر حالة تنتظر الحفظ
+  /** هل دخلنا المشارك سفرته مباشرةً في هذه الجلسة؟ وما بطاقات رئيسيته؟ (يُحدَّث عند الرسم) */
+  const landedRef = useRef(false);
+  const tilesRef = useRef([]);
   const busyRef = useRef(false);
   const cloudOn = cloudMode === 'cloud';
 
@@ -2219,6 +2222,28 @@ export default function App() {
       flush();
     }, 700);
   }, [cloudOn, flush]);
+
+  /**
+   * المشارك في سفرةٍ يدخل سفرته مباشرةً: بلا رئيسيةٍ ولا ضغطة.
+   *
+   * من لا يملك «السفرات» ولا رئيسيته فيها غير بطاقتها، فما له في الرئيسية شغل: يفتح التطبيق فتظهر
+   * سفرته المفتوحة. ومن عنده غيرها يبقى في رئيسيته، فلا نخفي عنه شيئًا. ومرةً واحدة في الجلسة: إذا
+   * رجع إلى الرئيسية بيده فلا نعيده قسرًا.
+   *
+   * وهذا قبل `if (loading || !data)` لأنه خطّاف، فلا يأتي بعد رجوعٍ مبكّر.
+   */
+  useEffect(() => {
+    if (stage !== 'app') { landedRef.current = false; return; }
+    if (landedRef.current || view !== 'home' || !data || !currentUser) return;
+    if (currentUser.role === 'مدير' || (currentUser.permissions || []).includes('السفرات')) return;
+    const only = tilesRef.current.length > 0 && tilesRef.current.every((id) => id === 'trips');
+    if (!only) return;
+    const open = (data.trips || []).filter((t) => !t.closed
+      && ((t.managers || []).includes(currentUser.id) || (t.entrants || []).includes(currentUser.id)));
+    if (!open.length) return;
+    landedRef.current = true;
+    if (open.length === 1) { setSelectedTripId(open[0].id); setView('tripDetail'); } else setView('trips');
+  }, [stage, view, data, currentUser]);
 
   if (loading || !data) {
     return <div dir="rtl" className="min-h-screen flex items-center justify-center text-slate-400" style={{ fontFamily: "'Tajawal', sans-serif" }}>جاري التحميل...</div>;
@@ -5255,6 +5280,7 @@ export default function App() {
     { id: 'reports', label: 'التقارير', desc: 'التقارير والإحصائيات', icon: FileText, show: canMoney },
     { id: 'settings', label: 'الإعدادات', desc: 'المستخدمون والصلاحيات', icon: Settings, show: isAdmin },
   ].filter((c) => c.show);
+  tilesRef.current = sections.map((c) => c.id);
 
   const navItems = [
     { id: 'home', label: 'الرئيسية', icon: Home, show: true },
