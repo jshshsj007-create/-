@@ -46,7 +46,7 @@ import { DEFAULT_WUDU_STEPS, wuduDone, wuduPercent, wuduMastered, wuduStats } fr
 import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 import PdfFirstPage from './pdfview.jsx';
 import { say } from './adad.js';
-import { TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, PRE_DAY, editExpense, tripSheetSections, tripReportText, nextDay, currentDay, tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement } from './trip.js';
+import { TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, PRE_DAY, editExpense, tripSheetSections, tripReportText, copyTrip, nextDay, currentDay, tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement } from './trip.js';
 import { weekReport } from './report.js';
 import { pushStatus, PUSH_TEXTS, HOME_STEPS, readEnv, currentSub, enablePush, disablePush, healPush } from './notify.js';
 import {
@@ -1513,7 +1513,7 @@ function TripReport({ trip }) {
     setBusy(true);
     try {
       const blob = await paperSheet({
-        sub: trip.name, title: 'تقرير السفرة', date: trip.date || hijri(Date.now()),
+        sub: `${trip.name}${trip.closed ? ' · مقفلة' : ''}`, title: 'تقرير السفرة', date: trip.date || hijri(Date.now()),
         sections: tripSheetSections(trip), fileTitle: `تقرير ${trip.name}`,
       }, { logo: LOGO_MARK_WHITE, team: TEAM_NAME, stamp: hijri(Date.now()), fit: false });
       const how = await shareFile(blob, sheetFileName(trip.date || hijri(Date.now())), `تقرير ${trip.name}`);
@@ -3473,6 +3473,14 @@ export default function App() {
     save({ ...data, trips: [...data.trips, mark({ id: uid(), termKey, name: form.name.trim(), date: form.date || '', incomeItems: [], expenseItems: [] }, true)] });
     closeModal();
   };
+  /** سفرةٌ جديدة بنفس الشباب والمسؤولين والمُدخِلين، بلا مصروفٍ ولا تسوية — ثم تُفتح. */
+  const doCopyTrip = () => {
+    if (!form.name?.trim() || !trip) return;
+    const nid = uid();
+    save({ ...data, trips: [...data.trips, mark(copyTrip(trip, { id: nid, name: form.name, date: form.date, termKey }), true)] });
+    setSelectedTripId(nid);
+    closeModal();
+  };
   const patchTrip = (patch) => save({ ...data, trips: data.trips.map((t) => (t.id !== selectedTripId ? t : { ...t, ...patch })) });
   const typeTrip = (patch) => saveTyping({ ...data, trips: data.trips.map((t) => (t.id !== selectedTripId ? t : { ...t, ...patch })) });
   /** بنود السفرة: كل بند باسمه ومبلغه، عشان تعرف كل سفرة وين راحت فلوسها. */
@@ -4782,8 +4790,10 @@ export default function App() {
   const tripEntrantOnly = Boolean(trip && !isAdmin && (trip.entrants || []).includes(effectiveUser?.id)
     && !(trip.managers || []).includes(effectiveUser?.id)
     && !(can('السفرات') && (can('المصروفات والتقارير') || can('فيض - الإيرادات والمصروفات'))));
-  const tripWrite = Boolean(isAdmin || (trip?.managers || []).includes(effectiveUser?.id)
+  const tripCanWrite = Boolean(isAdmin || (trip?.managers || []).includes(effectiveUser?.id)
     || (can('السفرات') && (can('المصروفات والتقارير') || can('فيض - الإيرادات والمصروفات'))));
+  /** وإذا أُقفلت السفرة وقف الكتابة على الجميع حتى يفتحها المدير (والخادم يردّ ما حاول أحدٌ تجاوز ذلك). */
+  const tripWrite = tripCanWrite && !trip?.closed;
   const canSeeWeek = (programId, weekId) => isAdmin || effectiveUser?.accessScope === 'all' || (effectiveUser?.allowedWeeks || []).some((a) => a.programId === programId && a.weekId === weekId);
   const canMoney = can('المصروفات والتقارير');
   /**
@@ -9270,7 +9280,7 @@ export default function App() {
                   <tbody>
                     {tripsInScope.map((t) => (
                       <tr key={t.id} className="border-t border-slate-50 hover:bg-slate-50/50 cursor-pointer" onClick={() => { setSelectedTripId(t.id); goto('tripDetail'); }}>
-                        <td className="px-4 py-3 font-semibold text-slate-800">{t.name}</td>
+                        <td className="px-4 py-3 font-semibold text-slate-800">{t.name}{t.closed && <span className="mr-2 text-[10px] font-bold bg-slate-100 text-slate-500 rounded px-1.5 py-0.5 align-middle">مقفلة</span>}</td>
                         <td className="px-4 py-3 text-slate-500">{t.date || '-'}</td>
                         <td className="px-4 py-3 text-green-600">{fmt(tripIncome(t))} ر.س</td>
                         <td className="px-4 py-3 text-red-500">{fmt(tripExpenses(t))} ر.س</td>
@@ -9294,9 +9304,28 @@ export default function App() {
               {isAdmin && <button onClick={() => askConfirm(`حذف سفرة «${trip.name}»؟`, () => removeTrip(trip.id))} className="text-slate-300 hover:text-red-500"><Trash2 size={15} /></button>}
             </div>
             <Trace item={trip} className="-mt-3 mb-5" />
+            {trip.closed && (
+              <div className="bg-slate-100 border border-slate-200 rounded-xl px-3.5 py-3 mb-3 text-xs text-slate-700 leading-6" data-testid="trip-closed-note">
+                🔒 هذه السفرة مقفلة: لا يُضاف فيها ولا يُعدَّل ولا يُحذف شيء.{isAdmin ? ' افتحها إن أردت أن تعدّل.' : ''}
+              </div>
+            )}
+            {isAdmin && (
+              <div className="flex gap-2 mb-3">
+                <button type="button" data-testid="trip-lock" className="flex-1 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-700 py-2.5"
+                  onClick={() => (trip.closed
+                    ? patchTrip({ closed: false })
+                    : askConfirm(`إقفال سفرة «${trip.name}»؟ لا يُضاف فيها ولا يُعدَّل ولا يُحذف شيء، حتى من مسؤولها، إلى أن تفتحها أنت.`, () => patchTrip({ closed: true, closedAt: Date.now() }), 'نعم، أقفلها'))}>
+                  {trip.closed ? '🔓 افتح السفرة' : '🔒 أقفل السفرة'}
+                </button>
+                <button type="button" data-testid="trip-copy" className="flex-1 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-700 py-2.5"
+                  onClick={() => { setForm({ name: `${trip.name} (نسخة)`, date: '' }); setModal('copyTrip'); }}>
+                  انسخ لسفرة جديدة
+                </button>
+              </div>
+            )}
             <div className={cardCls + ' mb-3'}>
               <div className="text-sm text-slate-500 mb-2">التاريخ (هـ)</div>
-              <input className={inputCls} value={trip.date} onChange={(e) => typeTrip({ date: e.target.value })} placeholder="1447/03/01" />
+              <input className={inputCls + (trip.closed ? ' opacity-60' : '')} disabled={Boolean(trip.closed)} value={trip.date} onChange={(e) => typeTrip({ date: e.target.value })} placeholder="1447/03/01" />
             </div>
 
             {tripEntrantOnly ? (
@@ -9307,7 +9336,7 @@ export default function App() {
                 <TripItems
                   title="ما أدخلتَه" subtitle="مصروفاتٌ أضفتَها أنت. لا تُعدَّل ولا تُحذف من هنا."
                   items={trip.expenseItems} tone="red"
-                  onAdd={() => {
+                  onAdd={trip.closed ? null : () => {
                     setForm({ itemKey: 'expenseItems', day: currentDay(trip), cat: '', sub: '', paidBy: '' });
                     setModal('addTripItem');
                   }}
@@ -9320,8 +9349,8 @@ export default function App() {
               <MiniStat label="الصافي" value={fmt(tripNet(trip))} icon={Wallet} tone={tripNet(trip) >= 0 ? 'brand' : 'red'} />
             </div>
 
-            {tripWrite && <TripReport trip={trip} />}
-            {!tripWrite && (
+            {tripCanWrite && <TripReport trip={trip} />}
+            {!tripCanWrite && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-3 mb-3 text-xs text-amber-900 leading-6">
                 المبالغ محجوبة عنك في هذه السفرة، فلا تسجّل فيها. يسجّل فيها المدير أو من اختاره مسؤولًا عنها.
               </div>
@@ -11961,6 +11990,17 @@ export default function App() {
           </Modal>
         );
       })()}
+
+      {modal === 'copyTrip' && trip && (
+        <Modal title="نسخ السفرة" onClose={closeModal}>
+          <div className="text-xs text-slate-500 leading-6 mb-3">
+            سفرةٌ جديدة بنفس الشباب ومن يديرها ومن يُدخِل فيها. لا يُنسخ مصروفٌ ولا إيرادٌ ولا تسوية، وتبقى هذه السفرة كما هي.
+          </div>
+          <Field label="اسم السفرة الجديدة"><input className={inputCls} data-testid="copy-name" value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+          <Field label="التاريخ (هـ)"><input className={inputCls} value={form.date || ''} onChange={(e) => setForm({ ...form, date: e.target.value })} placeholder="1449/01/10" /></Field>
+          <div className="flex gap-2 mt-5"><button className={btnPrimary + ' flex-1'} data-testid="copy-save" onClick={doCopyTrip}>أنشئ النسخة</button><button className={btnGhost} onClick={closeModal}>إلغاء</button></div>
+        </Modal>
+      )}
 
       {modal === 'addTrip' && (
         <Modal title="سفرة جديدة" onClose={closeModal}>

@@ -247,3 +247,22 @@ export const tripReportText = (trip) => {
   }
   return lines.join('\n');
 };
+
+/**
+ * سفرةٌ جديدة على نمط سابقتها: الشباب ومن يدير ومن يُدخِل، بلا مصروفٍ ولا إيرادٍ ولا تسوية.
+ *
+ * يسافر صاحب الفريق مع الجماعة نفسها مرةً بعد مرة، فلا يُعيد كتابة أسمائهم ولا تعيين أحدٍ منهم.
+ * والمقفلة تُنسخ مفتوحة، وكل ما صُرف في الأصل يبقى في الأصل.
+ */
+export const copyTrip = (old, { id, name, date = '', termKey = '' } = {}) => ({
+  id,
+  name: str(name) || `${str(old?.name)} (نسخة)`,
+  date: str(date),
+  ...(str(termKey) ? { termKey: str(termKey) } : {}),
+  people: [...tripPeople(old)],
+  managers: [...(old?.managers || [])],
+  entrants: [...(old?.entrants || [])],
+  incomeItems: [],
+  expenseItems: [],
+  settlements: [],
+});

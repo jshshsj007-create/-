@@ -163,4 +163,32 @@ test('من عنده «السفرات» مع المال يرى كل شيء ولو
   assert.deepEqual(tripsKept(inc, cur, rich, true, true).find((t) => t.id === 't2').entrants, ['u4'], 'غير المدير لا يعيّن');
 });
 
+/* ---------------- السفرة المقفلة ---------------- */
+test('السفرة المقفلة: لا يقبل منها شيءٌ من مسؤول ولا مُدخِل ولا ذي «السفرات»', () => {
+  const cur = withEntrant(); cur[0].closed = true; cur[1].closed = true;
+  const add = (t, extra) => ({ ...t, expenseItems: [...t.expenseItems, { id: 'late', name: 'متأخر', amount: 9, ...extra }] });
+  const byManager = tripsKept([add(cur[0])], cur, saad, false).find((t) => t.id === 't1');
+  assert.deepEqual(byManager, cur[0], 'المسؤول لا يضيف في مقفلة');
+  const byEntrant = tripsKept([add(entrantView(cur[1], alawan))], cur, alawan, false).find((t) => t.id === 't2');
+  assert.deepEqual(byEntrant, cur[1], 'والمُدخِل لا يضيف');
+  const rich = { id: 'u7', role: 'مسؤول فيض', permissions: ['السفرات'] };
+  assert.deepEqual(tripsKept([add(cur[1])], cur, rich, true, true).find((t) => t.id === 't2'), cur[1], 'ولا من يرى كل شيء بصلاحيته');
+});
+
+test('ولا يفتحها غير المدير ولا يحذفها، والمدير يفتحها ويعدّل', () => {
+  const cur = withEntrant(); cur[0].closed = true;
+  const reopen = [{ ...cur[0], closed: false, name: 'مفتوحة' }, cur[1]];
+  assert.equal(tripsKept(reopen, cur, saad, false).find((t) => t.id === 't1').closed, true, 'غير المدير لا يفتح');
+  const rich = { id: 'u7', role: 'مسؤول فيض', permissions: ['السفرات'] };
+  assert.equal(tripsKept([cur[1]], cur, rich, true, true).some((t) => t.id === 't1'), true, 'ولا يحذف المقفلة');
+  assert.equal(tripsKept(reopen, cur, admin, true)[0].closed, false, 'المدير يفتحها');
+});
+
+test('ومن لا يقفل بحفظةٍ: «closed» لا يُكتب من غير المدير في سفرةٍ مفتوحة', () => {
+  const cur = trips();
+  const kept = tripsKept([{ ...cur[0], closed: true }, cur[1]], cur, saad, false).find((t) => t.id === 't1');
+  assert.equal(kept.closed, false, 'المسؤول لا يقفل');
+  assert.equal(tripsKept([{ ...cur[0], closed: true }, cur[1]], cur, admin, true).find((t) => t.id === 't1').closed, true, 'والمدير يقفل');
+});
+
 console.log(`\n✅ ${passed} اختبارًا لمسؤول السفرة`);

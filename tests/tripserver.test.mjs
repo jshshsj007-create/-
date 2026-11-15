@@ -125,5 +125,41 @@ r = await call({ op: 'pull', token: alawan, sinceRev: 0 });
 check('ويرى بنده هو بعد الحفظ، لا غيره', r.body.data.trips[0].expenseItems.length === 1 && r.body.data.trips[0].expenseItems[0].id === 'al1');
 check('ومال البرامج وفيض ما زالا سليمين', (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data.faidAdjustments.length === 1);
 
+// ---- السفرة المقفلة ----
+r = await call({ op: 'pull', token: adminTok, sinceRev: 0 });
+const ad4 = JSON.parse(JSON.stringify(r.body.data));
+ad4.trips.find((t) => t.id === 't1').closed = true;
+r = await call({ op: 'push', token: adminTok, baseRev: r.body.rev, data: ad4 });
+check('المدير يقفل السفرة', r.status === 200);
+const lockedBefore = JSON.stringify((await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data.trips.find((t) => t.id === 't1'));
+
+r = await call({ op: 'pull', token: saad, sinceRev: 0 });
+check('المسؤول ما زال يراها مقفلة', r.body.data.trips.find((t) => t.id === 't1').closed === true);
+const mgrTry = JSON.parse(JSON.stringify(r.body.data));
+mgrTry.trips[0].expenseItems.push({ id: 'late1', name: 'متأخر', amount: 77, paidBy: 'تركي' });
+mgrTry.trips[0].closed = false;                                  // محاولة فتحها
+mgrTry.trips[0].settlements.push({ id: 'late2', person: 'تركي', amount: 5 });
+r = await call({ op: 'push', token: saad, baseRev: r.body.rev, data: mgrTry });
+let after = (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data.trips.find((t) => t.id === 't1');
+check('المسؤول لا يضيف ولا يفتح ولا يسدّد في المقفلة', JSON.stringify(after) === lockedBefore, JSON.stringify(after).slice(0, 200));
+
+r = await call({ op: 'pull', token: alawan, sinceRev: 0 });
+const entTry = JSON.parse(JSON.stringify(r.body.data));
+entTry.trips[0].expenseItems.push({ id: 'late3', name: 'متأخر', amount: 8, paidBy: 'العلوان' });
+r = await call({ op: 'push', token: alawan, baseRev: r.body.rev, data: entTry });
+after = (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data.trips.find((t) => t.id === 't1');
+check('والمُدخِل لا يضيف في المقفلة', JSON.stringify(after) === lockedBefore);
+
+r = await call({ op: 'pull', token: adminTok, sinceRev: 0 });
+const ad5 = JSON.parse(JSON.stringify(r.body.data));
+ad5.trips.find((t) => t.id === 't1').closed = false;
+r = await call({ op: 'push', token: adminTok, baseRev: r.body.rev, data: ad5 });
+r = await call({ op: 'pull', token: alawan, sinceRev: 0 });
+const again = JSON.parse(JSON.stringify(r.body.data));
+again.trips[0].expenseItems.push({ id: 'ok1', name: 'بعد الفتح', amount: 9, paidBy: 'العلوان' });
+r = await call({ op: 'push', token: alawan, baseRev: r.body.rev, data: again });
+after = (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data.trips.find((t) => t.id === 't1');
+check('المدير يفتحها فيعود الإدخال', after.closed === false && after.expenseItems.some((x) => x.id === 'ok1'));
+
 console.log(`\n${bad ? '✗' : '✅'} ${ok} نجح، ${bad} فشل`);
 process.exit(bad ? 1 : 0);

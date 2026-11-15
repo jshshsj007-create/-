@@ -80,7 +80,8 @@ const cleanItem = (x, me) => ({
 /**
  * ما يُقبل من حفظةِ هذا الحساب في السفرات.
  *
- * - المدير: كل شيء.
+ * - المدير: كل شيء، وهو وحده يُقفل السفرة ويفتحها.
+ * - السفرة المقفلة: لا يُقبل فيها شيءٌ من غير المدير، ولا حذفُها.
  * - من عنده «السفرات» مع المال: يكتب فيها، لكن **لا يغيّر من يديرها ولا من يُدخِل**.
  * - المسؤول: يكتب في سفرته وحدها، ولا يغيّر من يديرها ولا يحذفها.
  * - المُدخِل: **يضيف بنودًا جديدة فقط**، مكتوبًا عليها اسمُه، ولا يعدّل ما كان ولا يحذفه
@@ -100,10 +101,12 @@ export const tripsKept = (incoming, current, me, hasTripPerm, seesMoney = false)
     seen.add(t.id);
     const old = was.get(t.id);
     if (!old) {
-      if (hasTripPerm) out.push({ ...t, managers: [], entrants: [] });
+      if (hasTripPerm) out.push({ ...t, managers: [], entrants: [], closed: false });
       continue;
     }
-    const roles = { managers: old.managers || [], entrants: old.entrants || [] };
+    // السفرة المقفلة لا يمسّها غير المدير: لا إضافةَ ولا تعديلَ ولا إعادةَ فتحٍ — ولو جاءت من مسؤولها
+    if (old.closed) { out.push(old); continue; }
+    const roles = { managers: old.managers || [], entrants: old.entrants || [], closed: false };
     if (manages(old, me) || full) out.push({ ...t, ...roles });
     else if (enters(old, me)) {
       const have = new Set((old.expenseItems || []).map((x) => x.id));
@@ -113,6 +116,7 @@ export const tripsKept = (incoming, current, me, hasTripPerm, seesMoney = false)
     else out.push(old);
   }
   // ما غاب من الوارد: صاحب الصلاحية يحذف (والحارس يسجّله)، وغيره لا يحذف شيئًا
-  if (!hasTripPerm) for (const old of current || []) if (!seen.has(old.id)) out.push(old);
+  // والمقفلة لا تُحذف إلا من المدير، فلا يمحوها ذو «السفرات» بحفظة
+  for (const old of current || []) if (!seen.has(old.id) && (!hasTripPerm || old.closed)) out.push(old);
   return out;
 };

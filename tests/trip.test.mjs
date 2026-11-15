@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {
   tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement, NO_DAY,
-  TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, PRE_DAY, editExpense, tripSheetSections, tripReportText, tripCatRows, nextDay, currentDay, dayName,
+  TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, PRE_DAY, editExpense, tripSheetSections, tripReportText, tripCatRows, copyTrip, nextDay, currentDay, dayName,
 } from '../src/trip.js';
 
 let passed = 0;
@@ -178,6 +178,21 @@ test('نص التقرير: الصافي ثم كم على كل نوع ثم الأ
   assert.match(txt, /- أكل وشرب: 550 ر.س/);
   assert.match(txt, /- اليوم الأول: 460/);
   assert.ok(!txt.includes('الشباب:') && !txt.includes('أُعطي'), 'لا حساب شباب');
+});
+
+test('نسخ سفرة: الشباب والمسؤولون والمُدخِلون، بلا مصروف ولا إيراد ولا تسوية، وتُفتح', () => {
+  const old = { ...trip(), id: 't1', closed: true, managers: ['u1'], entrants: ['u4'], incomeItems: [{ id: 'i', name: 'اشتراكات', amount: 3000 }] };
+  old.expenseItems.push({ id: 'z', name: 'سكن', amount: 50, paidBy: 'فهد' });
+  const nu = copyTrip(old, { id: 't2', name: 'أبها', date: '1449/01/10', termKey: '1449-الأول' });
+  assert.deepEqual([nu.id, nu.name, nu.date, nu.termKey], ['t2', 'أبها', '1449/01/10', '1449-الأول']);
+  assert.deepEqual(nu.people, tripPeople(old), 'الشباب كما كانوا ومن دفع فيها');
+  assert.ok(nu.people.includes('فهد'));
+  assert.deepEqual([nu.managers, nu.entrants], [['u1'], ['u4']]);
+  assert.deepEqual([nu.incomeItems, nu.expenseItems, nu.settlements], [[], [], []]);
+  assert.equal(nu.closed, undefined, 'وتُنسخ مفتوحة');
+  assert.equal(old.expenseItems.length, 6, 'والأصل لا يتغيّر');
+  assert.equal(copyTrip(old, { id: 't3' }).name, `${old.name} (نسخة)`, 'بلا اسمٍ تأخذ اسم الأصل');
+  nu.managers.push('x'); assert.deepEqual(old.managers, ['u1'], 'ولا تتشارك القوائم');
 });
 
 console.log(`\n✅ ${passed} اختبارًا لحساب السفرة`);
