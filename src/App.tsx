@@ -7109,6 +7109,30 @@ export default function App() {
                   const missingSeats = canEnroll ? missingSubSeats(program.weeks, week.id, uid) : [];
                   return (
                   <div>
+                    {/*
+                      مدفوعٌ مقدّمًا ولم يُسجَّل حضوره ولا غيابه: ما دام معلّقًا لا يدخل
+                      إيراد البرنامج ويبقى «محفوظًا» في «كم معك» أبدًا. ومن لم يُسجَّل
+                      حاضرًا حتى أُقفل أسبوعه فهو غائب، فلا نجعل صاحب التطبيق يضغط
+                      الأربعين واحدًا واحدًا.
+                    */}
+                    {(() => {
+                      const awaiting = roster.filter((x) => x.pending && x.prepaid);
+                      if (!awaiting.length) return null;
+                      return (
+                        <button
+                          className="w-full mb-3 text-xs font-bold text-blue-800 bg-blue-50 border border-blue-200 rounded-xl px-3.5 py-3 text-right flex items-center justify-between gap-2 disabled:opacity-50"
+                          disabled={ledgerLocked}
+                          data-testid="mark-prepaid-absent"
+                          onClick={() => askConfirm(
+                            `تسجيل ${say(awaiting.length, 'student')} غائبين؟ كلهم «مدفوع مقدّمًا» ولم يُسجَّل حضورهم. ينزل مبلغهم في إيراد هذا الأسبوع، ولا يتغيّر رصيد أي حساب.`,
+                            () => markAll('غائب', awaiting),
+                            'نعم، سجّلهم غائبين',
+                          )}>
+                          <span>فيه {say(awaiting.length, 'student')} «مدفوع مقدّمًا» لم يُسجَّل حضورهم.</span>
+                          <span className="shrink-0">{ledgerLocked ? 'افتح الأسبوع أولًا' : 'سجّلهم غائبين ←'}</span>
+                        </button>
+                      );
+                    })()}
                     {missingSeats.length > 0 && (
                       <button
                         className="w-full mb-3 text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-3 text-right flex items-center justify-between gap-2"
