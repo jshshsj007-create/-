@@ -5102,6 +5102,8 @@ export default function App() {
    * شغل: يجي كل يوم ليشتغل في الموسم القائم، فاختياره مرتين كل مرة ضريبةٌ
    * بلا مقابل. فندخله على طول، ويبقى مبدّل الموسم في الأعلى لو احتاجه.
    */
+  // وزرّ «ابدأ» كذلك: من فتح التطبيق وجلستُه محفوظة ما مرّ بالدخول، فكان يُساق إلى السنة
+  // مهما كان دوره، وتُخطئ فيه صفحةُ السفرة المباشرة.
   const landingStage = (u) => (u?.role === 'مدير' ? 'year' : 'app');
 
   const doLogout = () => {
@@ -5139,7 +5141,7 @@ export default function App() {
         <div className="flex-1 flex flex-col items-center justify-center px-8 text-center">
           <FaydhLogo size={116} variant="full" />
           <div className="text-brand-200 text-base font-semibold mt-8">{TEAM_NAME}</div>
-          <button onClick={() => setStage(mustLogin ? 'login' : 'year')}
+          <button onClick={() => setStage(mustLogin ? 'login' : currentUser ? landingStage(currentUser) : 'year')}
             className="mt-12 bg-white text-brand-900 font-bold text-sm px-10 py-3.5 rounded-2xl">
             ابدأ
           </button>
