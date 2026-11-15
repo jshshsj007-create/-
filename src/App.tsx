@@ -46,7 +46,7 @@ import { DEFAULT_WUDU_STEPS, wuduDone, wuduPercent, wuduMastered, wuduStats } fr
 import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 import PdfFirstPage from './pdfview.jsx';
 import { say } from './adad.js';
-import { TRIP_CATS, TRIP_CREW, FOOD_SUBS, nextDay, currentDay, tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement, tripShareText } from './trip.js';
+import { TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, nextDay, currentDay, tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement, tripShareText } from './trip.js';
 import { weekReport } from './report.js';
 import { pushStatus, PUSH_TEXTS, HOME_STEPS, readEnv, currentSub, enablePush, disablePush, healPush } from './notify.js';
 import {
@@ -1598,7 +1598,7 @@ function TripCrew({ trip, onSettle, onAddPerson, onRemoveSettlement, onCopy }) {
           <div className="space-y-1.5">
             {settlements.map((x) => (
               <div key={x.id} className="flex items-center justify-between text-sm gap-2">
-                <span className="text-slate-700 min-w-0 truncate">{x.person}{x.date ? ` · ${x.date}` : ''}{x.note ? ` · ${x.note}` : ''}</span>
+                <span className="text-slate-700 min-w-0 truncate">{x.person}{x.how ? ` · ${x.how}` : ''}{x.date ? ` · ${x.date}` : ''}{x.note ? ` · ${x.note}` : ''}</span>
                 <span className="flex items-center gap-2 shrink-0">
                   <span className="font-semibold text-slate-800">{fmt(x.amount)} ر.س</span>
                   <button onClick={() => onRemoveSettlement(x.id)} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>
@@ -3436,7 +3436,7 @@ export default function App() {
   const addTripSettlement = () => {
     if (!form.person) { setForm({ ...form, error: 'اختر من أعطيته' }); return; }
     if (!(Number(form.amount) > 0)) { setForm({ ...form, error: 'اكتب المبلغ' }); return; }
-    patchTrip({ settlements: [...(trip.settlements || []), makeSettlement({ id: uid(), person: form.person, amount: form.amount, date: form.date, note: form.note })] });
+    patchTrip({ settlements: [...(trip.settlements || []), makeSettlement({ id: uid(), person: form.person, amount: form.amount, date: form.date, note: form.note, how: form.how })] });
     closeModal();
   };
   const removeTripSettlement = (sid) => patchTrip({ settlements: (trip.settlements || []).filter((x) => x.id !== sid) });
@@ -11723,6 +11723,15 @@ export default function App() {
             )}
             <Field label="المبلغ الذي أعطيته (ر.س)" hint="المبلغ يبدأ بالباقي له كاملًا، وغيّره لو أعطيته جزءًا.">
               <input type="number" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value, error: '' })} />
+            </Field>
+            <Field label="كيف سدّدت؟">
+              <div className="flex flex-wrap gap-1.5">
+                {HOW.map((h) => (
+                  <button key={h} type="button" data-testid={`how-${h}`}
+                    className={`px-4 py-2.5 rounded-lg text-sm font-semibold border ${form.how === h ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`}
+                    onClick={() => setForm({ ...form, how: form.how === h ? '' : h })}>{h}</button>
+                ))}
+              </div>
             </Field>
             <Field label="التاريخ (هـ)">
               <input className={inputCls} value={form.date || ''} onChange={(e) => setForm({ ...form, date: e.target.value })} placeholder="1448/06/04" />

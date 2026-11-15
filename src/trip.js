@@ -116,12 +116,16 @@ export const makeExpense = ({ id, name, amount, day, cat, paidBy, sub }) => ({
   ...(str(sub) ? { sub: str(sub) } : {}),
 });
 
+/** كيف سُدِّد: نقدًا أو تحويلًا أو غير ذلك. */
+export const HOW = ['كاش', 'تحويل', 'غير ذلك'];
+
 /** تسوية: ما أُعطيه واحدٌ من الشباب. */
-export const makeSettlement = ({ id, person, amount, date, note }) => ({
+export const makeSettlement = ({ id, person, amount, date, note, how }) => ({
   id,
   person: str(person),
   amount: Math.max(0, num(amount)),
   ...(str(date) ? { date: str(date) } : {}),
+  ...(str(how) ? { how: str(how) } : {}),
   ...(str(note) ? { note: str(note) } : {}),
 });
 

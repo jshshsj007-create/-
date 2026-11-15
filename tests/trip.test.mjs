@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {
   tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement, tripShareText, NO_DAY,
-  TRIP_CATS, TRIP_CREW, FOOD_SUBS, nextDay, currentDay, dayName,
+  TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, nextDay, currentDay, dayName,
 } from '../src/trip.js';
 
 let passed = 0;
@@ -127,6 +127,12 @@ test('الأكل يتفصّل: فطور وغداء وعشاء تحت مجموع 
   assert.equal(d.cats['أكل وشرب'], 230, 'المجموع يبقى كاملًا');
   assert.deepEqual(d.subs['أكل وشرب'], { فطور: 80, غداء: 150 });
   assert.equal(d.subs['سكن'], undefined);
+});
+
+test('التسوية تحمل كيف سُدِّدت: كاش أو تحويل أو غير ذلك', () => {
+  assert.deepEqual(HOW, ['كاش', 'تحويل', 'غير ذلك']);
+  assert.equal(makeSettlement({ id: '1', person: 'تركي', amount: 150, how: 'تحويل' }).how, 'تحويل');
+  assert.equal(makeSettlement({ id: '2', person: 'تركي', amount: 150 }).how, undefined, 'بلا اختيار لا تُكتب');
 });
 
 console.log(`\n✅ ${passed} اختبارًا لحساب السفرة`);
