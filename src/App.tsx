@@ -3377,7 +3377,7 @@ export default function App() {
         ...(item.paidBy && !(trip.people || []).includes(item.paidBy) ? { people: [...new Set([...(trip.people || []), item.paidBy])] } : {}),
       });
       // «إضافة وآخر»: يبقى النموذج مفتوحًا بنفس الدافع واليوم، فتدخل خمسة بنودٍ بلا إعادة الاختيار
-      if (again) setForm({ itemKey: 'expenseItems', day: item.day, paidBy: item.paidBy || '', cat: '', sub: '', amount: '', name: '', added: (form.added || 0) + 1 });
+      if (again) setForm({ itemKey: 'expenseItems', day: item.day, paidBy: item.paidBy || '', other: false, cat: '', sub: '', amount: '', name: '', added: (form.added || 0) + 1 });
       else closeModal();
       return;
     }
@@ -11709,9 +11709,16 @@ export default function App() {
             <Field label="من دفع؟">
               <div className="flex flex-wrap gap-1.5">
                 {crew.map((n) => (
-                  <button key={n} type="button" className={chip(form.paidBy === n)} onClick={() => setForm({ ...form, paidBy: form.paidBy === n ? '' : n, error: '' })}>{n}</button>
+                  <button key={n} type="button" className={chip(form.paidBy === n)} onClick={() => setForm({ ...form, paidBy: form.paidBy === n ? '' : n, other: false, error: '' })}>{n}</button>
                 ))}
+                {/* دفع غير هؤلاء: يكتب اسمه هنا ويُحفظ في رفقة السفرة فيظهر خيارًا بعدها */}
+                <button type="button" data-testid="payer-plus" className={chip(form.other)}
+                  onClick={() => setForm({ ...form, other: !form.other, paidBy: form.other ? '' : (crew.includes(form.paidBy) ? '' : form.paidBy), error: '' })}>+ آخر</button>
               </div>
+              {form.other && (
+                <input className={inputCls + ' mt-2'} data-testid="payer-new" value={form.paidBy || ''} onChange={(e) => setForm({ ...form, paidBy: e.target.value, error: '' })}
+                  placeholder="اسم من دفع" autoFocus />
+              )}
               <div className="text-[11px] text-slate-400 mt-1.5">لو دفعته أنت أو من صندوق السفرة اتركه بلا اختيار.</div>
             </Field>
             <Field label="وش شريت؟">
@@ -11735,11 +11742,14 @@ export default function App() {
  <Field label="المبلغ (ر.س)">
               <input id="trip-amount" type="number" inputMode="numeric" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value, error: '' })} />
             </Field>
-            <Field label="اليوم" hint="يقع المصروف في آخر يوم كتبته، وتغيّره أو تبدأ يومًا جديدًا بضغطة.">
+            <Field label="اليوم" hint="يقع في آخر يوم كتبته. وإذا بدأ يوم جديد اضغط «+ يوم جديد» وكل ما بعده يقع فيه.">
               <div className="flex flex-wrap gap-1.5">
-                {[...days, ...(days.includes(next) ? [] : [next])].map((d) => (
+                {days.map((d) => (
                   <button key={d} type="button" className={chip(form.day === d)} onClick={() => setForm({ ...form, day: d })}>{d}</button>
                 ))}
+                {!days.includes(next) && (
+                  <button type="button" data-testid="new-day" className={chip(form.day === next) + ' border-dashed'} onClick={() => setForm({ ...form, day: next })}>+ يوم جديد ({next})</button>
+                )}
               </div>
             </Field>
             {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
