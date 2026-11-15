@@ -63,6 +63,67 @@ export const subRests = (data) => {
 };
 
 /**
+ * بقايا اشتراكاتٍ انتهى برنامجها — وتُنزَّل إيرادًا بيد صاحب التطبيق لا بصمت.
+ *
+ * من دفع باقةً لثلاث جمع ولم يُنشأ له إلا صفٌّ أو صفّان، بقيت حصصه «محفوظةً لأيامٍ
+ * ما صارت». وفي برنامجٍ أُقفلت كل أسابيعه لا يجيء بعدها يوم، فيبقى الرقم معلّقًا
+ * في «كم معك» أبدًا، ويسأل عنه المدير ولا جواب.
+ *
+ * فنضيف البقية إلى آخر صفٍّ للمشترك: ما دفعه يساوي باقته، فيصفر المحفوظ ويدخل
+ * إيراد ذلك الأسبوع. ورصيد الحساب لا يتغيّر ريالًا: كان يعدّ البقية في يده، وما زال.
+ *
+ * ولا نلمس برنامجًا فيه أسبوعٌ مفتوح (لا يزال يمشي)، ولا صفًّا ما زال معلّقًا
+ * (يُسجَّل حضوره أو غيابه أولًا، وإلا ما دخل الإيراد أصلًا).
+ */
+export const settleSubRests = (data) => {
+  const items = [];
+  let pendingLeft = 0;
+  const programs = (data?.programs || []).map((p) => {
+    if (p?.type === 'مجمع') return p;
+    const weeks = p?.weeks || [];
+    if (!weeks.length || weeks.some((w) => w?.status !== 'مغلق')) return p;
+    const subs = new Map();
+    weeks.forEach((w, wi) => {
+      for (const x of w?.participants || []) {
+        if (!x?.sub?.id) continue;
+        const g = subs.get(x.sub.id) || { total: num(x.sub.total), paid: 0 };
+        g.paid += num(x.amount);
+        g.last = x;
+        g.wi = wi;
+        subs.set(x.sub.id, g);
+      }
+    });
+    const add = new Map(); // معرّف الصف ← المبلغ
+    for (const g of subs.values()) {
+      const rest = g.total - g.paid;
+      if (rest <= 0 || !inHand(g.last)) continue;
+      if (g.last.pending) { pendingLeft += rest; continue; }
+      add.set(g.last.id, rest);
+      items.push({
+        programId: p.id, programName: p.name || '', weekId: weeks[g.wi].id,
+        rowId: g.last.id, name: g.last.name || '', accountId: g.last.accountId, amount: rest,
+      });
+    }
+    if (!add.size) return p;
+    return {
+      ...p,
+      weeks: weeks.map((w) => ({
+        ...w,
+        participants: (w.participants || []).map((x) => (add.has(x.id)
+          ? { ...x, amount: num(x.amount) + add.get(x.id), restSettled: add.get(x.id) }
+          : x)),
+      })),
+    };
+  });
+  return {
+    data: items.length ? { ...data, programs } : data,
+    items,
+    total: items.reduce((s, i) => s + i.amount, 0),
+    pendingLeft,
+  };
+};
+
+/**
  * رصيد حسابٍ واحد، ومعه كم منه محفوظ.
  *
  * `held` جزءٌ من `balance` لا يُطرح منه: هو مالٌ في يدك، لكنه ليس إيرادك بعد

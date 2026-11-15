@@ -1,7 +1,7 @@
 /** اختبارات «كم معك»: رصيد الحساب، والمحفوظ، والتسليم. */
 import assert from 'node:assert/strict';
 import {
-  cashOf, cashRows, cashTotals, cashPayers, inHand,
+  cashOf, cashRows, cashTotals, cashPayers, inHand, settleSubRests,
   validHandover, applyHandover, handoverRows, UNPAID,
 } from '../src/cash.js';
 
@@ -133,6 +133,53 @@ test('والمجمّع دفتره على البرنامج لا على أيامه
     }],
   };
   assert.equal(cashOf(d, 'abu').balance, 600, 'أيام المجمّع ما لها دفاتر فما تُحسب');
+});
+
+/* ---- بقايا اشتراكات برنامجٍ انتهى ---- */
+const subProg = (statuses, lastExtra = {}) => ({
+  faidAccounts: [{ id: 'rajhi', name: 'الراجحي' }],
+  handovers: [],
+  programs: [{
+    id: 'p', name: 'وسم', type: 'منفصل',
+    weeks: statuses.map((st, i) => ({
+      id: 'w' + i, status: st,
+      participants: [
+        // باقة مئة لثلاث جمع: ما نزل له إلا اثنتان (٣٤ + ٣٣)
+        ...(i < 2 ? [{ id: 'a' + i, name: 'سعد', accountId: 'rajhi', amount: i === 0 ? 34 : 33,
+          sub: { id: 's1', total: 100, span: 3, i }, ...(i === 1 ? lastExtra : {}) }] : []),
+      ],
+    })),
+  }],
+});
+
+test('برنامجٌ أُقفلت أسابيعه: البقية تنزل إيرادًا ويصفر المحفوظ والرصيد ثابت', () => {
+  const d = subProg(['مغلق', 'مغلق']);
+  const before = cashOf(d, 'rajhi');
+  assert.equal(before.held, 33);
+  const r = settleSubRests(d);
+  assert.equal(r.total, 33);
+  assert.equal(r.items.length, 1);
+  const after = cashOf(r.data, 'rajhi');
+  assert.equal(after.held, 0);
+  assert.equal(after.balance, before.balance, 'ما يتغيّر ريال في الحساب');
+  assert.equal(r.data.programs[0].weeks[1].participants[0].amount, 66);
+  assert.equal(d.programs[0].weeks[1].participants[0].amount, 33, 'الأصل ما يُمسّ');
+});
+
+test('أسبوعٌ مفتوح في البرنامج: لا نلمسه، لأن أيامه لم تنتهِ', () => {
+  const r = settleSubRests(subProg(['مغلق', 'مفتوح']));
+  assert.equal(r.items.length, 0);
+});
+
+test('آخر صفٍّ معلّق: لا يُنزَّل قبل تسجيل حضوره، ويُعدّ باقيًا', () => {
+  const r = settleSubRests(subProg(['مغلق', 'مغلق'], { pending: true, prepaid: true }));
+  assert.equal(r.items.length, 0);
+  assert.equal(r.pendingLeft, 33);
+});
+
+test('ولا يُنزَّل مرتين: بعد التسوية لا بقية', () => {
+  const once = settleSubRests(subProg(['مغلق', 'مغلق']));
+  assert.equal(settleSubRests(once.data).items.length, 0);
 });
 
 console.log(`\n✅ ${passed} اختبارًا لـ«كم معك» والتسليم\n`);

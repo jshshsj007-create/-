@@ -34,7 +34,7 @@ import {
   drawPool, pastWinners, drawPoolMany, pastWinnersMany, makeDrawMany, applyDrawMany,
   applyAbsent, drawShort,
 } from './club.js';
-import { cashRows, cashTotals, cashPayers, handoverRows, validHandover, applyHandover } from './cash.js';
+import { cashRows, cashTotals, cashPayers, handoverRows, validHandover, applyHandover, settleSubRests } from './cash.js';
 import {
   SURAHS, PARTS, emptyWird, rangeText, carryAfter, studentTotals,
   studentSessions, studentOfUser, khayrRows, khayrReportText,
@@ -7478,6 +7478,12 @@ export default function App() {
             {faidTab === 'cash' && (
               <CashScreen
                 rows={cashList} totals={cashSum} handovers={handoverRows(data)}
+                settle={isAdmin ? settleSubRests(data) : null}
+                onSettle={(plan) => askConfirm(
+                  `إنزال ${fmt(plan.total)} ر.س من بقايا ${plan.items.length} اشتراكًا إيرادًا لبرامجها؟ رصيد الحسابات لا يتغيّر، ويرتفع إيراد أسابيعها ونصيب فيض والمدرسة تبعًا له.`,
+                  () => save(plan.data),
+                  'نعم، أنزلها',
+                )}
                 onOpen={(id) => { setForm({ accountId: id }); setModal('cashAccount'); }}
                 onHandover={() => { setForm({}); setModal('handover'); }}
                 onUndo={isAdmin ? (h) => askConfirm(
@@ -12934,7 +12940,7 @@ function ClubReport({ data, program, week }) {
  * يتصل بك أبو فارس آخر الأسبوع يسأل كم معه، فتفتحها وتقول. والمحفوظ يُذكر
  * تحت المجموع لا في السطر: هو مالٌ في يدك، لكنه ليس إيرادك — فما يُوزَّع.
  */
-function CashScreen({ rows, totals, handovers, onOpen, onHandover, onUndo }) {
+function CashScreen({ rows, totals, handovers, settle, onSettle, onOpen, onHandover, onUndo }) {
   return (
     <div className="space-y-3">
       <div className="bg-brand-700 rounded-2xl p-4 text-white flex items-center justify-between gap-3">
@@ -12949,6 +12955,17 @@ function CashScreen({ rows, totals, handovers, onOpen, onHandover, onUndo }) {
           </div>
         )}
       </div>
+
+      {settle?.items?.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-900">
+          <div className="font-bold">بقايا اشتراكات في برامج انتهت: {fmt(settle.total)} ر.س</div>
+          <div className="text-xs mt-1 leading-6">
+            {settle.items.length} مشتركًا دفعوا باقاتٍ لأيامٍ ما نزل لها صف، وأسابيع برامجهم كلها مقفلة فلن يجيء بعدها يوم.
+            إنزالها يجعلها إيرادًا لبرامجها ويصفّر «المحفوظ»، ولا يغيّر رصيد أي حساب.
+          </div>
+          <button onClick={() => onSettle(settle)} className="mt-3 text-xs font-bold bg-amber-600 text-white px-3 py-2.5 rounded-lg">أنزلها إيرادًا</button>
+        </div>
+      )}
 
       {rows.map((a) => (
         <button key={a.id} onClick={() => onOpen(a.id)}
