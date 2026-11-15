@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import {
   tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement, tripShareText, NO_DAY,
+  TRIP_CATS, TRIP_CREW, nextDay, currentDay, dayName,
 } from '../src/trip.js';
 
 let passed = 0;
@@ -9,22 +10,22 @@ const test = (name, fn) => { fn(); passed++; console.log('  ✓ ' + name); };
 
 const trip = () => ({
   name: 'سفرة الشرقية',
-  people: ['سعد', 'خالد', 'محمد'],
+  people: ['العلوان', 'تركي', 'أبو فارس'],
   expenseItems: [
-    { id: 'a', name: 'فطور', amount: 120, day: 'اليوم الأول', cat: 'فطور', paidBy: 'سعد' },
-    { id: 'b', name: 'غداء', amount: 300, day: 'اليوم الأول', cat: 'غداء', paidBy: 'خالد' },
-    { id: 'c', name: 'ماء', amount: 40, day: 'اليوم الأول', cat: 'ماء', paidBy: 'سعد' },
-    { id: 'd', name: 'عشاء', amount: 250, day: 'اليوم الثاني', cat: 'عشاء', paidBy: 'محمد' },
-    { id: 'e', name: 'ترفيه', amount: 90, day: 'اليوم الثاني', cat: 'ترفيه' },
+    { id: 'a', name: 'سكن', amount: 120, day: 'اليوم الأول', cat: 'سكن', paidBy: 'العلوان' },
+    { id: 'b', name: 'أكل وشرب', amount: 300, day: 'اليوم الأول', cat: 'أكل وشرب', paidBy: 'تركي' },
+    { id: 'c', name: 'بنزين', amount: 40, day: 'اليوم الأول', cat: 'بنزين', paidBy: 'العلوان' },
+    { id: 'd', name: 'أكل وشرب', amount: 250, day: 'اليوم الثاني', cat: 'أكل وشرب', paidBy: 'أبو فارس' },
+    { id: 'e', name: 'تذاكر ملاهي', amount: 90, day: 'اليوم الثاني', cat: 'أخرى' },
   ],
-  settlements: [{ id: 's1', person: 'سعد', amount: 100, date: '1448/06/04' }],
+  settlements: [{ id: 's1', person: 'العلوان', amount: 100, date: '1448/06/04' }],
 });
 
 test('كم دفع كل واحدٍ وكم أُعطي وكم بقي له', () => {
   const b = Object.fromEntries(tripBalances(trip()).map((x) => [x.name, x]));
-  assert.deepEqual(b['سعد'], { name: 'سعد', paid: 160, settled: 100, owed: 60 });
-  assert.equal(b['خالد'].owed, 300);
-  assert.equal(b['محمد'].owed, 250);
+  assert.deepEqual(b['العلوان'], { name: 'العلوان', paid: 160, settled: 100, owed: 60 });
+  assert.equal(b['تركي'].owed, 300);
+  assert.equal(b['أبو فارس'].owed, 250);
 });
 
 test('ما دفعه الفريق نفسه (بلا دافع) لا يُحسب لأحد', () => {
@@ -40,8 +41,8 @@ test('من لم يُكتب في الرفقة ودفع بندًا يظهر مع �
 
 test('أُعطي أكثر مما دفع: يظهر سالبًا ولا يُخفى', () => {
   const t = trip();
-  t.settlements.push({ id: 's2', person: 'خالد', amount: 400 });
-  assert.equal(tripBalances(t).find((x) => x.name === 'خالد').owed, -100);
+  t.settlements.push({ id: 's2', person: 'تركي', amount: 400 });
+  assert.equal(tripBalances(t).find((x) => x.name === 'تركي').owed, -100);
   assert.equal(tripOwedTotal(t), 60 + 250, 'السالب لا ينقص ما على غيره');
 });
 
@@ -51,13 +52,18 @@ test('مصاريف الأيام: مجموع اليوم وتصنيفاته، وب
   const days = tripDays(t);
   assert.deepEqual(days.map((d) => d.day), ['اليوم الأول', 'اليوم الثاني', NO_DAY]);
   assert.equal(days[0].total, 460);
-  assert.deepEqual(days[0].cats, { فطور: 120, غداء: 300, ماء: 40 });
+  assert.deepEqual(days[0].cats, { 'سكن': 120, 'أكل وشرب': 300, 'بنزين': 40 });
   assert.equal(days[2].cats['أخرى'], 10, 'بلا تصنيف = أخرى');
 });
 
 test('مجموع كل تصنيف في السفرة بترتيب التصنيفات', () => {
   assert.deepEqual(tripCats(trip()).map((c) => [c.cat, c.total]),
-    [['فطور', 120], ['غداء', 300], ['عشاء', 250], ['ماء', 40], ['ترفيه', 90]]);
+    [['سكن', 120], ['بنزين', 40], ['أكل وشرب', 550], ['أخرى', 90]]);
+});
+
+test('تصنيفٌ قديم بغير القائمة يبقى ظاهرًا بعدها ولا يضيع', () => {
+  const t = { expenseItems: [{ id: '1', name: 'ماء', amount: 30, cat: 'ماء' }, { id: '2', name: 'سكن', amount: 100, cat: 'سكن' }] };
+  assert.deepEqual(tripCats(t).map((c) => c.cat), ['سكن', 'ماء']);
 });
 
 test('المبلغ السالب يُصفَّر، والخانات الفاضية لا تُكتب', () => {
@@ -77,8 +83,26 @@ test('سفرةٌ قديمة بلا رفقة ولا تسويات لا تنكسر'
 
 test('نص المشاركة يُقرأ بلا شرح', () => {
   const txt = tripShareText(trip(), (n) => String(n));
-  assert.match(txt, /سعد: دفع 160، أُعطي 100، باقي له 60/);
-  assert.match(txt, /خالد: دفع 300، أُعطي 0، باقي له 300/);
+  assert.match(txt, /العلوان: دفع 160، أُعطي 100، باقي له 60/);
+  assert.match(txt, /تركي: دفع 300، أُعطي 0، باقي له 300/);
+});
+
+test('الرفقة المعتادة والتصنيفات كما حدّدها صاحب الفريق', () => {
+  assert.deepEqual(TRIP_CREW, ['العلوان', 'تركي', 'أبو فارس']);
+  assert.deepEqual(TRIP_CATS, ['سكن', 'بنزين', 'أكل وشرب', 'أخرى']);
+});
+
+test('اليوم يقع تلقائيًا: آخر يومٍ كُتب، وإلا اليوم الأول، واليوم التالي بعدده', () => {
+  assert.equal(currentDay({}), 'اليوم الأول');
+  assert.equal(nextDay({}), 'اليوم الأول');
+  assert.equal(currentDay(trip()), 'اليوم الثاني');
+  assert.equal(nextDay(trip()), 'اليوم الثالث');
+});
+
+test('أسماء الأيام بالترتيب، وبعد العاشر برقمٍ يثبّته علامة الاتجاه', () => {
+  assert.equal(dayName(1), 'اليوم الأول');
+  assert.equal(dayName(10), 'اليوم العاشر');
+  assert.equal(dayName(11), 'اليوم 11\u200F');
 });
 
 console.log(`\n✅ ${passed} اختبارًا لحساب السفرة`);

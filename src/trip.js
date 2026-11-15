@@ -9,8 +9,29 @@
  * كاملًا، والدفع له تسويةٌ تنقص ما له، لا مصروفٌ جديد — وإلا عددناه مرتين.
  */
 
-/** تصنيفات مصروف اليوم، بترتيب ظهورها. */
-export const TRIP_CATS = ['فطور', 'غداء', 'عشاء', 'مفرحات', 'ماء', 'ترفيه', 'أخرى'];
+/** وش شريت: سكن وبنزين وأكل وشرب، وأخرى يكتب فيها صاحبها بالضبط. */
+export const TRIP_CATS = ['سكن', 'بنزين', 'أكل وشرب', 'أخرى'];
+
+/** الرفقة المعتادة: تظهر خياراتٍ عند إضافة مصروفٍ ولو لم تُكتب في السفرة بعد. */
+export const TRIP_CREW = ['العلوان', 'تركي', 'أبو فارس'];
+
+/**
+ * اسم اليوم بالترتيب: «اليوم الأول»، «الثاني»… لا «اليوم 1».
+ *
+ * الرقم وسط الكلام العربي ينقلب مكانه على الشاشة فيُقرأ «1 اليوم»، فنكتب الأسماء.
+ * وما بعد العاشر يبقى برقمٍ بعد علامة اتجاه تُثبّته.
+ */
+const ORDINALS = ['الأول', 'الثاني', 'الثالث', 'الرابع', 'الخامس', 'السادس', 'السابع', 'الثامن', 'التاسع', 'العاشر'];
+export const dayName = (n) => (n >= 1 && n <= ORDINALS.length ? `اليوم ${ORDINALS[n - 1]}` : `اليوم ${n}\u200F`);
+
+/** اسم اليوم التالي، فيقع المصروف في يومه بلا كتابة. */
+export const nextDay = (trip) => dayName(new Set((trip?.expenseItems || []).map((x) => str(x?.day)).filter(Boolean)).size + 1);
+
+/** اليوم الذي يبدأ به المصروف الجديد: آخر يومٍ كُتب، وإلا اليوم الأول. */
+export const currentDay = (trip) => {
+  const last = (trip?.expenseItems || []).map((x) => str(x?.day)).filter(Boolean).slice(-1)[0];
+  return last || dayName(1);
+};
 
 const num = (v) => Number(v || 0) || 0;
 const str = (v) => String(v ?? '').trim();
@@ -67,7 +88,10 @@ export const tripCats = (trip) => {
     const c = str(x?.cat) || 'أخرى';
     m[c] = (m[c] || 0) + num(x?.amount);
   }
-  return TRIP_CATS.filter((c) => m[c]).map((c) => ({ cat: c, total: m[c] }));
+  // ما كُتب قديمًا بغير هذه التصنيفات يبقى ظاهرًا بعدها، فلا يضيع من الحساب
+  const known = TRIP_CATS.filter((c) => m[c]);
+  const other = Object.keys(m).filter((c) => !TRIP_CATS.includes(c));
+  return [...known, ...other].map((c) => ({ cat: c, total: m[c] }));
 };
 
 /**

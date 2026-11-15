@@ -46,7 +46,7 @@ import { DEFAULT_WUDU_STEPS, wuduDone, wuduPercent, wuduMastered, wuduStats } fr
 import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 import PdfFirstPage from './pdfview.jsx';
 import { say } from './adad.js';
-import { TRIP_CATS, tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement, tripShareText } from './trip.js';
+import { TRIP_CATS, TRIP_CREW, nextDay, currentDay, tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement, tripShareText } from './trip.js';
 import { weekReport } from './report.js';
 import { pushStatus, PUSH_TEXTS, HOME_STEPS, readEnv, currentSub, enablePush, disablePush, healPush } from './notify.js';
 import {
@@ -1521,7 +1521,7 @@ function TripCrew({ trip, onSettle, onAddPerson, onRemoveSettlement, onCopy }) {
       )}
 
       {rows.length === 0 ? (
-        <div className="text-sm text-slate-400 mb-3">أضف الرفقة (سعد، خالد…) أو اختر من دفع عند إضافة مصروف.</div>
+        <div className="text-sm text-slate-400 mb-3">اختر من دفع (العلوان، تركي، أبو فارس) عند إضافة مصروف، أو أضف اسمًا.</div>
       ) : (
         <div className="space-y-2 mb-3">
           {rows.map((b) => (
@@ -3362,10 +3362,13 @@ export default function App() {
   const typeTrip = (patch) => saveTyping({ ...data, trips: data.trips.map((t) => (t.id !== selectedTripId ? t : { ...t, ...patch })) });
   /** بنود السفرة: كل بند باسمه ومبلغه، عشان تعرف كل سفرة وين راحت فلوسها. */
   const addTripItem = (key) => {
-    if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب اسم البند' }); return; }
     if (key === 'expenseItems') {
-      // اليوم والتصنيف ومن دفع: بهم يعرف كم لكل واحدٍ من الرفقة
-      const item = makeExpense({ id: uid(), name: form.name, amount: form.amount, day: form.day, cat: form.cat, paidBy: form.paidBy });
+      // وش شريت: سكن أو بنزين أو أكل وشرب، و«أخرى» يكتب فيها بالضبط
+      if (!form.cat) { setForm({ ...form, error: 'اختر وش شريت' }); return; }
+      if (form.cat === 'أخرى' && !form.name?.trim()) { setForm({ ...form, error: 'اكتب وش شريت بالضبط' }); return; }
+      if (!(Number(form.amount) > 0)) { setForm({ ...form, error: 'اكتب المبلغ' }); return; }
+      // اليوم والنوع ومن دفع: بهم يعرف كم لكل واحدٍ من الرفقة
+      const item = makeExpense({ id: uid(), name: form.cat === 'أخرى' ? form.name : form.cat, amount: form.amount, day: form.day || currentDay(trip), cat: form.cat, paidBy: form.paidBy });
       patchTrip({
         expenseItems: [...(trip.expenseItems || []), item],
         ...(item.paidBy && !(trip.people || []).includes(item.paidBy) ? { people: [...new Set([...(trip.people || []), item.paidBy])] } : {}),
@@ -3373,6 +3376,7 @@ export default function App() {
       closeModal();
       return;
     }
+    if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب اسم البند' }); return; }
     patchTrip({ [key]: [...(trip[key] || []), { id: uid(), name: form.name.trim(), amount: Number(form.amount || 0) }] });
     closeModal();
   };
@@ -9156,8 +9160,7 @@ export default function App() {
               title="المصروفات" subtitle="كل بند باسمه: أكل، سكن، مواصلات… ومن دفعه ولأي يوم"
               items={trip.expenseItems} tone="red"
               onAdd={() => {
-                const last = (trip.expenseItems || []).filter((x) => x.day).slice(-1)[0];
-                setForm({ itemKey: 'expenseItems', day: last?.day || '', cat: '', paidBy: '' });
+                setForm({ itemKey: 'expenseItems', day: currentDay(trip), cat: '', paidBy: '' });
                 setModal('addTripItem');
               }}
               onRemove={(id) => removeTripItem('expenseItems', id)} />
@@ -11673,57 +11676,67 @@ export default function App() {
         );
       })()}
 
-      {modal === 'addTripItem' && (
-        <Modal title={form.itemKey === 'expenseItems' ? 'مصروف جديد' : 'إيراد جديد'} onClose={closeModal}>
-          <Field label="البند" hint={form.itemKey === 'expenseItems' ? 'مثال: أكل، سكن، مواصلات، تذاكر' : 'مثال: اشتراكات المشاركين، دعم'}>
-            <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })}
-              placeholder={form.itemKey === 'expenseItems' ? 'أكل' : 'اشتراكات'} />
-          </Field>
-          <Field label="المبلغ (ر.س)">
-            <input type="number" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
-          </Field>
-          {form.itemKey === 'expenseItems' && trip && (() => {
-            const days = [...new Set((trip.expenseItems || []).map((x) => x.day).filter(Boolean))];
-            const next = `اليوم ${days.length + 1}`;
-            const chip = (on) => `px-3 py-1.5 rounded-lg text-xs font-semibold border ${on ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`;
-            return (
-              <>
-                <Field label="اليوم">
-                  <input className={inputCls} value={form.day || ''} onChange={(e) => setForm({ ...form, day: e.target.value })} placeholder="اليوم الأول" />
-                  <div className="flex flex-wrap gap-1.5 mt-2">
-                    {[...days, ...(days.includes(next) ? [] : [next])].map((d) => (
-                      <button key={d} type="button" className={chip(form.day === d)} onClick={() => setForm({ ...form, day: d })}>{d}</button>
-                    ))}
-                  </div>
-                </Field>
-                <Field label="النوع">
-                  <div className="flex flex-wrap gap-1.5">
-                    {TRIP_CATS.map((c) => (
-                      <button key={c} type="button" className={chip(form.cat === c)}
-                        onClick={() => setForm({ ...form, cat: form.cat === c ? '' : c, name: form.name || (c === 'أخرى' ? '' : c) })}>{c}</button>
-                    ))}
-                  </div>
-                </Field>
-                <Field label="من دفع؟" hint="اتركه فاضيًا لو دفعته أنت أو من صندوق السفرة.">
-                  <div className="flex flex-wrap gap-1.5">
-                    <button type="button" className={chip(!form.paidBy)} onClick={() => setForm({ ...form, paidBy: '' })}>أنا / الصندوق</button>
-                    {tripPeople(trip).map((n) => (
-                      <button key={n} type="button" className={chip(form.paidBy === n)} onClick={() => setForm({ ...form, paidBy: n })}>{n}</button>
-                    ))}
-                  </div>
-                  <input className={inputCls + ' mt-2'} value={tripPeople(trip).includes(form.paidBy) ? '' : (form.paidBy || '')}
-                    onChange={(e) => setForm({ ...form, paidBy: e.target.value })} placeholder="أو اكتب اسمًا جديدًا" />
-                </Field>
-              </>
-            );
-          })()}
-          {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
-          <div className="flex gap-2 mt-5">
-            <button className={btnPrimary + ' flex-1'} onClick={() => addTripItem(form.itemKey)}>إضافة</button>
-            <button className={btnGhost} onClick={closeModal}>إلغاء</button>
-          </div>
-        </Modal>
-      )}
+      {modal === 'addTripItem' && (() => {
+        const isExp = form.itemKey === 'expenseItems';
+        if (!isExp) {
+          return (
+            <Modal title="إيراد جديد" onClose={closeModal}>
+              <Field label="البند" hint="مثال: اشتراكات المشاركين، دعم">
+                <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} placeholder="اشتراكات" />
+              </Field>
+              <Field label="المبلغ (ر.س)">
+                <input type="number" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
+              </Field>
+              {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+              <div className="flex gap-2 mt-5">
+                <button className={btnPrimary + ' flex-1'} onClick={() => addTripItem(form.itemKey)}>إضافة</button>
+                <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+              </div>
+            </Modal>
+          );
+        }
+        const days = [...new Set((trip?.expenseItems || []).map((x) => x.day).filter(Boolean))];
+        const next = nextDay(trip);
+        const crew = [...new Set([...TRIP_CREW, ...tripPeople(trip)])];
+        const chip = (on) => `px-4 py-2.5 rounded-lg text-sm font-semibold border ${on ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`;
+        return (
+          <Modal title="مصروف جديد" onClose={closeModal}>
+            <Field label="من دفع؟">
+              <div className="flex flex-wrap gap-1.5">
+                {crew.map((n) => (
+                  <button key={n} type="button" className={chip(form.paidBy === n)} onClick={() => setForm({ ...form, paidBy: form.paidBy === n ? '' : n, error: '' })}>{n}</button>
+                ))}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1.5">لو دفعته أنت أو من صندوق السفرة اتركه بلا اختيار.</div>
+            </Field>
+            <Field label="وش شريت؟">
+              <div className="flex flex-wrap gap-1.5">
+                {TRIP_CATS.map((c) => (
+                  <button key={c} type="button" className={chip(form.cat === c)} onClick={() => setForm({ ...form, cat: c, error: '' })}>{c}</button>
+                ))}
+              </div>
+              {form.cat === 'أخرى' && (
+                <input className={inputCls + ' mt-2'} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} placeholder="اكتب وش شريت بالضبط" autoFocus />
+              )}
+            </Field>
+            <Field label="المبلغ (ر.س)">
+              <input type="number" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value, error: '' })} />
+            </Field>
+            <Field label="اليوم" hint="يقع المصروف في آخر يوم كتبته، وتغيّره أو تبدأ يومًا جديدًا بضغطة.">
+              <div className="flex flex-wrap gap-1.5">
+                {[...days, ...(days.includes(next) ? [] : [next])].map((d) => (
+                  <button key={d} type="button" className={chip(form.day === d)} onClick={() => setForm({ ...form, day: d })}>{d}</button>
+                ))}
+              </div>
+            </Field>
+            {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+            <div className="flex gap-2 mt-5">
+              <button className={btnPrimary + ' flex-1'} onClick={() => addTripItem(form.itemKey)}>إضافة</button>
+              <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {modal === 'addTrip' && (
         <Modal title="سفرة جديدة" onClose={closeModal}>
