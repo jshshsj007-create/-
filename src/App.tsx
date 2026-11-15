@@ -9412,11 +9412,6 @@ export default function App() {
                     <>
                       {/* حسابه هو: ما دفع وما استلم وما بقي له — وحده */}
                       {me && <TripMyAccount balance={me} />}
-                      {canEnter && !me && (
-                        <div className="bg-brand-50 border border-brand-100 rounded-xl px-3.5 py-3 mb-3 text-xs text-brand-800 leading-6">
-                          تُدخِل هنا مصروفاتك فقط، والحساب عند صاحب الفريق.
-                        </div>
-                      )}
                       <TripItems
                         title={canEnter ? 'مصروفاتك' : 'ما دفعتَه'} subtitle={canEnter ? 'تعدّل وتحذف ما أدخلتَه أنت.' : 'ما دُفع باسمك.'}
                         items={trip.expenseItems} tone="red"

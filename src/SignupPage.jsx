@@ -629,7 +629,6 @@ export default function SignupPage({ token }) {
     return (
       <Shell>
         <div className="bg-white rounded-2xl p-8 text-center">
-          <div className="text-4xl mb-3">🔒</div>
           <div className="font-bold text-lg text-slate-800 mb-1">{closedTexts.title || why.title}</div>
           {(closedTexts.text || why.text) !== '' && (
             <div className="text-sm text-slate-500 mb-5 whitespace-pre-wrap">{closedTexts.text || why.text}</div>
