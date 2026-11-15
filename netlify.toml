@@ -2,6 +2,10 @@
 [build]
   command = "npm run build"
   publish = "dist"
+  # كل نشرةٍ تُكلّف رصيدًا، وما يُدفع إلى فرعٍ تجريبيٍّ ليس للنشر: فلا يُبنى.
+  # الإنتاج وحده يُبنى. وإن لم يُعرف اسم الفرع (بناءٌ يدوي) فيُبنى كما كان، فلا يُخطئ
+  # الشرطُ إلى جهة تمنع نشرًا مقصودًا. (خروج 0 = تخطَّ، وغيره = ابنِ)
+  ignore = '[ -n "$BRANCH" ] && [ "$BRANCH" != "claude/programs-revenue-management-mqi2d1" ]'
 
 [build.environment]
   NODE_VERSION = "20"
