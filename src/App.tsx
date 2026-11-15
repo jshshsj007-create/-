@@ -1497,49 +1497,36 @@ function FaidAnalysis({ breakdown, onDrill }) {
  * بضغطة إن دفع عنه غيره)، واليوم هو آخر يومٍ كُتب، والنوع بضغطةٍ كبيرة، والمؤشر ينتقل وحده إلى
  * المبلغ، وبعد الحفظ تفرغ الشاشة جاهزةً لما بعده بلا إغلاق.
  */
-function TripQuickEntry({ trip, onSave }) {
+function TripQuickEntry({ trip, me, onSave }) {
   const crew = [...new Set([...TRIP_CREW, ...tripPeople(trip)])];
-  const [payer, setPayer] = useState('');
-  const [newPayer, setNewPayer] = useState(false);
+  const mine = me?.name || '';
   const [cat, setCat] = useState('');
   const [sub, setSub] = useState('');
   const [other, setOther] = useState('');
   const [amount, setAmount] = useState('');
+  const [payer, setPayer] = useState(mine);
+  const [pickPayer, setPickPayer] = useState(false);
   const [pickDay, setPickDay] = useState(false);
   const [day, setDay] = useState('');
   const [done, setDone] = useState('');
   const theDay = day || currentDay(trip);
   const days = [...new Set((trip.expenseItems || []).map((x) => x.day).filter((d) => d && d !== PRE_DAY))];
   const next = nextDay(trip);
-  const ready = Boolean(payer.trim()) && Boolean(cat) && Number(amount) > 0 && (cat !== 'أخرى' || other.trim());
+  const ready = Boolean(cat) && Number(amount) > 0 && (cat !== 'أخرى' || other.trim());
   const focusAmount = () => setTimeout(() => document.getElementById('quick-amount')?.focus(), 60);
   const big = (on) => `rounded-xl py-4 text-base font-bold border ${on ? 'bg-brand-600 border-brand-600 text-white' : 'border-slate-200 text-slate-700 bg-white'}`;
   const chip = (on) => `px-3.5 py-2 rounded-lg text-sm font-semibold border ${on ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`;
   const save = () => {
     if (!ready) return;
     const name = cat === 'أخرى' ? other.trim() : (sub || cat);
-    onSave({ name, amount, cat, sub: cat === 'أكل وشرب' ? sub : '', paidBy: payer.trim(), day: theDay });
-    setDone(`${name} ${fmt(Number(amount))} ر.س — دفع ${payer.trim()}`);
+    onSave({ name, amount, cat, sub: cat === 'أكل وشرب' ? sub : '', paidBy: payer, day: theDay });
+    setDone(`${name} ${fmt(Number(amount))} ر.س`);
     setTimeout(() => setDone(''), 2500);
-    // الدافع يبقى: من يسجّل لواحدٍ يسجّل له عدة بنود، وتغييره بضغطة
     setCat(''); setSub(''); setOther(''); setAmount('');
   };
   return (
     <div className={cardCls} data-testid="quick-entry">
-      <div className="text-sm font-semibold text-slate-700 mb-2">من دفع؟</div>
-      <div className="grid grid-cols-3 gap-2" data-testid="q-payers">
-        {crew.map((n) => (
-          <button key={n} type="button" data-testid={`qp-${n}`} className={big(payer === n && !newPayer) + ' !py-3 !text-sm'}
-            onClick={() => { setPayer(n); setNewPayer(false); }}>{n}</button>
-        ))}
-        <button type="button" data-testid="qp-other" className={big(newPayer) + ' !py-3 !text-sm border-dashed'}
-          onClick={() => { setNewPayer(true); setPayer(''); }}>+ آخر</button>
-      </div>
-      {newPayer && (
-        <input className={inputCls + ' mt-2'} value={payer} onChange={(e) => setPayer(e.target.value)} placeholder="اسم من دفع" autoFocus />
-      )}
-
-      <div className="text-sm font-semibold text-slate-700 mt-4 mb-2">وش شريت؟</div>
+      <div className="text-sm font-semibold text-slate-700 mb-3">وش شريت؟</div>
       <div className="grid grid-cols-2 gap-2">
         {TRIP_CATS.map((c) => (
           <button key={c} type="button" data-testid={`q-${c}`} className={big(cat === c)}
@@ -1563,16 +1550,26 @@ function TripQuickEntry({ trip, onSave }) {
 
       <button type="button" data-testid="q-save" disabled={!ready} onClick={save}
         className="w-full mt-3 rounded-xl py-4 text-lg font-extrabold text-white bg-brand-600 disabled:opacity-30">حفظ</button>
-      {!payer.trim() && (cat || amount) && <div className="text-center text-amber-700 text-xs mt-2">اختر من دفع أولًا.</div>}
       {done && <div className="text-center text-green-600 font-bold text-sm mt-2" data-testid="q-done">تم ✓ {done}</div>}
 
-      <div className="mt-4 pt-3 border-t border-slate-100 text-sm">
+      <div className="mt-4 pt-3 border-t border-slate-100 space-y-2 text-sm">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-slate-500">الدافع: <b className="text-slate-800">{payer || '—'}</b>{payer && payer === mine ? ' (أنت)' : ''}</span>
+          <button type="button" className="text-xs font-semibold text-brand-700" onClick={() => setPickPayer(!pickPayer)}>{pickPayer ? 'تم' : 'غيري'}</button>
+        </div>
+        {pickPayer && (
+          <div className="flex flex-wrap gap-1.5">
+            {[mine, ...crew.filter((n) => n !== mine)].filter(Boolean).map((n) => (
+              <button key={n} type="button" className={chip(payer === n)} onClick={() => { setPayer(n); setPickPayer(false); }}>{n === mine ? `${n} (أنا)` : n}</button>
+            ))}
+          </div>
+        )}
         <div className="flex items-center justify-between gap-2">
           <span className="text-slate-500">اليوم: <b className="text-slate-800">{theDay}</b></span>
           <button type="button" className="text-xs font-semibold text-brand-700" onClick={() => setPickDay(!pickDay)}>{pickDay ? 'تم' : 'غيّر'}</button>
         </div>
         {pickDay && (
-          <div className="flex flex-wrap gap-1.5 mt-2">
+          <div className="flex flex-wrap gap-1.5">
             <button type="button" className={chip(theDay === PRE_DAY)} onClick={() => { setDay(PRE_DAY); setPickDay(false); }}>{PRE_DAY}</button>
             {days.map((d) => <button key={d} type="button" className={chip(theDay === d)} onClick={() => { setDay(d); setPickDay(false); }}>{d}</button>)}
             {!days.includes(next) && <button type="button" className={chip(theDay === next) + ' border-dashed'} onClick={() => { setDay(next); setPickDay(false); }}>+ يوم جديد</button>}
@@ -9316,7 +9313,7 @@ export default function App() {
                   أنت تُدخِل مصروفات هذه السفرة: تضيف المصروف باسمك، وترى ما أدخلتَه أنت فقط. الحساب والتسويات عند صاحب الفريق.
                 </div>
                 <TripQuickEntry
-                  trip={trip}
+                  trip={trip} me={effectiveUser}
                   onSave={(f) => {
                     const item = makeExpense({ id: uid(), name: f.name, amount: f.amount, day: f.day, cat: f.cat, paidBy: f.paidBy, sub: f.sub, by: effectiveUser?.id });
                     patchTrip({ expenseItems: [...(trip.expenseItems || []), item] });
