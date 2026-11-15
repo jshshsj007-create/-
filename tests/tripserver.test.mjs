@@ -161,5 +161,16 @@ r = await call({ op: 'push', token: alawan, baseRev: r.body.rev, data: again });
 after = (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data.trips.find((t) => t.id === 't1');
 check('المدير يفتحها فيعود الإدخال', after.closed === false && after.expenseItems.some((x) => x.id === 'ok1'));
 
+// ---- سكنٌ مقسَّم على أيام يُدخِله مُدخِل ----
+r = await call({ op: 'pull', token: alawan, sinceRev: 0 });
+const spread = JSON.parse(JSON.stringify(r.body.data));
+spread.trips[0].expenseItems.push(
+  { id: 'sp1', name: 'سكن', amount: 334, cat: 'سكن', day: 'اليوم الأول', paidBy: 'العلوان', grp: 'sp1', part: '١ من ٢' },
+  { id: 'sp2', name: 'سكن', amount: 333, cat: 'سكن', day: 'اليوم الثاني', paidBy: 'العلوان', grp: 'sp1', part: '٢ من ٢' });
+r = await call({ op: 'push', token: alawan, baseRev: r.body.rev, data: spread });
+after = (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data.trips.find((t) => t.id === 't1');
+const sp = after.expenseItems.filter((x) => x.grp === 'sp1');
+check('أجزاء السكن من المُدخِل تُحفظ بمجموعتها وعلامتها وباسمه', sp.length === 2 && sp.every((x) => x.by === 'u4' && x.paidBy === 'العلوان') && sp.map((x) => x.part).join() === '١ من ٢,٢ من ٢', JSON.stringify(sp));
+
 console.log(`\n${bad ? '✗' : '✅'} ${ok} نجح، ${bad} فشل`);
 process.exit(bad ? 1 : 0);

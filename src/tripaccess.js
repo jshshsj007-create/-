@@ -74,6 +74,9 @@ const cleanItem = (x, me) => ({
   ...(x.cat ? { cat: String(x.cat).slice(0, 40) } : {}),
   ...(x.paidBy ? { paidBy: String(x.paidBy).slice(0, 40) } : {}),
   ...(x.sub ? { sub: String(x.sub).slice(0, 40) } : {}),
+  // سكنٌ مقسَّمٌ على أيام: معرّف المجموعة وعلامة «جزء ١ من ٣»
+  ...(x.grp ? { grp: String(x.grp).slice(0, 40) } : {}),
+  ...(x.part ? { part: String(x.part).slice(0, 20) } : {}),
   by: me.id,
 });
 

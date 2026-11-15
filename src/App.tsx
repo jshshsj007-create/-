@@ -46,7 +46,7 @@ import { DEFAULT_WUDU_STEPS, wuduDone, wuduPercent, wuduMastered, wuduStats } fr
 import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 import PdfFirstPage from './pdfview.jsx';
 import { say } from './adad.js';
-import { TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, PRE_DAY, editExpense, tripSheetSections, tripReportText, copyTrip, nextDay, currentDay, tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement } from './trip.js';
+import { TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, PRE_DAY, editExpense, tripSheetSections, tripReportText, copyTrip, makeSpread, STAY_DAYS, stayLabel, nextDay, currentDay, tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement } from './trip.js';
 import { weekReport } from './report.js';
 import { pushStatus, PUSH_TEXTS, HOME_STEPS, readEnv, currentSub, enablePush, disablePush, healPush } from './notify.js';
 import {
@@ -1741,11 +1741,12 @@ function TripItems({ title, subtitle, items, tone, onAdd, onRemove, onEdit, user
             <div key={it.id} className="flex items-center justify-between text-sm border-b border-slate-50 pb-2 gap-2">
               <span className="min-w-0">
                 <span className="text-slate-700 font-medium block truncate">{it.name}</span>
-                {(it.day || it.cat || it.paidBy || it.by || it.edited) && (
+                {(it.day || it.cat || it.paidBy || it.by || it.edited || it.part) && (
                   <span className="text-[11px] text-slate-400 block truncate">
                     {[it.day, it.cat, it.paidBy ? `دفع ${it.paidBy}` : '',
                       // من سجّله غير من دفعه: قد يسجّل المقوشي أن العلوان دفع
                       it.by && users ? `أدخله ${(users.find((u) => u.id === it.by) || {}).name || ''}`.trim() : '',
+                      it.part ? `جزء ${it.part}` : '',
                       it.edited ? 'عُدّل' : ''].filter(Boolean).join(' · ')}
                   </span>
                 )}
@@ -3498,6 +3499,15 @@ export default function App() {
         closeModal();
         return;
       }
+      // سكنٌ يغطي عدة أيام: بنودٌ بعدد الأيام، لكل يومٍ نصيبه
+      const nights = form.cat === 'سكن' ? Number(form.nights || 1) : 1;
+      if (nights > 1) {
+        const parts = makeSpread({ ids: Array.from({ length: nights }, () => uid()), name: fields.name, amount: fields.amount, startDay: fields.day, n: nights, cat: fields.cat, paidBy: fields.paidBy, by: effectiveUser?.id });
+        patchTrip({ expenseItems: [...(trip.expenseItems || []), ...parts] });
+        if (again) setForm({ itemKey: 'expenseItems', day: parts[parts.length - 1].day, paidBy: form.paidBy || '', cat: '', sub: '', nights: 1, amount: '', name: '', added: (form.added || 0) + 1 });
+        else closeModal();
+        return;
+      }
       const item = makeExpense({ id: uid(), ...fields, by: effectiveUser?.id });
       patchTrip({
         expenseItems: [...(trip.expenseItems || []), item],
@@ -3530,7 +3540,16 @@ export default function App() {
     setForm({ itemKey: 'expenseItems', editId: it.id, cat: known ? it.cat : 'أخرى', name: (!known || it.cat === 'أخرى') ? it.name : '', sub: it.sub || '', paidBy: it.paidBy || '', amount: it.amount, day: it.day || currentDay(trip) });
     setModal('addTripItem');
   };
-  const removeTripItem = (key, itemId) => patchTrip({ [key]: (trip[key] || []).filter((x) => x.id !== itemId) });
+  const removeTripItem = (key, itemId) => {
+    const it = (trip[key] || []).find((x) => x.id === itemId);
+    // جزءٌ من سكنٍ مقسَّم: يُسأل عن الكل، وإلا بقي بعض الأجزاء يتيمًا بمبلغٍ لا يُفهم
+    if (key === 'expenseItems' && it?.grp) {
+      const n = (trip[key] || []).filter((x) => x.grp === it.grp).length;
+      askConfirm(`هذا جزء من سكنٍ مقسَّم على ${n} أيام. تحذف الأجزاء كلها؟`, () => patchTrip({ [key]: (trip[key] || []).filter((x) => x.grp !== it.grp) }), 'نعم، احذفها كلها');
+      return;
+    }
+    patchTrip({ [key]: (trip[key] || []).filter((x) => x.id !== itemId) });
+  };
   const removeTrip = (tid) => {
     const gone = data.trips.find((t) => t.id === tid);
     save({
@@ -11957,9 +11976,21 @@ export default function App() {
             <Field label="وش شريت؟">
               <div className="flex flex-wrap gap-1.5">
                 {TRIP_CATS.map((c) => (
-                  <button key={c} type="button" className={chip(form.cat === c)} onClick={() => setForm({ ...form, cat: c, sub: c === 'أكل وشرب' ? form.sub : '', error: '' })}>{c}</button>
+                  <button key={c} type="button" className={chip(form.cat === c)} onClick={() => setForm({ ...form, cat: c, sub: c === 'أكل وشرب' ? form.sub : '', nights: c === 'سكن' ? form.nights : 1, error: '' })}>{c}</button>
                 ))}
               </div>
+              {form.cat === 'سكن' && !form.editId && (
+                <div className="mt-2" data-testid="stay-days">
+                  <div className="text-[11px] text-slate-400 mb-1.5">كم يومًا يغطي؟ يُقسَّم المبلغ على الأيام.</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {STAY_DAYS.map((n) => (
+                      <button key={n} type="button" data-testid={`stay-${n}`}
+                        className={`px-3 py-2 rounded-lg text-xs font-semibold border ${(form.nights || 1) === n ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`}
+                        onClick={() => { setForm({ ...form, nights: n }); setTimeout(() => document.getElementById('trip-amount')?.focus(), 50); }}>{stayLabel(n)}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {form.cat === 'أكل وشرب' && (
                 <div className="flex flex-wrap gap-1.5 mt-2" data-testid="food-subs">
                   {FOOD_SUBS.map((c) => (

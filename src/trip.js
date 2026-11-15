@@ -148,16 +148,20 @@ export const makeSettlement = ({ id, person, amount, date, note, how }) => ({
  * فمن أدخله المقوشي وعدّله المدير يبقى مكتوبًا «أدخله المقوشي»، وتُعرف أنه تغيّر. والحذف
  * وإعادة الإدخال كانا يمحوان هذا كله، ويُضيّعان من أدخله.
  */
-export const editExpense = (old, patch) => makeExpense({
-  id: old?.id,
-  name: patch?.name ?? old?.name,
-  amount: patch?.amount ?? old?.amount,
-  day: patch?.day ?? old?.day,
-  cat: patch?.cat ?? old?.cat,
-  paidBy: patch?.paidBy ?? old?.paidBy,
-  sub: patch?.sub ?? old?.sub,
-  by: old?.by,
-  edited: true,
+export const editExpense = (old, patch) => ({
+  ...makeExpense({
+    id: old?.id,
+    name: patch?.name ?? old?.name,
+    amount: patch?.amount ?? old?.amount,
+    day: patch?.day ?? old?.day,
+    cat: patch?.cat ?? old?.cat,
+    paidBy: patch?.paidBy ?? old?.paidBy,
+    sub: patch?.sub ?? old?.sub,
+    by: old?.by,
+    edited: true,
+  }),
+  // جزءٌ من سكنٍ مقسَّم يبقى جزءًا: لا يفقد مجموعته بتعديل مبلغه
+  ...(old?.grp ? { grp: old.grp, part: old.part } : {}),
 });
 
 const fmtN = (n) => Number(n || 0).toLocaleString('en-US');
@@ -246,6 +250,58 @@ export const tripReportText = (trip) => {
     for (const d of days) lines.push(`- ${d.day}: ${fmtN(d.total)} (${dayLine(d)})`);
   }
   return lines.join('\n');
+};
+
+/** كم يومًا يغطي السكن: يوم واحد أو يومان أو ثلاثة. */
+export const STAY_DAYS = [1, 2, 3];
+export const stayLabel = (n) => (n === 1 ? 'يوم واحد' : n === 2 ? 'يومين' : n === 3 ? 'ثلاثة أيام' : `${n} أيام`);
+
+/**
+ * يقسّم مبلغًا على أيام: صحيحٌ في كل يوم، والكسر في أولها — فيبقى المجموع مطابقًا.
+ * ١٠٠٠ على ٣ = ٣٣٤ و٣٣٣ و٣٣٣، لا ثلاث ٣٣٣٫٣٣ تُجمع ٩٩٩٫٩٩.
+ */
+export const splitAcross = (total, n) => {
+  const k = Math.max(1, Math.round(num(n)));
+  const sum = Math.max(0, Math.round(num(total)));
+  const each = Math.floor(sum / k);
+  return Array.from({ length: k }, (_, i) => each + (i === 0 ? sum - each * k : 0));
+};
+
+/**
+ * أيام السكن المتتابعة من يومٍ معلوم.
+ *
+ * من اليوم الأول ثلاثة أيام = الأول والثاني والثالث. وما دُفع «قبل السفرة» يغطي أيامها من أولها.
+ * ويومٌ كتبه صاحبه بيده بلا ترتيبٍ يُعرف يبقى كما هو لكل الأجزاء، فلا نخترع له أيامًا.
+ */
+export const spanDays = (startDay, n) => {
+  const k = Math.max(1, Math.round(num(n)));
+  const d = str(startDay);
+  let first;
+  if (!d || d === PRE_DAY) first = 1;
+  else {
+    const at = ORDINALS.findIndex((o) => d === `اليوم ${o}`);
+    first = at >= 0 ? at + 1 : 0;
+  }
+  if (!first) return Array.from({ length: k }, () => d);
+  return Array.from({ length: k }, (_, i) => dayName(first + i));
+};
+
+const AR_DIGITS = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+const arN = (n) => String(n).replace(/\d/g, (c) => AR_DIGITS[Number(c)]);
+
+/**
+ * سكنٌ يغطي عدة أيام: بنودٌ بعدد الأيام، لكل يومٍ نصيبه، بنفس الدافع والنوع.
+ *
+ * وتحمل معرّفًا مشتركًا (`grp`) وعلامة «جزء ١ من ٣»، فيُعرف أنها من مبلغٍ واحد، ويُحذف الكل معًا
+ * إن شاء صاحبه. وحساب الدافع لا يتغيّر: مجموعها هو ما دفعه.
+ */
+export const makeSpread = ({ ids, name, amount, startDay, n, cat, paidBy, by }) => {
+  const days = spanDays(startDay, n);
+  const parts = splitAcross(amount, n);
+  return parts.map((a, i) => ({
+    ...makeExpense({ id: ids[i], name, amount: a, day: days[i], cat, paidBy, by }),
+    ...(parts.length > 1 ? { grp: ids[0], part: `${arN(i + 1)} من ${arN(parts.length)}` } : {}),
+  }));
 };
 
 /**

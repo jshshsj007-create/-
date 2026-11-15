@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {
   tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement, NO_DAY,
-  TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, PRE_DAY, editExpense, tripSheetSections, tripReportText, tripCatRows, copyTrip, nextDay, currentDay, dayName,
+  TRIP_CATS, TRIP_CREW, FOOD_SUBS, HOW, PRE_DAY, editExpense, tripSheetSections, tripReportText, tripCatRows, copyTrip, splitAcross, spanDays, makeSpread, STAY_DAYS, stayLabel, nextDay, currentDay, dayName,
 } from '../src/trip.js';
 
 let passed = 0;
@@ -135,6 +135,8 @@ test('تعديل بند: يبقى معرّفه ومن أدخله، وتوضع ع
   assert.deepEqual([now.id, now.by, now.amount, now.paidBy, now.cat, now.day, now.edited], ['x1', 'u4', 650, 'تركي', 'سكن', 'اليوم الأول', true]);
   assert.equal(old.edited, undefined, 'الأصل لا يتغيّر');
   assert.equal(editExpense(old, { amount: -5 }).amount, 0, 'والسالب يُصفَّر كالإضافة');
+  const part = { ...old, grp: 'g1', part: '٢ من ٣' };
+  assert.deepEqual([editExpense(part, { amount: 300 }).grp, editExpense(part, { amount: 300 }).part], ['g1', '٢ من ٣'], 'جزء السكن يبقى جزءًا');
 });
 
 test('كم على كل نوع: السكن والأكل (مفصّلًا) وأخرى ببنودها، وآخرها الإجمالي', () => {
@@ -193,6 +195,41 @@ test('نسخ سفرة: الشباب والمسؤولون والمُدخِلون�
   assert.equal(old.expenseItems.length, 6, 'والأصل لا يتغيّر');
   assert.equal(copyTrip(old, { id: 't3' }).name, `${old.name} (نسخة)`, 'بلا اسمٍ تأخذ اسم الأصل');
   nu.managers.push('x'); assert.deepEqual(old.managers, ['u1'], 'ولا تتشارك القوائم');
+});
+
+test('السكن يغطي يومًا أو يومين أو ثلاثة', () => {
+  assert.deepEqual(STAY_DAYS, [1, 2, 3]);
+  assert.deepEqual(STAY_DAYS.map(stayLabel), ['يوم واحد', 'يومين', 'ثلاثة أيام']);
+});
+
+test('قسمة المبلغ على الأيام: صحيحٌ في كل يوم والكسر في أولها، والمجموع مطابق', () => {
+  assert.deepEqual(splitAcross(900, 3), [300, 300, 300]);
+  assert.deepEqual(splitAcross(1000, 3), [334, 333, 333]);
+  assert.equal(splitAcross(1000, 3).reduce((a, b) => a + b, 0), 1000);
+  assert.deepEqual(splitAcross(500, 1), [500]);
+  assert.deepEqual(splitAcross(7, 2), [4, 3]);
+  assert.deepEqual(splitAcross(-5, 2), [0, 0], 'والسالب يُصفَّر');
+});
+
+test('أيام السكن المتتابعة: من يومٍ معلوم، ومن «قبل السفرة» من الأول', () => {
+  assert.deepEqual(spanDays('اليوم الأول', 3), ['اليوم الأول', 'اليوم الثاني', 'اليوم الثالث']);
+  assert.deepEqual(spanDays('اليوم الثاني', 2), ['اليوم الثاني', 'اليوم الثالث']);
+  assert.deepEqual(spanDays(PRE_DAY, 2), ['اليوم الأول', 'اليوم الثاني'], 'ما دُفع مقدّمًا يغطي أيامها من أولها');
+  assert.deepEqual(spanDays('', 1), ['اليوم الأول']);
+  assert.deepEqual(spanDays('يوم الوصول', 2), ['يوم الوصول', 'يوم الوصول'], 'يومٌ بلا ترتيبٍ يُعرف يبقى كما كتبه');
+});
+
+test('سكنٌ لثلاثة أيام: ثلاثة بنود بنصيبٍ لكل يوم وعلامة «جزء ١ من ٣»، والدافع واحد والمجموع ما دفع', () => {
+  const parts = makeSpread({ ids: ['g1', 'g2', 'g3'], name: 'سكن', amount: 1000, startDay: 'اليوم الأول', n: 3, cat: 'سكن', paidBy: 'العلوان', by: 'u4' });
+  assert.deepEqual(parts.map((p) => [p.id, p.amount, p.day, p.part]), [
+    ['g1', 334, 'اليوم الأول', '١ من ٣'], ['g2', 333, 'اليوم الثاني', '٢ من ٣'], ['g3', 333, 'اليوم الثالث', '٣ من ٣']]);
+  assert.ok(parts.every((p) => p.grp === 'g1' && p.paidBy === 'العلوان' && p.by === 'u4' && p.cat === 'سكن'));
+  const t = { expenseItems: parts, settlements: [] };
+  assert.equal(tripBalances(t)[0].paid, 1000, 'حساب الدافع لا يتغيّر');
+  assert.equal(tripDays(t).map((d) => d.total).join(','), '334,333,333', 'وكل يومٍ يأخذ نصيبه');
+  const one = makeSpread({ ids: ['x1'], name: 'سكن', amount: 400, startDay: 'اليوم الأول', n: 1, cat: 'سكن' });
+  assert.equal(one.length, 1);
+  assert.equal(one[0].grp, undefined, 'ويومٌ واحد لا علامة له');
 });
 
 console.log(`\n✅ ${passed} اختبارًا لحساب السفرة`);
