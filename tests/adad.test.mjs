@@ -82,6 +82,10 @@ test('ودوري وكأس وسؤال — لتقرير البرنامج المخ�
   assert.equal(say(1, 'league'), 'دوري');
   assert.equal(say(2, 'cup'), 'كأسين');
   assert.equal(say(5, 'question'), '5 أسئلة');
+  assert.equal(say(1, 'item'), 'بند');
+  assert.equal(say(2, 'item'), 'بندين');
+  assert.equal(say(5, 'item'), '5 بنود');
+  assert.equal(say(12, 'item'), '12 بندًا');
   assert.equal(say(19, 'question'), '19 سؤالًا');
 });
 

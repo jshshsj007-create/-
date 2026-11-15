@@ -12,6 +12,9 @@
 /** وش شريت: سكن وبنزين وأكل وشرب، وأخرى يكتب فيها صاحبها بالضبط. */
 export const TRIP_CATS = ['سكن', 'بنزين', 'أكل وشرب', 'أخرى'];
 
+/** إذا اختار «أكل وشرب» ظهرت له هذي الخيارات بضغطة، فيعرف ما أُنفق على الفطور من الغداء. */
+export const FOOD_SUBS = ['فطور', 'غداء', 'عشاء', 'مفرحات', 'ماء'];
+
 /** الرفقة المعتادة: تظهر خياراتٍ عند إضافة مصروفٍ ولو لم تُكتب في السفرة بعد. */
 export const TRIP_CREW = ['العلوان', 'تركي', 'أبو فارس'];
 
@@ -70,11 +73,16 @@ export const tripDays = (trip) => {
   const map = new Map();
   for (const x of trip?.expenseItems || []) {
     const day = str(x?.day) || NO_DAY;
-    if (!map.has(day)) { map.set(day, { day, total: 0, cats: {}, items: [] }); order.push(day); }
+    if (!map.has(day)) { map.set(day, { day, total: 0, cats: {}, subs: {}, items: [] }); order.push(day); }
     const d = map.get(day);
     const cat = str(x?.cat) || 'أخرى';
     d.total += num(x?.amount);
     d.cats[cat] = (d.cats[cat] || 0) + num(x?.amount);
+    // تفصيل الأكل: فطور وغداء وعشاء… تحت مجموع الأكل لا بدلًا منه
+    if (str(x?.sub)) {
+      d.subs[cat] = d.subs[cat] || {};
+      d.subs[cat][str(x.sub)] = (d.subs[cat][str(x.sub)] || 0) + num(x?.amount);
+    }
     d.items.push(x);
   }
   const days = order.map((k) => map.get(k));
@@ -98,13 +106,14 @@ export const tripCats = (trip) => {
  * بندٌ جديد. المبلغ موجبٌ دائمًا، والاسم مطلوب، والدافع إن لم يُكتب فهو من
  * صندوق السفرة نفسه لا من جيب أحد.
  */
-export const makeExpense = ({ id, name, amount, day, cat, paidBy }) => ({
+export const makeExpense = ({ id, name, amount, day, cat, paidBy, sub }) => ({
   id,
   name: str(name),
   amount: Math.max(0, num(amount)),
   ...(str(day) ? { day: str(day) } : {}),
   ...(str(cat) ? { cat: str(cat) } : {}),
   ...(str(paidBy) ? { paidBy: str(paidBy) } : {}),
+  ...(str(sub) ? { sub: str(sub) } : {}),
 });
 
 /** تسوية: ما أُعطيه واحدٌ من الرفقة. */

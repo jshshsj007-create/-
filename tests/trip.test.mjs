@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {
   tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement, tripShareText, NO_DAY,
-  TRIP_CATS, TRIP_CREW, nextDay, currentDay, dayName,
+  TRIP_CATS, TRIP_CREW, FOOD_SUBS, nextDay, currentDay, dayName,
 } from '../src/trip.js';
 
 let passed = 0;
@@ -103,6 +103,18 @@ test('أسماء الأيام بالترتيب، وبعد العاشر برقم�
   assert.equal(dayName(1), 'اليوم الأول');
   assert.equal(dayName(10), 'اليوم العاشر');
   assert.equal(dayName(11), 'اليوم 11\u200F');
+});
+
+test('الأكل يتفصّل: فطور وغداء وعشاء تحت مجموع الأكل لا بدلًا منه', () => {
+  assert.deepEqual(FOOD_SUBS, ['فطور', 'غداء', 'عشاء', 'مفرحات', 'ماء']);
+  const x = makeExpense({ id: '1', name: 'فطور', amount: 80, cat: 'أكل وشرب', sub: 'فطور', day: 'اليوم الأول' });
+  assert.equal(x.sub, 'فطور');
+  const t = { expenseItems: [x, makeExpense({ id: '2', name: 'غداء', amount: 150, cat: 'أكل وشرب', sub: 'غداء', day: 'اليوم الأول' }),
+    makeExpense({ id: '3', name: 'سكن', amount: 500, cat: 'سكن', day: 'اليوم الأول' })] };
+  const d = tripDays(t)[0];
+  assert.equal(d.cats['أكل وشرب'], 230, 'المجموع يبقى كاملًا');
+  assert.deepEqual(d.subs['أكل وشرب'], { فطور: 80, غداء: 150 });
+  assert.equal(d.subs['سكن'], undefined);
 });
 
 console.log(`\n✅ ${passed} اختبارًا لحساب السفرة`);

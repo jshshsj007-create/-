@@ -46,7 +46,7 @@ import { DEFAULT_WUDU_STEPS, wuduDone, wuduPercent, wuduMastered, wuduStats } fr
 import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 import PdfFirstPage from './pdfview.jsx';
 import { say } from './adad.js';
-import { TRIP_CATS, TRIP_CREW, nextDay, currentDay, tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement, tripShareText } from './trip.js';
+import { TRIP_CATS, TRIP_CREW, FOOD_SUBS, nextDay, currentDay, tripPeople, tripBalances, tripOwedTotal, tripDays, tripCats, makeExpense, makeSettlement, tripShareText } from './trip.js';
 import { weekReport } from './report.js';
 import { pushStatus, PUSH_TEXTS, HOME_STEPS, readEnv, currentSub, enablePush, disablePush, healPush } from './notify.js';
 import {
@@ -1587,7 +1587,10 @@ function TripDays({ trip }) {
             </div>
             <div className="flex flex-wrap gap-1.5 mt-2">
               {Object.entries(d.cats).map(([c, v]) => (
-                <span key={c} className="text-[11px] bg-slate-50 text-slate-600 rounded-md px-2 py-1">{c} {fmt(v)}</span>
+                <span key={c} className="text-[11px] bg-slate-50 text-slate-600 rounded-md px-2 py-1">
+                  {c} {fmt(v)}
+                  {d.subs?.[c] && <span className="text-slate-400"> ({Object.entries(d.subs[c]).map(([k, n]) => `${k} ${fmt(n)}`).join(' · ')})</span>}
+                </span>
               ))}
             </div>
           </div>
@@ -3361,19 +3364,21 @@ export default function App() {
   const patchTrip = (patch) => save({ ...data, trips: data.trips.map((t) => (t.id !== selectedTripId ? t : { ...t, ...patch })) });
   const typeTrip = (patch) => saveTyping({ ...data, trips: data.trips.map((t) => (t.id !== selectedTripId ? t : { ...t, ...patch })) });
   /** بنود السفرة: كل بند باسمه ومبلغه، عشان تعرف كل سفرة وين راحت فلوسها. */
-  const addTripItem = (key) => {
+  const addTripItem = (key, again = false) => {
     if (key === 'expenseItems') {
       // وش شريت: سكن أو بنزين أو أكل وشرب، و«أخرى» يكتب فيها بالضبط
       if (!form.cat) { setForm({ ...form, error: 'اختر وش شريت' }); return; }
       if (form.cat === 'أخرى' && !form.name?.trim()) { setForm({ ...form, error: 'اكتب وش شريت بالضبط' }); return; }
       if (!(Number(form.amount) > 0)) { setForm({ ...form, error: 'اكتب المبلغ' }); return; }
       // اليوم والنوع ومن دفع: بهم يعرف كم لكل واحدٍ من الرفقة
-      const item = makeExpense({ id: uid(), name: form.cat === 'أخرى' ? form.name : form.cat, amount: form.amount, day: form.day || currentDay(trip), cat: form.cat, paidBy: form.paidBy });
+      const item = makeExpense({ id: uid(), name: form.cat === 'أخرى' ? form.name : (form.sub || form.cat), amount: form.amount, day: form.day || currentDay(trip), cat: form.cat, paidBy: form.paidBy, sub: form.cat === 'أكل وشرب' ? form.sub : '' });
       patchTrip({
         expenseItems: [...(trip.expenseItems || []), item],
         ...(item.paidBy && !(trip.people || []).includes(item.paidBy) ? { people: [...new Set([...(trip.people || []), item.paidBy])] } : {}),
       });
-      closeModal();
+      // «إضافة وآخر»: يبقى النموذج مفتوحًا بنفس الدافع واليوم، فتدخل خمسة بنودٍ بلا إعادة الاختيار
+      if (again) setForm({ itemKey: 'expenseItems', day: item.day, paidBy: item.paidBy || '', cat: '', sub: '', amount: '', name: '', added: (form.added || 0) + 1 });
+      else closeModal();
       return;
     }
     if (!form.name?.trim()) { setForm({ ...form, error: 'اكتب اسم البند' }); return; }
@@ -9160,7 +9165,7 @@ export default function App() {
               title="المصروفات" subtitle="كل بند باسمه: أكل، سكن، مواصلات… ومن دفعه ولأي يوم"
               items={trip.expenseItems} tone="red"
               onAdd={() => {
-                setForm({ itemKey: 'expenseItems', day: currentDay(trip), cat: '', paidBy: '' });
+                setForm({ itemKey: 'expenseItems', day: currentDay(trip), cat: '', sub: '', paidBy: '' });
                 setModal('addTripItem');
               }}
               onRemove={(id) => removeTripItem('expenseItems', id)} />
@@ -11712,15 +11717,23 @@ export default function App() {
             <Field label="وش شريت؟">
               <div className="flex flex-wrap gap-1.5">
                 {TRIP_CATS.map((c) => (
-                  <button key={c} type="button" className={chip(form.cat === c)} onClick={() => setForm({ ...form, cat: c, error: '' })}>{c}</button>
+                  <button key={c} type="button" className={chip(form.cat === c)} onClick={() => setForm({ ...form, cat: c, sub: c === 'أكل وشرب' ? form.sub : '', error: '' })}>{c}</button>
                 ))}
               </div>
+              {form.cat === 'أكل وشرب' && (
+                <div className="flex flex-wrap gap-1.5 mt-2" data-testid="food-subs">
+                  {FOOD_SUBS.map((c) => (
+                    <button key={c} type="button" className={chip(form.sub === c) + ' !py-2 !px-3 !text-xs'}
+                      onClick={() => { setForm({ ...form, sub: form.sub === c ? '' : c, error: '' }); setTimeout(() => document.getElementById('trip-amount')?.focus(), 50); }}>{c}</button>
+                  ))}
+                </div>
+              )}
               {form.cat === 'أخرى' && (
                 <input className={inputCls + ' mt-2'} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} placeholder="اكتب وش شريت بالضبط" autoFocus />
               )}
             </Field>
-            <Field label="المبلغ (ر.س)">
-              <input type="number" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value, error: '' })} />
+ <Field label="المبلغ (ر.س)">
+              <input id="trip-amount" type="number" inputMode="numeric" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value, error: '' })} />
             </Field>
             <Field label="اليوم" hint="يقع المصروف في آخر يوم كتبته، وتغيّره أو تبدأ يومًا جديدًا بضغطة.">
               <div className="flex flex-wrap gap-1.5">
@@ -11730,9 +11743,11 @@ export default function App() {
               </div>
             </Field>
             {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
+            {form.added > 0 && <div className="text-green-600 text-xs mb-2">أُضيف {say(form.added, 'item')} — كمّل أو أغلق.</div>}
             <div className="flex gap-2 mt-5">
               <button className={btnPrimary + ' flex-1'} onClick={() => addTripItem(form.itemKey)}>إضافة</button>
-              <button className={btnGhost} onClick={closeModal}>إلغاء</button>
+              <button className={btnGhost + ' !text-brand-700 font-bold'} data-testid="add-again" onClick={() => addTripItem(form.itemKey, true)}>إضافة وآخر</button>
+              <button className={btnGhost} onClick={closeModal}>إغلاق</button>
             </div>
           </Modal>
         );
