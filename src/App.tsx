@@ -1491,6 +1491,44 @@ function FaidAnalysis({ breakdown, onDrill }) {
 
 /** بنود سفرة بأسماء حرة (أكل، سكن…) مع مجموعها. */
 /**
+ * من يدير هذه السفرة؟
+ *
+ * صاحب الفريق قد لا يسافر، فيختار حسابًا من حساباته يرى كل شيء في هذه السفرة وحدها
+ * ويسجّل فيها. ولا يرى بها مال البرامج ولا فيض ولا سفرةً لم يُختر لها. وهذا لا يُمنح
+ * من «الصلاحيات»: هناك اسمٌ عامٌّ لكل قسم، وهنا حسابٌ لسفرةٍ بعينها.
+ */
+function TripManagers({ trip, users, onChange }) {
+  const list = (users || []).filter((u) => u.role !== 'مدير' && u.status !== 'غير نشط');
+  const on = trip.managers || [];
+  const toggle = (id) => onChange(on.includes(id) ? on.filter((x) => x !== id) : [...on, id]);
+  return (
+    <div className={cardCls + ' mb-3'} data-testid="trip-managers">
+      <div className="text-sm font-semibold text-slate-700">من يدير هذه السفرة؟</div>
+      <div className="text-xs text-slate-400 mt-0.5 mb-3 leading-6">
+        الحساب الذي تختاره يرى كل شيء في هذه السفرة فقط (المصروفات والشباب والتسويات) ويسجّل فيها،
+        وأنت غائب عنها. ولا يرى مال البرامج ولا فيض ولا سفرةً أخرى.
+      </div>
+      {list.length === 0 ? (
+        <div className="text-sm text-slate-400">ما عندك حسابات بعد. أضفها من الإعدادات ← المستخدمون.</div>
+      ) : (
+        <div className="space-y-2">
+          {list.map((u) => (
+            <button key={u.id} type="button" onClick={() => toggle(u.id)} data-testid={`mgr-${u.username}`}
+              className={`w-full flex items-center justify-between gap-2 rounded-xl border px-3.5 py-3 text-right ${on.includes(u.id) ? 'bg-brand-600 border-brand-600 text-white' : 'border-slate-200 text-slate-700'}`}>
+              <span className="font-semibold">{u.name || u.username}</span>
+              <span className="text-xs">{on.includes(u.id) ? 'يدير هذه السفرة ✓' : 'لا يراها'}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {on.length > 0 && (
+        <div className="text-[11px] text-slate-400 mt-2">تسحبه بضغطة على اسمه، فتختفي السفرة من عنده عند تحديثه التالي.</div>
+      )}
+    </div>
+  );
+}
+
+/**
  * الحساب مع الشباب: كم دفع كل واحدٍ من جيبه، وكم أُعطي، وكم بقي له.
  *
  * يحاسبهم صاحب الفريق بعد كل يومٍ أو بعد فترة، فالتسوية تُسجَّل وقت ما تقع
@@ -4632,6 +4670,12 @@ export default function App() {
   const effectiveUser = currentUser || (data.users.length === 0 ? { role: 'مدير', permissions: PERMS, accessScope: 'all', allowedWeeks: [] } : null);
   const isAdmin = effectiveUser?.role === 'مدير';
   const can = (perm) => isAdmin || (effectiveUser?.permissions || []).includes(perm);
+  /**
+   * مسؤول سفرةٍ بعينها: يفتح السفرات وفيها سفرته وحدها (الخادم لا يرسل له غيرها)،
+   * بلا أن يملك «السفرات» ولا صلاحية المال. فالمنع في الخادم، وهذا لإظهار الشاشة له.
+   */
+  const isTripManager = (data.trips || []).some((t) => effectiveUser?.id && (t.managers || []).includes(effectiveUser.id));
+  const canTrips = can('السفرات') || isTripManager;
   const canSeeWeek = (programId, weekId) => isAdmin || effectiveUser?.accessScope === 'all' || (effectiveUser?.allowedWeeks || []).some((a) => a.programId === programId && a.weekId === weekId);
   const canMoney = can('المصروفات والتقارير');
   /**
@@ -5059,7 +5103,7 @@ export default function App() {
     { id: 'khayr', label: 'خيركم', desc: 'التسميع والمتابعة', icon: BookMarked, show: canKhayr },
     // الطالب المربوط يدخل على سجلّه هو، بلا أي صلاحية
     { id: 'khayrMe', label: 'خيركم', desc: 'سجلّك في التسميع', icon: BookMarked, show: !!myKhayrStudent },
-    { id: 'trips', label: 'السفرات', desc: 'الرحلات وحساباتها', icon: Plane, show: can('السفرات') },
+    { id: 'trips', label: 'السفرات', desc: 'الرحلات وحساباتها', icon: Plane, show: canTrips },
     { id: 'guardians', label: 'المشتركين', desc: 'الطلاب وأولياء أمورهم', icon: UsersIcon, show: canGuardians },
     // الملاحظات السلوكية يراها القادة كلهم — لأنهم كلهم يتعاملون مع الطلاب
     { id: 'studentNotes', label: 'ملاحظات الطلاب', desc: 'السلوكية، لكل القادة', icon: StickyNote, show: isAdmin || writesReport },
@@ -9067,7 +9111,7 @@ export default function App() {
           );
         })()}
 
-        {view === 'trips' && can('السفرات') && (() => {
+        {view === 'trips' && canTrips && (() => {
           const income = tripsInScope.reduce((n, t) => n + tripIncome(t), 0);
           const spent = tripsInScope.reduce((n, t) => n + tripExpenses(t), 0);
           const net = income - spent;
@@ -9075,7 +9119,7 @@ export default function App() {
           <div>
             <div className="flex items-center justify-between mb-1 gap-3">
               <h3 className="font-bold text-slate-700">السفرات</h3>
-              <button className={btnPrimary} onClick={() => { setForm({}); setModal('addTrip'); }}><Plus size={16} /> سفرة جديدة</button>
+              {can('السفرات') && <button className={btnPrimary} onClick={() => { setForm({}); setModal('addTrip'); }}><Plus size={16} /> سفرة جديدة</button>}
             </div>
             <div className="text-sm text-slate-400 mb-4">إيرادات ومصروفات كل سفرة على حدة - مستقلة عن فيض</div>
 
@@ -9152,6 +9196,15 @@ export default function App() {
               <MiniStat label="المصروفات" value={fmt(tripExpenses(trip))} icon={TrendingDown} tone="red" />
               <MiniStat label="الصافي" value={fmt(tripNet(trip))} icon={Wallet} tone={tripNet(trip) >= 0 ? 'brand' : 'red'} />
             </div>
+
+            {/* من يدير السفرة: لصاحب التطبيق وحده، والحجب في الخادم لا هنا */}
+            {isAdmin ? (
+              <TripManagers trip={trip} users={data.users || []} onChange={(managers) => patchTrip({ managers })} />
+            ) : (trip.managers || []).includes(effectiveUser?.id) && (
+              <div className="bg-brand-50 border border-brand-100 rounded-xl px-3.5 py-3 mb-3 text-xs text-brand-800 leading-6">
+                أنت مسؤول عن هذه السفرة: ترى كل شيء فيها وتسجّل المصروفات والتسويات. ولا ترى غيرها.
+              </div>
+            )}
 
             <TripCrew
               trip={trip}

@@ -231,7 +231,7 @@ export const blindMoney = (data, fields = PART_MONEY) => {
  * عدّله هو بنفسه بتأكيده، فما يُردّ عليه القديم — وإلا محا تأكيدَه حجبُه
  * نفسُه. وبقيّة الحقول التي ما رآها تُردّ كما كانت، كأي جهازٍ أعمى عنها.
  */
-export const restoreMoney = (incoming, current, fields = PART_MONEY) => {
+export const restoreMoney = (incoming, current, fields = PART_MONEY, keepTrips = []) => {
   if (!incoming) return incoming;
   const backLedger = (mine, was) => {
     if (!was) return mine;
@@ -267,7 +267,9 @@ export const restoreMoney = (incoming, current, fields = PART_MONEY) => {
     }),
     trips: (incoming.trips || []).map((t) => {
       const was = wasTrip.get(t.id);
-      return was ? { ...t, incomeItems: was.incomeItems || [], expenseItems: was.expenseItems || [], settlements: was.settlements || [] } : t;
+      // ما يديره هذا الحساب من السفرات يكتب فيه مالَه: ما رآه الحجب فيها ولا يُردّ
+      if (!was || keepTrips.includes(t.id)) return t;
+      return { ...t, incomeItems: was.incomeItems || [], expenseItems: was.expenseItems || [], settlements: was.settlements || [] };
     }),
   };
 };

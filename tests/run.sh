@@ -5,6 +5,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 STUB=tests/.stubs
+# الخادم نفسه على مخزنٍ في الذاكرة: من يرى السفرة ومن يكتب فيها. web-push خارج البندل
+# لأنه يستورد crypto بطريقةٍ لا يقبلها بندل ESM، وما يحتاجه هذا الفحص.
+npx --yes esbuild@0.25.0 netlify/functions/state.mjs --bundle --platform=node --format=esm \
+  --outfile=tests/build/state.bundle.mjs --alias:@netlify/blobs=./tests/mock-blobs.mjs \
+  --external:web-push --log-level=warning
+node tests/tripserver.test.mjs
 rm -rf "$STUB" tests/build
 mkdir -p "$STUB/react" "$STUB/lucide-react" tests/build
 
@@ -68,6 +74,7 @@ node tests/receipt.test.mjs
 node tests/nadi.test.mjs
 node tests/cash.test.mjs
 node tests/trip.test.mjs
+node tests/tripaccess.test.mjs
 node tests/perms.test.mjs
 node tests/login.test.mjs
 node tests/visits.test.mjs
