@@ -190,5 +190,27 @@ after = (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data.tri
 check('ولا يكتب شيئًا: القراءة فقط', !after.expenseItems.some((x) => x.id === 'fake') && !after.settlements.some((x) => x.id === 'fakeS'));
 check('وبقية حسابات الشباب باقية عند المدير', after.expenseItems.some((x) => x.paidBy === 'العلوان') && after.expenseItems.length >= 4);
 
+// ---- المُدخِل يصحّح ما أدخله هو ----
+r = await call({ op: 'pull', token: alawan, sinceRev: 0 });
+const fix = JSON.parse(JSON.stringify(r.body.data));
+const mineItems = fix.trips[0].expenseItems;
+check('المُدخِل يرى بنوده (al1, ok1, sp1, sp2)', ['al1', 'ok1'].every((id) => mineItems.some((x) => x.id === id)), JSON.stringify(mineItems.map((x) => x.id)));
+mineItems.find((x) => x.id === 'al1').amount = 110;                      // تعديل بنده
+fix.trips[0].expenseItems = mineItems.filter((x) => x.id !== 'ok1');      // حذف بنده
+const others = fix.trips[0].expenseItems.find((x) => x.by !== 'u4');       // بندٌ ليس له (إن ظهر له)
+r = await call({ op: 'push', token: alawan, baseRev: r.body.rev, data: fix });
+after = (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data.trips.find((t) => t.id === 't1');
+const al1b = after.expenseItems.find((x) => x.id === 'al1');
+check('عدّل بنده: ١١٠ وعليه «عُدّل» وباسمه', al1b.amount === 110 && al1b.edited === true && al1b.by === 'u4', JSON.stringify(al1b));
+check('وحذف بنده ok1', !after.expenseItems.some((x) => x.id === 'ok1'));
+check('وبنود غيره باقية بحالها (et1, new1)', after.expenseItems.some((x) => x.id === 'et1' && x.amount === 600) && after.expenseItems.some((x) => x.id === 'new1' && x.amount === 80), JSON.stringify(after.expenseItems.map((x) => [x.id, x.amount])));
+// محاولة تعديل بند غيره
+r = await call({ op: 'pull', token: alawan, sinceRev: 0 });
+const evil = JSON.parse(JSON.stringify(r.body.data));
+evil.trips[0].expenseItems.push({ id: 'et1', name: 'سكن', amount: 1, paidBy: 'العلوان', by: 'u4' });   // يدّعي بند المدير
+r = await call({ op: 'push', token: alawan, baseRev: r.body.rev, data: evil });
+after = (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data.trips.find((t) => t.id === 't1');
+check('ولا يسطو على بند غيره بادّعاء معرّفه', after.expenseItems.filter((x) => x.id === 'et1').length === 1 && after.expenseItems.find((x) => x.id === 'et1').amount === 600);
+
 console.log(`\n${bad ? '✗' : '✅'} ${ok} نجح، ${bad} فشل`);
 process.exit(bad ? 1 : 0);

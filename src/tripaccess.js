@@ -101,6 +101,7 @@ const cleanItem = (x, me) => ({
   // سكنٌ مقسَّمٌ على أيام: معرّف المجموعة وعلامة «جزء ١ من ٣»
   ...(x.grp ? { grp: String(x.grp).slice(0, 40) } : {}),
   ...(x.part ? { part: String(x.part).slice(0, 20) } : {}),
+  ...(x.edited ? { edited: true } : {}),
   by: me.id,
 });
 
@@ -111,8 +112,8 @@ const cleanItem = (x, me) => ({
  * - السفرة المقفلة: لا يُقبل فيها شيءٌ من غير المدير، ولا حذفُها.
  * - من عنده «السفرات» مع المال: يكتب فيها، لكن **لا يغيّر من يديرها ولا من يُدخِل**.
  * - المسؤول: يكتب في سفرته وحدها، ولا يغيّر من يديرها ولا يحذفها.
- * - المُدخِل: **يضيف بنودًا جديدة فقط**، مكتوبًا عليها اسمُه، ولا يعدّل ما كان ولا يحذفه
- *   ولا يمسّ تسويةً ولا إيرادًا ولا شبابًا ولا مسؤولين.
+ * - المُدخِل: يضيف بنودًا مكتوبًا عليها اسمُه، ويعدّل ويحذف **ما أدخله هو وحده**، ولا يمسّ بند غيره
+ *   ولا تسويةً ولا إيرادًا ولا شبابًا ولا مسؤولين.
  * - من عنده «السفرات» بلا مال: يكتب الاسم والتاريخ، وما حُجب عنه من المال يُردّ.
  * - غيرهم: ما يصلهم منها شيء، فما يعود منهم شيءٌ يُقبل — تبقى كما كانت.
  *
@@ -136,9 +137,22 @@ export const tripsKept = (incoming, current, me, hasTripPerm, seesMoney = false)
     const roles = { managers: old.managers || [], entrants: old.entrants || [], closed: false };
     if (manages(old, me) || full) out.push({ ...t, ...roles });
     else if (enters(old, me)) {
+      /**
+       * المُدخِل يضيف ويصحّح ما أدخله هو وحده.
+       *
+       * إن أخطأ في مبلغٍ أو دافعٍ عدّله أو حذفه، لكن **ما أدخله غيره لا يمسّه** ولو كان باسمه دافعًا:
+       * يبقى كما هو. وما يعدّله يظلّ مكتوبًا باسمه، ولا يقدر أن ينسب بندًا قديمًا إلى نفسه.
+       */
+      const sent = new Map((t.expenseItems || []).filter((x) => x?.id).map((x) => [x.id, x]));
+      const kept = (old.expenseItems || []).flatMap((x) => {
+        if (x.by !== me.id) return [x];                       // بند غيره: كما هو
+        const now = sent.get(x.id);
+        if (!now) return [];                                  // حذفه هو
+        return [{ ...cleanItem(now, me), edited: true }];     // عدّله هو
+      });
       const have = new Set((old.expenseItems || []).map((x) => x.id));
       const fresh = (t.expenseItems || []).filter((x) => x?.id && !have.has(x.id)).slice(0, ENTRANT_MAX).map((x) => cleanItem(x, me));
-      out.push({ ...old, expenseItems: [...(old.expenseItems || []), ...fresh] });
+      out.push({ ...old, expenseItems: [...kept, ...fresh] });
     } else if (hasTripPerm) out.push({ ...t, ...roles });
     else out.push(old);
   }

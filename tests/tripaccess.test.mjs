@@ -135,14 +135,26 @@ test('المُدخِل يضيف بنودًا جديدة: تُكتب باسمه �
   assert.deepEqual(t2.people, ['تركي', 'العلوان']);
 });
 
-test('المُدخِل لا يعدّل بندًا قائمًا ولا يحذفه ولا يمسّ التسويات والمسؤولين', () => {
-  const cur = withEntrant();
-  const inc = [{ ...cur[1], name: 'اخترقت', expenseItems: [{ id: 'm1', name: 'سكن', amount: 1 }], settlements: [], managers: ['u4'], entrants: ['u4', 'u3'] }];
+test('المُدخِل يعدّل ويحذف ما أدخله هو، ولا يمسّ بند غيره ولا التسويات ولا المسؤولين', () => {
+  const cur = withEntrant();                       // e2 أدخله u1 (باسم تركي)، و m1 أدخله u4 (هو)
+  const mine = entrantView(cur[1], alawan);
+  const inc = [{ ...mine, name: 'اخترقت',
+    expenseItems: [{ id: 'm1', name: 'سكن', amount: 95, paidBy: 'تركي', by: 'u1' }, { id: 'e2', name: 'بنزين', amount: 1, paidBy: 'تركي', by: 'u4' }],
+    settlements: [], managers: ['u4'], entrants: ['u4', 'u3'] }];
   const kept = tripsKept(inc, cur, alawan, false).find((t) => t.id === 't2');
   assert.equal(kept.name, 'الجنوب', 'الاسم كما كان');
-  assert.deepEqual(kept.expenseItems.map((x) => [x.id, x.amount]), [['e2', 150], ['m1', 90]], 'لا تعديل ولا حذف');
+  const m1 = kept.expenseItems.find((x) => x.id === 'm1');
+  assert.deepEqual([m1.amount, m1.paidBy, m1.by, m1.edited], [95, 'تركي', 'u4', true], 'عدّل بنده، ويبقى باسمه ولو ادّعى غيره، وتُوضع «عُدّل»');
+  const e2 = kept.expenseItems.find((x) => x.id === 'e2');
+  assert.deepEqual([e2.amount, e2.by], [150, 'u1'], 'وبند غيره (ولو باسمه دافعًا) كما هو');
   assert.equal(kept.settlements.length, 1);
-  assert.deepEqual([kept.managers, kept.entrants], [[], ['u4']], 'لا يعيّن أحدًا');
+  assert.deepEqual([kept.managers, kept.entrants], [[], ['u4']], 'ولا يعيّن أحدًا');
+});
+
+test('وحذف المُدخِل لبنده يُقبل، وبند غيره لا يُحذف ولو غاب من حفظته', () => {
+  const cur = withEntrant();
+  const gone = tripsKept([{ ...entrantView(cur[1], alawan), expenseItems: [] }], cur, alawan, false).find((t) => t.id === 't2');
+  assert.deepEqual(gone.expenseItems.map((x) => x.id), ['e2'], 'حذف بنده m1 وبقي بند غيره e2');
 });
 
 test('المُدخِل لا يمسّ سفرةً غير سفرته، ولا يحذف شيئًا', () => {
@@ -155,8 +167,8 @@ test('المُدخِل لا يمسّ سفرةً غير سفرته، ولا يح�
 test('وما يُلقى من بنودٍ كثيرة يُقطع عند حدّ', () => {
   const cur = withEntrant();
   const spam = Array.from({ length: 100 }, (_, i) => ({ id: 'z' + i, name: 'x', amount: 1 }));
-  const kept = tripsKept([{ ...cur[1], expenseItems: spam }], cur, alawan, false).find((t) => t.id === 't2');
-  assert.equal(kept.expenseItems.length, 2 + 40);
+  const kept = tripsKept([{ ...cur[1], expenseItems: [{ id: 'm1', name: 'سكن', amount: 90 }, ...spam] }], cur, alawan, false).find((t) => t.id === 't2');
+  assert.equal(kept.expenseItems.length, 2 + 40, 'بنده وبند غيره، وأربعون جديدة لا مئة');
 });
 
 test('من عنده «السفرات» مع المال يرى كل شيء ولو كان مُدخِلًا، والمدير يعيّن المُدخِلين', () => {

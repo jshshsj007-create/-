@@ -1540,23 +1540,14 @@ function TripReport({ trip }) {
  */
 function TripMyAccount({ balance }) {
   const { paid, settled, owed } = balance;
+  // سطرٌ صغير: من يُدخِل في سوقٍ لا يريد بطاقةً تدفع زرّ الإضافة إلى أسفل الشاشة
   return (
-    <div className={cardCls + ' mb-3'} data-testid="trip-my-account">
-      <div className="text-sm font-semibold text-slate-700 mb-3">حسابك</div>
-      <div className="grid grid-cols-3 gap-2 text-center">
-        <div className="bg-slate-50 rounded-xl py-3">
-          <div className="text-[11px] text-slate-400">دفعتَ</div>
-          <div className="text-lg font-extrabold text-slate-800 tabular-nums">{fmt(paid)}</div>
-        </div>
-        <div className="bg-slate-50 rounded-xl py-3">
-          <div className="text-[11px] text-slate-400">استلمتَ</div>
-          <div className="text-lg font-extrabold text-slate-800 tabular-nums">{fmt(settled)}</div>
-        </div>
-        <div className={`rounded-xl py-3 ${owed > 0 ? 'bg-amber-50' : 'bg-green-50'}`}>
-          <div className="text-[11px] text-slate-500">{owed < 0 ? 'أُعطيتَ زيادة' : 'الباقي لك'}</div>
-          <div className={`text-lg font-extrabold tabular-nums ${owed > 0 ? 'text-amber-700' : owed < 0 ? 'text-red-600' : 'text-green-700'}`}>{owed === 0 ? 'مسدَّد' : fmt(Math.abs(owed))}</div>
-        </div>
-      </div>
+    <div className="mb-3 flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs" data-testid="trip-my-account">
+      <span className="font-bold text-slate-700">حسابك</span>
+      <span className="text-slate-500 tabular-nums">دفعتَ <b className="text-slate-800">{fmt(paid)}</b> · استلمتَ <b className="text-slate-800">{fmt(settled)}</b></span>
+      <span className={`font-extrabold tabular-nums ${owed > 0 ? 'text-amber-700' : owed < 0 ? 'text-red-600' : 'text-green-700'}`}>
+        {owed === 0 ? 'مسدَّد' : `${owed < 0 ? 'زيادة' : 'لك'} ${fmt(Math.abs(owed))}`}
+      </span>
     </div>
   );
 }
@@ -1744,7 +1735,7 @@ function TripDays({ trip }) {
   );
 }
 
-function TripItems({ title, subtitle, items, tone, onAdd, onRemove, onEdit, users }) {
+function TripItems({ title, subtitle, items, tone, onAdd, onRemove, onEdit, canTouch, users }) {
   const list = items || [];
   const total = sumAmt(list);
   const color = tone === 'red' ? 'text-red-600' : 'text-green-600';
@@ -1781,8 +1772,8 @@ function TripItems({ title, subtitle, items, tone, onAdd, onRemove, onEdit, user
               </span>
               <span className="flex items-center gap-2 shrink-0">
                 <span className={`font-semibold ${color}`}>{fmt(it.amount)} ر.س</span>
-                {onEdit && <button onClick={() => onEdit(it)} data-testid={`edit-${it.id}`} className="text-slate-300 hover:text-brand-600"><Pencil size={14} /></button>}
-                {onRemove && <button onClick={() => onRemove(it.id)} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>}
+                {onEdit && (!canTouch || canTouch(it)) && <button onClick={() => onEdit(it)} data-testid={`edit-${it.id}`} className="text-slate-300 hover:text-brand-600"><Pencil size={14} /></button>}
+                {onRemove && (!canTouch || canTouch(it)) && <button onClick={() => onRemove(it.id)} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>}
               </span>
             </div>
           ))}
@@ -9425,13 +9416,16 @@ export default function App() {
                         </div>
                       )}
                       <TripItems
-                        title={canEnter ? 'مصروفاتك' : 'ما دفعتَه'} subtitle={canEnter ? 'ما أدخلتَه وما دُفع باسمك.' : 'ما دُفع باسمك.'}
+                        title={canEnter ? 'مصروفاتك' : 'ما دفعتَه'} subtitle={canEnter ? 'تعدّل وتحذف ما أدخلتَه أنت.' : 'ما دُفع باسمك.'}
                         items={trip.expenseItems} tone="red"
                         onAdd={canEnter && !trip.closed ? () => {
                           setForm({ itemKey: 'expenseItems', day: currentDay(trip), cat: '', sub: '', paidBy: '' });
                           setModal('addTripItem');
                         } : null}
-                        onRemove={null} />
+                        // يصحّح ما أدخله هو وحده: لو أخطأ في مبلغٍ أو دافع. وبند غيره (ولو باسمه) للقراءة فقط
+                        onEdit={canEnter && !trip.closed ? openEditExpense : null}
+                        onRemove={canEnter && !trip.closed ? (id) => removeTripItem('expenseItems', id) : null}
+                        canTouch={(it) => it.by === effectiveUser?.id} />
                     </>
                   );
                 })()}
