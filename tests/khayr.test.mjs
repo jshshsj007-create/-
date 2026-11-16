@@ -249,7 +249,7 @@ test('وأقسام الورقة: المختصر بلا جدول الطلاب، �
   assert.ok(!brief.some((s) => s.title === 'الطلاب'), 'المختصر يُرفع للمجلس، فلا أسماءَ فيه إلا موضعيهما');
   const box = full.at(-1);
   assert.equal(box.title, 'الطلاب');
-  assert.deepEqual(box.cols.map((c) => c.label), ['الطالب', 'حضور', 'غياب', 'مراجعة', 'تثبيت', 'حفظ', 'متراكم']);
+  assert.deepEqual(box.cols.map((c) => c.label), ['الطالب', 'المحفوظ', 'دورات', 'حضور', 'غياب', 'مراجعة', 'تثبيت', 'حفظ', 'متراكم']);
   assert.equal(box.grid.length, 2);
   assert.equal(box.grid[0][0].t, 'سعد');
 });
@@ -258,11 +258,56 @@ test('وورقةُ الجلسة جدولٌ: الأقسام الثلاثة ثم �
   const secs = khayrSessionSections(sessionRows(sStudents, oneSession));
   assert.deepEqual(secs.map((s) => s.title), ['الحضور', 'ما سُمِّع', 'المجموع']);
   const box = secs[1];
-  assert.deepEqual(box.cols.map((c) => c.label), ['الطالب', 'مراجعة', 'تثبيت', 'حفظ', 'الملاحظات']);
+  assert.deepEqual(box.cols.map((c) => c.label), ['الطالب', 'المحفوظ', 'مراجعة', 'تثبيت', 'حفظ', 'الملاحظات']);
   // ومن لم يُسجَّل يمتدّ سطرُه، فما يُقرأ صفرًا كأنه حضر وما سمّع
   const na = box.grid.find((g) => g[0].t === 'تركي');
-  assert.equal(na[1].t, 'ما سُجّل بعد');
-  assert.equal(na[1].span, 4);
+  assert.equal(na[2].t, 'ما سُجّل بعد');
+  assert.equal(na[2].span, 4);
 });
+
+
+/* ---- المحفوظ الكلي في التقرير ---- */
+{
+  const { memInfo, sessionRows, sessionReportText, khayrRows, khayrReportText, khayrSessionSections, khayrSeasonSections } = await import('../src/khayr.js');
+  // ٩٠ وجهًا = ٤ أجزاء و١٠ أوجه؛ والطالب يحفظ من جهتين (من أول المصحف ومن آخره)
+  const st = { id: 'a', name: 'فهد', wird: { review: 20, tathbit: 0, hifz: 2 }, mem: { amount: 3, unit: 'parts', from: 'الناس', to: 'الأعلى', extra: { amount: 30, unit: 'pages', from: 'البقرة', to: 'آل عمران' } } };
+  const sess = [
+    { id: 's1', date: '1448/06/01', entries: { a: { present: true, review: { pages: 20 }, hifz: { pages: 2 } } } },
+    { id: 's2', date: '1448/06/08', entries: { a: { present: true, review: { pages: 20 }, hifz: { pages: 2 } } } },
+  ];
+  test('محفوظ الطالب: الجهتان تُجمعان أجزاءً وأوجهًا مع حدّه', () => {
+    const m = memInfo(st, sess);
+    assert.equal(m.pages, 90);
+    assert.equal(m.text, '4 أجزاء و10 أوجه');
+    assert.match(m.range, /من الناس إلى الأعلى/);
+    assert.match(m.range, /و من البقرة إلى آل عمران|و?من البقرة إلى آل عمران/);
+  });
+  test('ودورة المراجعة: ما أُكمل وما هو جارٍ بنسبته', () => {
+    const m = memInfo(st, sess);
+    assert.equal(m.cycles, 0);
+    assert.equal(m.curPercent, Math.round((40 / 90) * 100));
+  });
+  test('من لم يُكتب له محفوظ لا سطر له', () => {
+    assert.equal(memInfo({ id: 'z', name: 'ز' }, sess), null);
+  });
+  test('تقرير الجلسة يذكر المحفوظ الكلي بلا أن يتغيّر ما سُمِّع', () => {
+    const rows = sessionRows([st], sess[1], sess);
+    const t = sessionReportText(rows, { title: 'ج', date: sess[1].date });
+    assert.match(t, /المحفوظ: 4 أجزاء و10 أوجه \(90 وجهًا\)/);
+    assert.match(t, /دورة المراجعة: الجارية 44٪/);
+    // وبلا القائمة الكاملة لا سطر محفوظ (يُحفظ شكل الاستدعاء القديم)
+    assert.doesNotMatch(sessionReportText(sessionRows([st], sess[1]), { title: 'ج' }), /المحفوظ:/);
+  });
+  test('تقرير الموسم ووُرَق PDF يحملان المحفوظ والدورات', () => {
+    const rows = khayrRows([st], sess, sess);
+    assert.match(khayrReportText(rows, 'م'), /المحفوظ: 4 أجزاء و10 أوجه/);
+    const full = khayrSeasonSections(rows, { sessions: 2, brief: false }).find((x) => x.title === 'الطلاب');
+    assert.equal(full.cols[1].label, 'المحفوظ');
+    assert.ok(full.grid[0][1].t.includes('90'));
+    const sec = khayrSessionSections(sessionRows([st], sess[1], sess)).find((x) => x.title === 'ما سُمِّع');
+    assert.equal(sec.cols[1].label, 'المحفوظ');
+    assert.equal(sec.cols.length, sec.grid[0].length, 'أعمدة الورقة تطابق خلايا الصف');
+  });
+}
 
 console.log(`\n✅ ${passed} اختبارًا لخيركم\n`);

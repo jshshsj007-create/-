@@ -5048,7 +5048,7 @@ export default function App() {
       const season = kind !== 'session';
       const rows = season
         ? khayrRows(khayr.students, scopedKhayrSessions, khayr.sessions)
-        : sessionRows(khayr.students, khayrSession);
+        : sessionRows(khayr.students, khayrSession, khayr.sessions);
       const brief = kind === 'brief';
       const title = season
         ? `خيركم — ${brief ? 'المختصر' : 'التقرير الكامل'}`
@@ -5078,7 +5078,7 @@ export default function App() {
 
   /** نصُّ الجلسة كما يُلصق في واتساب — النصُّ يكفي المتابع، والورقة لمن يُرفع إليه. */
   const shareKhayrSession = async () => {
-    const rows = sessionRows(khayr.students, khayrSession);
+    const rows = sessionRows(khayr.students, khayrSession, khayr.sessions);
     const title = `خيركم — جلسة ${khayrSession?.date || ''}`;
     const text = sessionReportText(rows, { title, date: khayrSession?.date || '' });
     try {
@@ -8943,9 +8943,11 @@ export default function App() {
                 ) : (
                   <>
                     <div className="bg-white rounded-2xl border border-slate-100 overflow-x-auto">
-                      <table className="w-full text-sm min-w-[520px]">
+                      <table className="w-full text-sm min-w-[560px]">
                         <thead className="bg-slate-50 text-slate-500 text-xs"><tr>
                           <th className="text-right px-4 py-3 font-medium">الطالب</th>
+                          <th className="text-right px-3 py-3 font-medium">المحفوظ</th>
+                          <th className="text-right px-3 py-3 font-medium">دورات</th>
                           <th className="text-right px-3 py-3 font-medium">متراكم</th>
                           <th className="text-right px-3 py-3 font-medium">حضور</th>
                           <th className="text-right px-3 py-3 font-medium">غياب</th>
@@ -8957,6 +8959,8 @@ export default function App() {
                           {khayrRows(khayr.students, scopedKhayrSessions, khayr.sessions).map((r) => (
                             <tr key={r.student.id} className="border-t border-slate-50">
                               <td className="px-4 py-3 font-semibold text-slate-800 whitespace-nowrap">{r.student.name}</td>
+                              <td className="px-3 py-3 text-slate-700 leading-5" data-testid={`mem-${r.student.id}`}>{r.mem ? <>{r.mem.text}<div className="text-slate-400 text-[11px]">{r.mem.pages} وجهًا</div></> : <span className="text-slate-300">—</span>}</td>
+                              <td className="px-3 py-3 text-slate-600 whitespace-nowrap">{r.mem ? <>{r.mem.cycles}{r.mem.curPercent > 0 && <span className="text-slate-400 text-xs"> + {r.mem.curPercent}٪</span>}</> : <span className="text-slate-300">—</span>}</td>
                               <td className={`px-3 py-3 font-bold ${r.carry > 0 ? 'text-amber-600' : 'text-green-600'}`}>{r.carry}</td>
                               <td className="px-3 py-3 text-slate-600">{r.attended}</td>
                               <td className="px-3 py-3 text-slate-400">{r.absent}</td>

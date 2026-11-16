@@ -139,7 +139,16 @@ export const khayrRows = (students, scoped, all) =>
     student: st,
     ...studentTotals(st, scoped),
     carry: studentTotals(st, all).carry,
+    mem: memInfo(st, all),
   }));
+
+/** سطرا المحفوظ في النصّ: «المحفوظ» بأجزائه وحدّه، و«الدورة» بما أُكمل وما هو جارٍ. */
+const memLines = (m) => {
+  if (!m) return [];
+  const out = [`  المحفوظ: ${m.text} (${m.pages} وجهًا)${m.range ? ` · ${m.range}` : ''}`];
+  out.push(`  دورة المراجعة: ${m.cycles ? `${m.cycles} مكتملة · ` : ''}الجارية ${m.curPercent}٪`);
+  return out;
+};
 
 /** تقرير يُنسخ ويُرسل — نص صافٍ بلا جداول، عشان يقرأ في واتساب. */
 export const khayrReportText = (rows, title) => {
@@ -148,7 +157,8 @@ export const khayrReportText = (rows, title) => {
     lines.push('', r.student.name,
       `  الحضور: ${r.attended}${r.absent ? ` · الغياب: ${r.absent}` : ''}`,
       `  مراجعة: ${r.review} · تثبيت: ${r.tathbit} · حفظ: ${r.hifz}`,
-      `  المتراكم: ${r.carry}`);
+      `  المتراكم: ${r.carry}`,
+      ...memLines(r.mem));
   }
   return lines.join('\n');
 };
@@ -161,7 +171,7 @@ export const khayrReportText = (rows, title) => {
  * يُبنى هنا لا في الرسم، لأن النصّ المشارَك والورقة والشاشة تقرؤه كلُّها —
  * فلو بُني في كلٍّ على حدة تفرّقت الأرقام وما درى أحدٌ أيُّها الصحيح.
  */
-export const sessionRows = (students, session) => (students || []).map((st) => {
+export const sessionRows = (students, session, all = null) => (students || []).map((st) => {
   const entry = session?.entries?.[st.id];
   const parts = PARTS.map((p) => ({
     id: p.id, label: p.label,
@@ -176,6 +186,8 @@ export const sessionRows = (students, session) => (students || []).map((st) => {
     due: Number(entry?.due || 0),
     note: String(entry?.note || '').trim(),
     parts,
+    // محفوظه الكلي: يُحسب من كل الجلسات لا من هذي وحدها، لأن الدورة تمتدّ عبرها
+    mem: all ? memInfo(st, all) : null,
   };
 });
 
@@ -202,14 +214,15 @@ export const sessionReportText = (rows, { title = 'جلسة خيركم', date = 
   if (String(date || '').trim()) lines.push(`التاريخ: ${date}`);
   lines.push(`الحضور: ${t.attended} من ${t.attended + t.absent}`);
   for (const r of rows || []) {
-    if (!r.written) { lines.push('', `${r.student.name} — ما سُجّل`); continue; }
+    // محفوظه الكلي لا يتأثر بحضوره اليوم، فيُذكر مع الغائب ومن لم يُسجَّل كما يُذكر مع الحاضر
+    if (!r.written) { lines.push('', `${r.student.name} — ما سُجّل`, ...memLines(r.mem)); continue; }
     if (!r.present) {
-      lines.push('', `${r.student.name} — غائب${r.due ? ` · عليه ${partsText(r.due)}` : ''}`);
+      lines.push('', `${r.student.name} — غائب${r.due ? ` · عليه ${partsText(r.due)}` : ''}`, ...memLines(r.mem));
       continue;
     }
     const said = r.parts.map((p) => `${p.label}: ${p.range || partsText(p.pages)}`
       + (p.range && p.pages ? ` (${partsText(p.pages)})` : ''));
-    lines.push('', r.student.name, ...said.map((x) => `  ${x}`));
+    lines.push('', r.student.name, ...said.map((x) => `  ${x}`), ...memLines(r.mem));
     if (r.note) lines.push(`  ملاحظة: ${r.note}`);
   }
   const sum = PARTS.map((p) => (t[p.id] ? `${p.label}: ${partsText(t[p.id])}` : '')).filter(Boolean);
@@ -257,20 +270,22 @@ export const khayrSessionSections = (rows) => {
     rows: [['الحاضرون', `${t.attended} من ${t.attended + t.absent}`, true]],
   }];
   const cols = [
-    { label: 'الطالب', w: 30 },
-    ...PARTS.map((p) => ({ label: p.label, w: 14, align: 'center' })),
-    { label: 'الملاحظات', w: 28 },
+    { label: 'الطالب', w: 24 },
+    { label: 'المحفوظ', w: 17, align: 'center' },
+    ...PARTS.map((p) => ({ label: p.label, w: 13, align: 'center' })),
+    { label: 'الملاحظات', w: 20 },
   ];
   const grid = (rows || []).map((r) => {
     const name = { t: r.student.name, strong: true };
-    if (!r.written) return [name, { t: 'ما سُجّل بعد', span: 4, dim: true }];
+    const mem = { t: r.mem ? `${r.mem.text} · ${r.mem.pages} وجهًا` : '—', align: 'center', dim: !r.mem };
+    if (!r.written) return [name, mem, { t: 'ما سُجّل بعد', span: 4, dim: true }];
     if (!r.present) {
-      return [name,
+      return [name, mem,
         { t: `غائب${r.due ? ` · حُمّل ${r.due}` : ''}`, span: 3, align: 'center' },
         null, null, { t: r.note || '—', dim: !r.note }];
     }
     const at = (id) => (r.parts.find((p) => p.id === id)?.pages || 0);
-    return [name, ...PARTS.map((p) => ({ t: at(p.id) ? String(at(p.id)) : '—', align: 'center', dim: !at(p.id) })),
+    return [name, mem, ...PARTS.map((p) => ({ t: at(p.id) ? String(at(p.id)) : '—', align: 'center', dim: !at(p.id) })),
       { t: r.note || '—', dim: !r.note }];
   });
   if (grid.length) out.push({ title: 'ما سُمِّع', cols, grid });
@@ -311,14 +326,18 @@ export const khayrSeasonSections = (rows, { sessions = 0, brief = true } = {}) =
   out.push({
     title: 'الطلاب',
     cols: [
-      { label: 'الطالب', w: 30 },
-      { label: 'حضور', w: 10, align: 'center' },
-      { label: 'غياب', w: 10, align: 'center' },
-      ...PARTS.map((p) => ({ label: p.label, w: 12, align: 'center' })),
-      { label: 'متراكم', w: 14, align: 'center' },
+      { label: 'الطالب', w: 24 },
+      { label: 'المحفوظ', w: 16, align: 'center' },
+      { label: 'دورات', w: 9, align: 'center' },
+      { label: 'حضور', w: 8, align: 'center' },
+      { label: 'غياب', w: 8, align: 'center' },
+      ...PARTS.map((p) => ({ label: p.label, w: 10, align: 'center' })),
+      { label: 'متراكم', w: 11, align: 'center' },
     ],
     grid: (rows || []).map((r) => [
       { t: r.student.name, strong: true },
+      { t: r.mem ? `${r.mem.text} · ${r.mem.pages} وجهًا` : '—', align: 'center', dim: !r.mem },
+      { t: r.mem ? `${r.mem.cycles}${r.mem.curPercent ? ` + ${r.mem.curPercent}٪` : ''}` : '—', align: 'center', dim: !r.mem },
       { t: String(r.attended || 0), align: 'center', dim: !r.attended },
       { t: String(r.absent || 0), align: 'center', dim: !r.absent },
       ...PARTS.map((p) => ({ t: String(r[p.id] || 0), align: 'center', dim: !r[p.id] })),
@@ -441,6 +460,26 @@ export const cycleDrift = (student) => {
     ? raw
     : Math.ceil(raw / PAGES_PER_PART) * PAGES_PER_PART;
   return { ok: false, need, target, suggest };
+};
+
+/**
+ * محفوظ الطالب كما يُقرأ في التقرير: كم أجزاءً وأوجهًا، وحدّه، وأين هو من دورة مراجعته.
+ *
+ * الشيخ يسأل عن الطالب «كم معه؟» فيُجاب من الورقة نفسها، بلا أن يفتح بطاقته. وتُبنى هنا لا في الرسم
+ * لأن نصّ واتساب والورقة والشاشة تقرؤها كلُّها، فلا تفترق أرقامها. ومن لم يُكتب له محفوظٌ بعد فلا سطر له.
+ */
+export const memInfo = (student, sessions) => {
+  const pages = memorizedPages(student);
+  if (!pages) return null;
+  const c = reviewCycles(student, sessions);
+  return {
+    pages,
+    text: partsText(pages),
+    range: memRangeText(student),
+    cycles: c.done.length,
+    curPages: c.current.pages,
+    curPercent: Math.min(100, Math.round((c.current.pages / pages) * 100)),
+  };
 };
 
 /* ---------------------------- موضع الطالب ---------------------------- */
