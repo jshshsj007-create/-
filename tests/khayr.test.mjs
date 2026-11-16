@@ -325,4 +325,27 @@ test('نسبة حضور الطالب: من جلساته المسجَّلة، و�
   assert.doesNotMatch(khayrReportText([rows[2]], 'م'), /نسبة الحضور/);
 });
 
+const { hifzSpan, spanText } = await import('../src/khayr.js');
+test('مدى الحفظ: من أول «من» كُتب إلى آخر «إلى»، والغائب لا يُحسب، والجهتان مستقلّتان', () => {
+  const st = { id: 'a', name: 'فهد' };
+  const ss = [
+    { id: '1', date: '1448/01/01', entries: { a: { present: true, hifz: { pages: 2, from: 'النبأ', to: 'المرسلات', toAya: '10', extra: { pages: 1, from: 'البقرة', to: 'البقرة', toAya: '20' } } } } },
+    { id: '2', date: '1448/01/08', entries: { a: { present: false, due: 2, hifz: { from: 'الإنسان', to: 'القيامة' } } } },
+    { id: '3', date: '1448/01/15', entries: { a: { present: true, hifz: { pages: 2, from: 'المرسلات', fromAya: '10', to: 'الإنسان' } } } },
+  ];
+  const sp = hifzSpan(st, ss);
+  assert.deepEqual(sp.main, { from: 'النبأ', to: 'الإنسان' }, 'الغائب لا يغيّر الحدّ');
+  assert.deepEqual(sp.extra, { from: 'البقرة', to: 'البقرة 20' });
+  assert.equal(spanText(sp), 'من النبأ إلى الإنسان · ومن البقرة إلى البقرة 20');
+  assert.equal(hifzSpan(st, []), null, 'بلا جلسات لا مدى');
+  assert.equal(hifzSpan({ id: 'z' }, ss), null);
+  const rows = khayrRows([st], ss, ss);
+  assert.match(khayrReportText(rows, 'م'), /مدى الحفظ: من النبأ إلى الإنسان/);
+  const sec = khayrSeasonSections(rows, { sessions: 3, brief: false }).find((x) => x.title === 'مدى الحفظ في الموسم');
+  assert.ok(sec, 'قسمٌ في الورقة الكاملة');
+  assert.equal(sec.grid.length, 2, 'سطرٌ للجهة الثانية');
+  assert.equal(sec.cols.length, sec.grid[0].length);
+  assert.ok(!khayrSeasonSections(rows, { sessions: 3, brief: true }).some((x) => x.title === 'مدى الحفظ في الموسم'), 'المختصر بلا أسماء');
+});
+
 console.log(`\n✅ ${passed} اختبارًا لخيركم\n`);

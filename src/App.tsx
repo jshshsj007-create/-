@@ -39,7 +39,7 @@ import {
   SURAHS, PARTS, emptyWird, rangeText, carryAfter, studentTotals,
   studentSessions, studentOfUser, khayrRows, khayrReportText,
   PAGES_PER_PART, toPages, partsText, memorizedPages, memRangeText,
-  reviewCycles, cycleTarget, cycleDrift, stopsOf, stopsExtraOf, stopText, pagesBetween, pagesOf,
+  reviewCycles, cycleTarget, cycleDrift, spanText, stopsOf, stopsExtraOf, stopText, pagesBetween, pagesOf,
   sessionRows, sessionReportText, khayrSessionSections, khayrSeasonSections,
 } from './khayr.js';
 import { DEFAULT_WUDU_STEPS, wuduDone, wuduPercent, wuduMastered, wuduStats } from './wudu.js';
@@ -8958,7 +8958,7 @@ export default function App() {
                         <tbody>
                           {khayrRows(khayr.students, scopedKhayrSessions, khayr.sessions).map((r) => (
                             <tr key={r.student.id} className="border-t border-slate-50">
-                              <td className="px-4 py-3 font-semibold text-slate-800 whitespace-nowrap">{r.student.name}</td>
+                              <td className="px-4 py-3 font-semibold text-slate-800" data-testid={`span-${r.student.id}`}>{r.student.name}{spanText(r.span) && <div className="text-[11px] font-normal text-slate-400 leading-4 mt-0.5 max-w-[150px]">حفظ: {spanText(r.span)}</div>}</td>
                               <td className="px-3 py-3 text-slate-700 leading-5" data-testid={`mem-${r.student.id}`}>{r.mem ? <>{r.mem.text}<div className="text-slate-400 text-[11px]">{r.mem.pages} وجهًا</div></> : <span className="text-slate-300">—</span>}</td>
                               <td className="px-3 py-3 text-slate-600 whitespace-nowrap">{r.mem ? <>{r.mem.cycles}{r.mem.curPercent > 0 && <span className="text-slate-400 text-xs"> + {r.mem.curPercent}٪</span>}</> : <span className="text-slate-300">—</span>}</td>
                               <td className={`px-3 py-3 font-bold ${r.carry > 0 ? 'text-amber-600' : 'text-green-600'}`}>{r.carry}</td>

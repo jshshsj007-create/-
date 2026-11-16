@@ -135,6 +135,44 @@ export const allTotals = (students, sessions) =>
  * صفّرته الإجازة عن اللي قصّر، وهذا كذب على الشيخ وعلى الطالب.
  */
 /**
+ * مدى حفظ الطالب في الفترة: من أين بدأ وإلى أين وصل.
+ *
+ * يُقرأ من أول جلسةٍ كتب فيها الشيخ «من» الحفظ إلى آخر جلسةٍ كتب فيها «إلى»، وهذا يصحّ للجهتين
+ * (من أول المصحف نازلًا أو من آخره صاعدًا) لأنه ترتيبُ الجلسات لا ترتيبُ السور. والغائب لا يُحسب.
+ * والجهة الثانية (`extra`) مدًى مستقلّ، فلا يختلط وسطُها بوسط الأولى.
+ */
+export const hifzSpan = (student, sessions) => {
+  const side = (name, aya) => {
+    const n = String(name || '').trim();
+    return n ? `${n}${num(aya) ? ` ${num(aya)}` : ''}` : '';
+  };
+  const run = (pick) => {
+    let from = '', to = '';
+    for (const sess of sortedSessions(sessions)) {
+      const e = sess.entries?.[student?.id];
+      if (!e || e.present === false) continue;
+      const p = pick(e.hifz);
+      if (!p) continue;
+      if (!from) from = side(p.from, p.fromAya);
+      const t = side(p.to, p.toAya);
+      if (t) to = t;
+    }
+    return from || to ? { from, to } : null;
+  };
+  const main = run((h) => h);
+  const extra = run((h) => h?.extra);
+  return main || extra ? { main, extra } : null;
+};
+
+/** «من الناس إلى النبأ · ومن البقرة إلى آل عمران» — مدى الحفظ مقروءًا. */
+export const spanText = (span) => {
+  const one = (x) => (!x ? '' : x.from && x.to ? `من ${x.from} إلى ${x.to}` : x.from ? `من ${x.from}` : `إلى ${x.to}`);
+  const main = one(span?.main);
+  const extra = one(span?.extra);
+  return main && extra ? `${main} · و${extra}` : main || extra;
+};
+
+/**
  * نسبة الحضور من الجلسات التي سُجّل فيها الطالب (حاضرًا أو غائبًا).
  *
  * ومن لم يُسجَّل له شيءٌ فلا نسبة له، ولا نقول صفرًا: الصفر يُقرأ «ما حضر قط» وهو لم يُسأل عنه أصلًا.
@@ -150,6 +188,7 @@ export const khayrRows = (students, scoped, all) =>
     ...studentTotals(st, scoped),
     carry: studentTotals(st, all).carry,
     mem: memInfo(st, all),
+    span: hifzSpan(st, scoped),
   })).map((r) => ({ ...r, percent: attendPercent(r.attended, r.absent) }));
 
 /** سطرا المحفوظ في النصّ: «المحفوظ» بأجزائه وحدّه، و«الدورة» بما أُكمل وما هو جارٍ. */
@@ -167,6 +206,7 @@ export const khayrReportText = (rows, title) => {
     lines.push('', r.student.name,
       `  الحضور: ${r.attended}${r.absent ? ` · الغياب: ${r.absent}` : ''}${r.percent == null ? '' : ` · نسبة الحضور ${r.percent}٪`}`,
       `  مراجعة: ${r.review} · تثبيت: ${r.tathbit} · حفظ: ${r.hifz}`,
+      ...(spanText(r.span) ? [`  مدى الحفظ: ${spanText(r.span)}`] : []),
       `  المتراكم: ${r.carry}`,
       ...memLines(r.mem));
   }
@@ -332,6 +372,20 @@ export const khayrSeasonSections = (rows, { sessions = 0, brief = true } = {}) =
     }
     return out;
   }
+  const spans = (rows || []).filter((r) => r.span);
+  const spanBlock = spans.length ? [{
+    title: 'مدى الحفظ في الموسم',
+    cols: [
+      { label: 'الطالب', w: 26 },
+      { label: 'بدأ من', w: 37 },
+      { label: 'وصل إلى', w: 37 },
+    ],
+    // الجهة الثانية سطرٌ ثانٍ للطالب نفسه، فلا يضيع مدًى منهما
+    grid: spans.flatMap((r) => [
+      [{ t: r.student.name, strong: true }, { t: r.span.main?.from || '—', dim: !r.span.main?.from }, { t: r.span.main?.to || '—', dim: !r.span.main?.to }],
+      ...(r.span.extra ? [[{ t: `${r.student.name} (الجهة الثانية)`, dim: true }, { t: r.span.extra.from || '—', dim: !r.span.extra.from }, { t: r.span.extra.to || '—', dim: !r.span.extra.to }]] : []),
+    ]),
+  }] : [];
   /* والكاملُ جدولٌ كجدول تبويب التقرير حرفًا: عمودٌ لكلِّ ما فيه. */
   out.push({
     title: 'الطلاب',
@@ -356,6 +410,7 @@ export const khayrSeasonSections = (rows, { sessions = 0, brief = true } = {}) =
       { t: String(r.carry || 0), align: 'center', dim: !Number(r.carry), strong: Number(r.carry) > 0 },
     ]),
   });
+  out.push(...spanBlock);
   return out;
 };
 
