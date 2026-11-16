@@ -249,7 +249,7 @@ test('وأقسام الورقة: المختصر بلا جدول الطلاب، �
   assert.ok(!brief.some((s) => s.title === 'الطلاب'), 'المختصر يُرفع للمجلس، فلا أسماءَ فيه إلا موضعيهما');
   const box = full.at(-1);
   assert.equal(box.title, 'الطلاب');
-  assert.deepEqual(box.cols.map((c) => c.label), ['الطالب', 'المحفوظ', 'دورات', 'حضور', 'غياب', 'مراجعة', 'تثبيت', 'حفظ', 'متراكم']);
+  assert.deepEqual(box.cols.map((c) => c.label), ['الطالب', 'المحفوظ', 'دورات', 'حضور', 'غياب', 'نسبة', 'مراجعة', 'تثبيت', 'حفظ', 'متراكم']);
   assert.equal(box.grid.length, 2);
   assert.equal(box.grid[0][0].t, 'سعد');
 });
@@ -309,5 +309,20 @@ test('وورقةُ الجلسة جدولٌ: الأقسام الثلاثة ثم �
     assert.equal(sec.cols.length, sec.grid[0].length, 'أعمدة الورقة تطابق خلايا الصف');
   });
 }
+
+test('نسبة حضور الطالب: من جلساته المسجَّلة، وبلا نسبة لمن لم يُسجَّل', () => {
+  const st2 = [{ id: 'p', name: 'ح' }, { id: 'q', name: 'ك' }, { id: 'r', name: 'ز' }];
+  const ss = [
+    { id: '1', date: '1448/01/01', entries: { p: { present: true }, q: { present: false } } },
+    { id: '2', date: '1448/01/08', entries: { p: { present: true }, q: { present: true } } },
+    { id: '3', date: '1448/01/15', entries: { p: { present: false } } },
+  ];
+  const rows = khayrRows(st2, ss, ss);
+  assert.equal(rows[0].percent, 67);
+  assert.equal(rows[1].percent, 50);
+  assert.equal(rows[2].percent, null, 'لم يُسجَّل له شيء: لا نسبة، لا صفر');
+  assert.match(khayrReportText(rows, 'م'), /نسبة الحضور 67٪/);
+  assert.doesNotMatch(khayrReportText([rows[2]], 'م'), /نسبة الحضور/);
+});
 
 console.log(`\n✅ ${passed} اختبارًا لخيركم\n`);

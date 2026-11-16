@@ -134,13 +134,23 @@ export const allTotals = (students, sessions) =>
  * المتراكم دَين ما ينمحي بانتهاء الترم — لو حسبناه من جلسات الموسم وحده،
  * صفّرته الإجازة عن اللي قصّر، وهذا كذب على الشيخ وعلى الطالب.
  */
+/**
+ * نسبة الحضور من الجلسات التي سُجّل فيها الطالب (حاضرًا أو غائبًا).
+ *
+ * ومن لم يُسجَّل له شيءٌ فلا نسبة له، ولا نقول صفرًا: الصفر يُقرأ «ما حضر قط» وهو لم يُسأل عنه أصلًا.
+ */
+export const attendPercent = (attended, absent) => {
+  const n = Number(attended || 0) + Number(absent || 0);
+  return n > 0 ? Math.round((Number(attended || 0) / n) * 100) : null;
+};
+
 export const khayrRows = (students, scoped, all) =>
   (students || []).map((st) => ({
     student: st,
     ...studentTotals(st, scoped),
     carry: studentTotals(st, all).carry,
     mem: memInfo(st, all),
-  }));
+  })).map((r) => ({ ...r, percent: attendPercent(r.attended, r.absent) }));
 
 /** سطرا المحفوظ في النصّ: «المحفوظ» بأجزائه وحدّه، و«الدورة» بما أُكمل وما هو جارٍ. */
 const memLines = (m) => {
@@ -155,7 +165,7 @@ export const khayrReportText = (rows, title) => {
   const lines = [title];
   for (const r of rows) {
     lines.push('', r.student.name,
-      `  الحضور: ${r.attended}${r.absent ? ` · الغياب: ${r.absent}` : ''}`,
+      `  الحضور: ${r.attended}${r.absent ? ` · الغياب: ${r.absent}` : ''}${r.percent == null ? '' : ` · نسبة الحضور ${r.percent}٪`}`,
       `  مراجعة: ${r.review} · تثبيت: ${r.tathbit} · حفظ: ${r.hifz}`,
       `  المتراكم: ${r.carry}`,
       ...memLines(r.mem));
@@ -326,13 +336,14 @@ export const khayrSeasonSections = (rows, { sessions = 0, brief = true } = {}) =
   out.push({
     title: 'الطلاب',
     cols: [
-      { label: 'الطالب', w: 24 },
-      { label: 'المحفوظ', w: 16, align: 'center' },
-      { label: 'دورات', w: 9, align: 'center' },
-      { label: 'حضور', w: 8, align: 'center' },
-      { label: 'غياب', w: 8, align: 'center' },
-      ...PARTS.map((p) => ({ label: p.label, w: 10, align: 'center' })),
-      { label: 'متراكم', w: 11, align: 'center' },
+      { label: 'الطالب', w: 22 },
+      { label: 'المحفوظ', w: 15, align: 'center' },
+      { label: 'دورات', w: 8, align: 'center' },
+      { label: 'حضور', w: 7, align: 'center' },
+      { label: 'غياب', w: 7, align: 'center' },
+      { label: 'نسبة', w: 8, align: 'center' },
+      ...PARTS.map((p) => ({ label: p.label, w: 9, align: 'center' })),
+      { label: 'متراكم', w: 10, align: 'center' },
     ],
     grid: (rows || []).map((r) => [
       { t: r.student.name, strong: true },
@@ -340,6 +351,7 @@ export const khayrSeasonSections = (rows, { sessions = 0, brief = true } = {}) =
       { t: r.mem ? `${r.mem.cycles}${r.mem.curPercent ? ` + ${r.mem.curPercent}٪` : ''}` : '—', align: 'center', dim: !r.mem },
       { t: String(r.attended || 0), align: 'center', dim: !r.attended },
       { t: String(r.absent || 0), align: 'center', dim: !r.absent },
+      { t: r.percent == null ? '—' : `${r.percent}٪`, align: 'center', dim: r.percent == null },
       ...PARTS.map((p) => ({ t: String(r[p.id] || 0), align: 'center', dim: !r[p.id] })),
       { t: String(r.carry || 0), align: 'center', dim: !Number(r.carry), strong: Number(r.carry) > 0 },
     ]),

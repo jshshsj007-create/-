@@ -8962,7 +8962,7 @@ export default function App() {
                               <td className="px-3 py-3 text-slate-700 leading-5" data-testid={`mem-${r.student.id}`}>{r.mem ? <>{r.mem.text}<div className="text-slate-400 text-[11px]">{r.mem.pages} وجهًا</div></> : <span className="text-slate-300">—</span>}</td>
                               <td className="px-3 py-3 text-slate-600 whitespace-nowrap">{r.mem ? <>{r.mem.cycles}{r.mem.curPercent > 0 && <span className="text-slate-400 text-xs"> + {r.mem.curPercent}٪</span>}</> : <span className="text-slate-300">—</span>}</td>
                               <td className={`px-3 py-3 font-bold ${r.carry > 0 ? 'text-amber-600' : 'text-green-600'}`}>{r.carry}</td>
-                              <td className="px-3 py-3 text-slate-600">{r.attended}</td>
+                              <td className="px-3 py-3 text-slate-600 leading-5">{r.attended}{r.percent != null && <div className={`text-[11px] font-semibold ${r.percent < 70 ? 'text-amber-600' : 'text-green-600'}`} data-testid={`pct-${r.student.id}`}>{r.percent}٪</div>}</td>
                               <td className="px-3 py-3 text-slate-400">{r.absent}</td>
                               <td className="px-3 py-3 text-slate-600">{r.review}</td>
                               <td className="px-3 py-3 text-slate-600">{r.tathbit}</td>
