@@ -3627,7 +3627,7 @@ export default function App() {
     if (!(Number(form.amount) > 0)) { setForm({ ...form, error: 'اكتب المبلغ الذي وصلك' }); return; }
     // إما صورة الحوالة أو نصّها: ما يُقبل استلامٌ بلا دليل، فيُرجَع إليه بعدين
     if (!form.slip && !String(form.proof || '').trim()) { setForm({ ...form, error: 'ارفق صورة الحوالة أو الصق نصّها' }); return; }
-    patchTrip({ settlements: [...(trip.settlements || []), { ...makeSettlement({ id: uid(), person, amount: form.amount, how: form.how, note: String(form.proof || '').trim().slice(0, 600) }), self: true, ...(form.slip ? { receipt: form.slip } : {}) }] });
+    patchTrip({ settlements: [...(trip.settlements || []), { ...makeSettlement({ id: uid(), person, amount: form.amount, how: 'تحويل', note: String(form.proof || '').trim().slice(0, 600) }), self: true, ...(form.slip ? { receipt: form.slip } : {}) }] });
     closeModal();
   };
   const openEditExpense = (it) => {
@@ -9468,7 +9468,7 @@ export default function App() {
                       {/* حسابه هو: ما دفع وما استلم وما بقي له — وحده */}
                       {me && (
                         <TripMyAccount balance={me}
-                          onReceive={!trip.closed ? (owed) => { setForm({ amount: owed > 0 ? owed : '', how: '', slip: null }); setModal('tripReceive'); } : null}
+                          onReceive={!trip.closed ? (owed) => { setForm({ amount: owed > 0 ? owed : '', slip: null }); setModal('tripReceive'); } : null}
                           received={(trip.settlements || []).filter((x) => x.self)}
                           onUndo={!trip.closed ? removeTripSettlement : null} />
                       )}
@@ -12065,19 +12065,10 @@ export default function App() {
 
       {modal === 'tripReceive' && trip && (
         <Modal title="سدّد لي" onClose={closeModal}>
-          <Field label="المبلغ الذي وصلك (ر.س)">
+          <Field label={<>المبلغ الذي وصلك (ر.س) <span className="text-red-500">*</span></>}>
             <input type="number" data-testid="receive-amount" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value, error: '' })} />
           </Field>
-          <Field label="كيف سدّد لك؟">
-            <div className="flex flex-wrap gap-1.5">
-              {HOW.map((h) => (
-                <button key={h} type="button" data-testid={`receive-how-${h}`}
-                  className={`px-4 py-2.5 rounded-lg text-sm font-semibold border ${form.how === h ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`}
-                  onClick={() => setForm({ ...form, how: form.how === h ? '' : h })}>{h}</button>
-              ))}
-            </div>
-          </Field>
-          <Field label="الحوالة" hint="لازم واحد منهما: صورة الحوالة، أو الصق نصّها هنا.">
+          <Field label={<>الحوالة <span className="text-red-500">*</span></>} hint="إلزامي: صورة الحوالة أو نصّها، ولا يُقبل بدونهما.">
             {form.slip ? (
               <div className="flex items-center gap-3">
                 <img src={slipSrc(form.slip)} alt="" className="w-16 h-16 object-cover rounded-lg border border-slate-200" data-testid="receive-slip-preview" />

@@ -250,10 +250,11 @@ test('الدافع المربوط لا يضيف مصروفًا ولا يعدّل
 test('«سدّد لي»: يسجّل استلامه باسمه، موسومًا باسم حسابه ومعه الصورة، ولا يزوّر من كتبه', () => {
   const ls = ledger();
   const mine = tripsSeen(ls, blind(ls), turki, false)[0];
-  const inc = [{ ...mine, settlements: [...mine.settlements, { id: 'r1', person: 'تركي', amount: 250, how: 'تحويل', by: 'غيري', self: false, receipt: { ref: 'abcDEF123', name: 'h.jpg', type: 'image/jpeg' } }] }];
+  const inc = [{ ...mine, settlements: [...mine.settlements, { id: 'r1', person: 'تركي', amount: 250, how: 'كاش', by: 'غيري', self: false, receipt: { ref: 'abcDEF123', name: 'h.jpg', type: 'image/jpeg' } }] }];
   const t = tripsKept(inc, ls, turki, false).find((x) => x.id === 't1');
   const r1 = t.settlements.find((x) => x.id === 'r1');
   assert.equal(r1.amount, 250);
+  assert.equal(r1.how, 'تحويل');
   assert.equal(r1.self, true);
   assert.equal(r1.by, turki.id);
   assert.equal(r1.receipt.ref, 'abcDEF123');

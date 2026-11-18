@@ -126,7 +126,8 @@ const cleanSettle = (x, me) => ({
   id: String(x.id),
   person: payerOf(me),
   amount: Math.max(0, Number(x.amount) || 0),
-  ...(x.how ? { how: String(x.how).slice(0, 40) } : {}),
+  // ما عندنا كاش: الاستلام الذاتي تحويلٌ دائمًا، فلا يُكتب غيره ولو أُرسل
+  how: 'تحويل',
   // نصُّ الحوالة المنسوخ قد يطول (رقمٌ مرجعي واسمُ مصرفٍ وتفاصيل)، فيتّسع أكثر من ملاحظةٍ عادية
   ...(x.note ? { note: String(x.note).slice(0, NOTE_MAX) } : {}),
   ...(x.date ? { date: String(x.date).slice(0, 40) } : {}),
