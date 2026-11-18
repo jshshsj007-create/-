@@ -260,10 +260,22 @@ test('«سدّد لي»: يسجّل استلامه باسمه، موسومًا �
   assert.equal(t.expenseItems.length, ls[0].expenseItems.length, 'ولا مصروف');
 });
 
+test('«سدّد لي» بلا دليل لا يُقبل: لا صورة ولا نص، ويُقبل بأحدهما', () => {
+  const ls = ledger();
+  const mine = tripsSeen(ls, blind(ls), turki, false)[0];
+  const send = (extra) => tripsKept([{ ...mine, settlements: [...mine.settlements, { id: 'p1', person: 'تركي', amount: 40, ...extra }] }], ls, turki, false).find((x) => x.id === 't1').settlements.find((x) => x.id === 'p1');
+  assert.equal(send({}), undefined, 'بلا دليل');
+  assert.equal(send({ note: '   ' }), undefined, 'نصٌّ فارغ');
+  assert.equal(send({ receipt: { ref: '../x' } }), undefined, 'مرجعٌ مشوَّه ولا نص');
+  assert.equal(send({ note: 'تحويل رقم 99 من العلوان' }).note, 'تحويل رقم 99 من العلوان', 'نصٌّ منسوخ');
+  assert.ok(send({ receipt: { ref: 'abcDEF123', name: 'a', type: 'image/png' } }), 'صورة');
+  assert.equal(send({ note: 'ن'.repeat(900) }).note.length, 600, 'النص يُقطع عند حدّ');
+});
+
 test('«سدّد لي»: مرجعُ صورةٍ مشوَّه يُسقَط، والمبلغ الصفر يُردّ، وما كتبه هو يحذفه وغيره لا', () => {
   const ls = ledger();
   const mine = tripsSeen(ls, blind(ls), turki, false)[0];
-  const bad = [{ ...mine, settlements: [...mine.settlements, { id: 'b1', person: 'تركي', amount: 30, receipt: { ref: '../x', name: 'n', type: 't' } }, { id: 'z', person: 'تركي', amount: 0 }] }];
+  const bad = [{ ...mine, settlements: [...mine.settlements, { id: 'b1', person: 'تركي', amount: 30, note: 'حوالة رقم 123', receipt: { ref: '../x', name: 'n', type: 't' } }, { id: 'z', person: 'تركي', amount: 0 }] }];
   const t1 = tripsKept(bad, ls, turki, false).find((x) => x.id === 't1');
   assert.equal(t1.settlements.find((x) => x.id === 'b1').receipt, undefined);
   assert.ok(!t1.settlements.some((x) => x.id === 'z'));

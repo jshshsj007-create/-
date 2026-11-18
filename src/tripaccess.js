@@ -111,19 +111,24 @@ const cleanItem = (x, me) => ({
 /**
  * «سدّد لي»: ما يكتبه الدافع المربوط عن نفسه حين يصله مالٌ ولا يسجّله المسؤول.
  *
- * يضيف استلامًا باسمه هو وحده، وقد يرفق صورة الحوالة ليُرجَع إليها. وهو يُنقص ما يطلبه من الفريق، فلا
+ * يضيف استلامًا باسمه هو وحده، ومعه **دليلٌ لازم**: صورة الحوالة أو نصُّها المنسوخ، ليُرجَع إليه. وهو يُنقص ما يطلبه من الفريق، فلا
  * مصلحة له في المبالغة، ومع ذلك نحصره: لا يكتب باسم غيره، ولا يمسّ تسويةً لم يكتبها بنفسه، ولا يغيّر
  * من كتبها. ويحذف ما كتبه هو إن أخطأ.
  */
 const REF_RE = /^[A-Za-z0-9_-]{6,64}$/;
 const SELF_MAX = 10;
+const NOTE_MAX = 600;
+
+/** دليل الاستلام: صورةٌ بمعرّفٍ سليم، أو نصٌّ منسوخ. وبغيرهما لا يُقبل «سدّد لي». */
+const hasProof = (x) => REF_RE.test(String(x?.receipt?.ref ?? '')) || String(x?.note ?? '').trim().length > 0;
 
 const cleanSettle = (x, me) => ({
   id: String(x.id),
   person: payerOf(me),
   amount: Math.max(0, Number(x.amount) || 0),
   ...(x.how ? { how: String(x.how).slice(0, 40) } : {}),
-  ...(x.note ? { note: String(x.note).slice(0, 120) } : {}),
+  // نصُّ الحوالة المنسوخ قد يطول (رقمٌ مرجعي واسمُ مصرفٍ وتفاصيل)، فيتّسع أكثر من ملاحظةٍ عادية
+  ...(x.note ? { note: String(x.note).slice(0, NOTE_MAX) } : {}),
   ...(x.date ? { date: String(x.date).slice(0, 40) } : {}),
   ...(x.receipt && REF_RE.test(String(x.receipt.ref ?? ''))
     ? { receipt: { ref: String(x.receipt.ref), name: String(x.receipt.name ?? '').slice(0, 120), type: String(x.receipt.type ?? '').slice(0, 40) } }
@@ -140,7 +145,7 @@ export const selfSettlements = (old, t, me) => {
   if (!n) return kept;
   const have = new Set((old?.settlements || []).map((x) => x?.id));
   const fresh = (t?.settlements || [])
-    .filter((x) => x?.id && !have.has(x.id) && String(x.person ?? '').trim() === n && Number(x.amount) > 0)
+    .filter((x) => x?.id && !have.has(x.id) && String(x.person ?? '').trim() === n && Number(x.amount) > 0 && hasProof(x))
     .slice(0, SELF_MAX).map((x) => cleanSettle(x, me));
   return [...kept, ...fresh];
 };

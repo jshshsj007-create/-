@@ -1558,7 +1558,7 @@ function TripMyAccount({ balance, onReceive, received = [], onUndo }) {
         <div className="mt-1.5 space-y-1 px-1">
           {received.map((x) => (
             <div key={x.id} className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
-              <span className="min-w-0 truncate">سدّد لك <b className="text-slate-700">{fmt(x.amount)}</b>{x.how ? ` · ${x.how}` : ''}
+              <span className="min-w-0 truncate">سدّد لك <b className="text-slate-700">{fmt(x.amount)}</b>{x.how ? ` · ${x.how}` : ''}{x.note ? ' · 📝 نص الحوالة' : ''}
                 {x.receipt && <a href={slipSrc(x.receipt)} target="_blank" rel="noreferrer" className="text-brand-700 mr-1.5">📎 الحوالة</a>}
               </span>
               {onUndo && <button type="button" onClick={() => onUndo(x.id)} aria-label="حذف" className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 size={13} /></button>}
@@ -1697,14 +1697,19 @@ function TripCrew({ trip, readOnly, onSettle, onAddPerson, onRemoveSettlement })
           <div className="text-xs font-semibold text-slate-500 mb-2">ما أعطيته لهم</div>
           <div className="space-y-1.5">
             {settlements.map((x) => (
-              <div key={x.id} className="flex items-center justify-between text-sm gap-2">
-                <span className="text-slate-700 min-w-0 truncate">{x.person}{x.how ? ` · ${x.how}` : ''}{x.date ? ` · ${x.date}` : ''}{x.note ? ` · ${x.note}` : ''}
+              <div key={x.id}>
+              <div className="flex items-center justify-between text-sm gap-2">
+                <span className="text-slate-700 min-w-0 truncate">{x.person}{x.how ? ` · ${x.how}` : ''}{x.date ? ` · ${x.date}` : ''}{x.note && !x.self ? ` · ${x.note}` : ''}
                   {x.self && <span className="text-[10px] font-bold text-amber-700 bg-amber-50 rounded px-1.5 py-0.5 mr-1.5" data-testid={`self-${x.id}`}>سجّله بنفسه</span>}
                   {x.receipt && <a href={slipSrc(x.receipt)} target="_blank" rel="noreferrer" data-testid={`slip-${x.id}`} className="text-brand-700 mr-1.5 text-xs">📎 الحوالة</a>}</span>
                 <span className="flex items-center gap-2 shrink-0">
                   <span className="font-semibold text-slate-800">{fmt(x.amount)} ر.س</span>
                   {!readOnly && <button onClick={() => onRemoveSettlement(x.id)} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>}
                 </span>
+              </div>
+              {x.self && x.note && (
+                <div className="mt-1 mb-1 rounded-lg bg-slate-50 px-2.5 py-1.5 text-[11px] leading-5 text-slate-500 whitespace-pre-wrap break-words" data-testid={`proof-${x.id}`}>{x.note}</div>
+              )}
               </div>
             ))}
           </div>
@@ -3620,7 +3625,9 @@ export default function App() {
     const person = (effectiveUser?.payerName || '').trim();
     if (!person) return;
     if (!(Number(form.amount) > 0)) { setForm({ ...form, error: 'اكتب المبلغ الذي وصلك' }); return; }
-    patchTrip({ settlements: [...(trip.settlements || []), { ...makeSettlement({ id: uid(), person, amount: form.amount, how: form.how }), self: true, ...(form.slip ? { receipt: form.slip } : {}) }] });
+    // إما صورة الحوالة أو نصّها: ما يُقبل استلامٌ بلا دليل، فيُرجَع إليه بعدين
+    if (!form.slip && !String(form.proof || '').trim()) { setForm({ ...form, error: 'ارفق صورة الحوالة أو الصق نصّها' }); return; }
+    patchTrip({ settlements: [...(trip.settlements || []), { ...makeSettlement({ id: uid(), person, amount: form.amount, how: form.how, note: String(form.proof || '').trim().slice(0, 600) }), self: true, ...(form.slip ? { receipt: form.slip } : {}) }] });
     closeModal();
   };
   const openEditExpense = (it) => {
@@ -12070,7 +12077,7 @@ export default function App() {
               ))}
             </div>
           </Field>
-          <Field label="صورة الحوالة" hint="ارفقها ليُرجع إليها بعدين.">
+          <Field label="الحوالة" hint="لازم واحد منهما: صورة الحوالة، أو الصق نصّها هنا.">
             {form.slip ? (
               <div className="flex items-center gap-3">
                 <img src={slipSrc(form.slip)} alt="" className="w-16 h-16 object-cover rounded-lg border border-slate-200" data-testid="receive-slip-preview" />
@@ -12078,11 +12085,15 @@ export default function App() {
               </div>
             ) : (
               <label className="block">
-                <span className={btnGhost + ' inline-block cursor-pointer'}>{form.slipBusy ? 'جاري الرفع...' : 'اختر صورة'}</span>
+                <span className={btnGhost + ' inline-block cursor-pointer'}>{form.slipBusy ? 'جاري الرفع...' : 'ارفق صورة الحوالة'}</span>
                 <input type="file" accept="image/*" data-testid="receive-slip" className="hidden" disabled={Boolean(form.slipBusy)}
                   onChange={(e) => { attachSlip(e.target.files?.[0]); e.target.value = ''; }} />
               </label>
             )}
+          </Field>
+          <Field label="أو الصق نصّ الحوالة">
+            <textarea rows={3} data-testid="receive-proof" className={inputCls} value={form.proof || ''} maxLength={600}
+              onChange={(e) => setForm({ ...form, proof: e.target.value, error: '' })} placeholder="انسخ رسالة الحوالة من البنك والصقها هنا" />
           </Field>
           {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
           <div className="flex gap-2 mt-5">
