@@ -166,7 +166,7 @@ test('المُدخِل لا يمسّ سفرةً غير سفرته، ولا يح�
 
 test('وما يُلقى من بنودٍ كثيرة يُقطع عند حدّ', () => {
   const cur = withEntrant();
-  const spam = Array.from({ length: 100 }, (_, i) => ({ id: 'z' + i, name: 'x', amount: 1 }));
+  const spam = Array.from({ length: 100 }, (_, i) => ({ id: 'z' + i, name: 'x', amount: 1, paidBy: 'العلوان' }));
   const kept = tripsKept([{ ...cur[1], expenseItems: [{ id: 'm1', name: 'سكن', amount: 90 }, ...spam] }], cur, alawan, false).find((t) => t.id === 't2');
   assert.equal(kept.expenseItems.length, 2 + 40, 'بنده وبند غيره، وأربعون جديدة لا مئة');
 });
@@ -236,6 +236,20 @@ test('حسابه من معاينته يطابق الحقيقة: دفع ١٩٠ و
   const mine = tripsSeen(ls, blind(ls), turki, false)[0];
   const row = tripBalancesOf(mine, 'تركي');
   assert.deepEqual(row, { paid: 190, settled: 100, owed: 90 });
+});
+
+test('المُدخِل: بندٌ بلا «من دفع» لا يُقبل، ولا يُمحى دافع بندٍ قائم بتعديل', () => {
+  const ls = ledger();
+  const me = { id: 'u4', role: 'مسجل حضور', permissions: [], payerName: 'العلوان' };
+  const trip = { ...ls[0], entrants: ['u4'], expenseItems: [...ls[0].expenseItems, { id: 'mine', name: 'بنزين', amount: 100, paidBy: 'تركي', by: 'u4' }] };
+  const cur = [trip, ...ls.slice(1)];
+  const view = tripsSeen(cur, blind(cur), me, false).find((t) => t.id === trip.id);
+  const sent = [{ ...view, expenseItems: [...view.expenseItems.map((x) => (x.id === 'mine' ? { ...x, paidBy: '  ' } : x)),
+    { id: 'n1', name: 'ماء', amount: 5 }, { id: 'n2', name: 'ماء', amount: 5, paidBy: '   ' }, { id: 'n3', name: 'ماء', amount: 5, paidBy: 'أبو فارس' }] }];
+  const out = tripsKept(sent, cur, me, false).find((t) => t.id === trip.id).expenseItems;
+  assert.ok(!out.some((x) => x.id === 'n1' || x.id === 'n2'), 'بلا دافع');
+  assert.ok(out.some((x) => x.id === 'n3' && x.paidBy === 'أبو فارس'), 'بدافع');
+  assert.equal(out.find((x) => x.id === 'mine').paidBy, 'تركي', 'التعديل الذي يمحو الدافع يُردّ');
 });
 
 test('الدافع المربوط لا يضيف مصروفًا ولا يعدّل، ولا يكتب تسوية باسم غيره', () => {

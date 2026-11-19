@@ -92,6 +92,9 @@ export const tripsSeen = (original, visible, me, hasTripPerm, fullAccess = false
 /** أقصى ما يُقبل من مُدخِلٍ في حفظةٍ واحدة، فلا تنفجر السفرة ببنودٍ مرمية. */
 const ENTRANT_MAX = 40;
 
+/** «من دفع» إلزامي: بندٌ بلا دافع لا يُحسب على أحد، فلا يُقبل من مُدخِل. */
+const hasPayer = (x) => String(x?.paidBy ?? '').trim().length > 0;
+
 /** بندٌ جديد من مُدخِل: الحقول المعروفة وحدها، ومُدخِلُه هو لا ما ادّعاه. */
 const cleanItem = (x, me) => ({
   id: String(x.id),
@@ -194,10 +197,11 @@ export const tripsKept = (incoming, current, me, hasTripPerm, seesMoney = false)
         if (x.by !== me.id) return [x];                       // بند غيره: كما هو
         const now = sent.get(x.id);
         if (!now) return [];                                  // حذفه هو
+        if (!hasPayer(now)) return [x];                       // تعديلٌ يمحو الدافع لا يُقبل: يبقى كما كان
         return [{ ...cleanItem(now, me), edited: true }];     // عدّله هو
       });
       const have = new Set((old.expenseItems || []).map((x) => x.id));
-      const fresh = (t.expenseItems || []).filter((x) => x?.id && !have.has(x.id)).slice(0, ENTRANT_MAX).map((x) => cleanItem(x, me));
+      const fresh = (t.expenseItems || []).filter((x) => x?.id && !have.has(x.id) && hasPayer(x)).slice(0, ENTRANT_MAX).map((x) => cleanItem(x, me));
       out.push({ ...old, expenseItems: [...kept, ...fresh], settlements: selfSettlements(old, t, me) });
     } else if (!hasTripPerm && paysIn(old, me)) {
       // دافعٌ مربوط بلا إدخال: لا يكتب إلا «سدّد لي» باسمه

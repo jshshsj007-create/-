@@ -3557,6 +3557,8 @@ export default function App() {
   /** بنود السفرة: كل بند باسمه ومبلغه، عشان تعرف كل سفرة وين راحت فلوسها. */
   const addTripItem = (key, again = false) => {
     if (key === 'expenseItems') {
+      // من دفع: إلزامي، فلا يُسجَّل مصروفٌ بلا دافع ثم يضيع من حساب أحدهم
+      if (!String(form.paidBy || '').trim()) { setForm({ ...form, error: 'اختر من دفع' }); return; }
       // وش شريت: سكن أو بنزين أو أكل وشرب، و«أخرى» يكتب فيها بالضبط
       if (!form.cat) { setForm({ ...form, error: 'اختر وش شريت' }); return; }
       if (form.cat === 'أخرى' && !form.name?.trim()) { setForm({ ...form, error: 'اكتب وش شريت بالضبط' }); return; }
@@ -12119,7 +12121,7 @@ export default function App() {
         const chip = (on) => `px-4 py-2.5 rounded-lg text-sm font-semibold border ${on ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`;
         return (
           <Modal title={form.editId ? 'تعديل مصروف' : 'مصروف جديد'} onClose={closeModal}>
-            <Field label="من دفع؟">
+            <Field label={<>من دفع؟ <span className="text-red-500">*</span></>}>
               <div className="flex flex-wrap gap-1.5">
                 {crew.map((n) => (
                   <button key={n} type="button" className={chip(form.paidBy === n)} onClick={() => setForm({ ...form, paidBy: form.paidBy === n ? '' : n, other: false, error: '' })}>{n}</button>
@@ -12132,7 +12134,6 @@ export default function App() {
                 <input className={inputCls + ' mt-2'} data-testid="payer-new" value={form.paidBy || ''} onChange={(e) => setForm({ ...form, paidBy: e.target.value, error: '' })}
                   placeholder="اسم من دفع" autoFocus />
               )}
-              <div className="text-[11px] text-slate-400 mt-1.5">لو دفعته أنت أو من صندوق السفرة اتركه بلا اختيار.</div>
             </Field>
             <Field label="وش شريت؟">
               <div className="flex flex-wrap gap-1.5">
