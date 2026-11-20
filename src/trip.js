@@ -69,7 +69,9 @@ export const tripPeople = (trip) => {
 export const tripBalances = (trip) => tripPeople(trip).map((name) => {
   const paid = (trip?.expenseItems || []).filter((x) => str(x?.paidBy) === name).reduce((s, x) => s + num(x?.amount), 0);
   const settled = (trip?.settlements || []).filter((x) => str(x?.person) === name).reduce((s, x) => s + num(x?.amount), 0);
-  return { name, paid, settled, owed: paid - settled };
+  // الهللات تُجمع كسورًا عشرية، فيطلع ٠٫٠٠٠٠٠١ بدل صفرٍ يُقرأ «زيادة»: نقرّب لهللتين
+  const r2 = (v) => Math.round(v * 100) / 100;
+  return { name, paid: r2(paid), settled: r2(settled), owed: r2(paid - settled) };
 });
 
 /** مجموع ما بقي عليك لكل الشباب. */
@@ -262,7 +264,14 @@ export const stayLabel = (n) => (n === 1 ? 'يوم واحد' : n === 2 ? 'يوم
  */
 export const splitAcross = (total, n) => {
   const k = Math.max(1, Math.round(num(n)));
-  const sum = Math.max(0, Math.round(num(total)));
+  const t = Math.max(0, num(total));
+  // مبلغٌ فيه هللات (١٢٥٫٥٠) يُقسَّم بالهللة لا يُقرَّب للريال، وإلا ضاعت الهللات وما طابق المجموعُ ما دُفع
+  const cents = Math.round(t * 100);
+  if (cents % 100 !== 0) {
+    const eachC = Math.floor(cents / k);
+    return Array.from({ length: k }, (_, i) => (eachC + (i === 0 ? cents - eachC * k : 0)) / 100);
+  }
+  const sum = cents / 100;
   const each = Math.floor(sum / k);
   return Array.from({ length: k }, (_, i) => each + (i === 0 ? sum - each * k : 0));
 };

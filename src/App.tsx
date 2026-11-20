@@ -12039,7 +12039,7 @@ export default function App() {
               </div>
             )}
             <Field label="المبلغ الذي أعطيته (ر.س)" hint="المبلغ يبدأ بالباقي له كاملًا، وغيّره لو أعطيته جزءًا.">
-              <input type="number" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value, error: '' })} />
+              <input type="number" inputMode="decimal" step="any" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value, error: '' })} />
             </Field>
             <Field label="كيف سدّدت؟">
               <div className="flex flex-wrap gap-1.5">
@@ -12068,7 +12068,7 @@ export default function App() {
       {modal === 'tripReceive' && trip && (
         <Modal title="سدّد لي" onClose={closeModal}>
           <Field label={<>المبلغ الذي وصلك (ر.س) <span className="text-red-500">*</span></>}>
-            <input type="number" data-testid="receive-amount" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value, error: '' })} />
+            <input type="number" inputMode="decimal" step="any" data-testid="receive-amount" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value, error: '' })} />
           </Field>
           <Field label={<>الحوالة <span className="text-red-500">*</span></>} hint="إلزامي: صورة الحوالة أو نصّها، ولا يُقبل بدونهما.">
             {form.slip ? (
@@ -12105,7 +12105,7 @@ export default function App() {
                 <input className={inputCls} value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value, error: '' })} placeholder="اشتراكات" />
               </Field>
               <Field label="المبلغ (ر.س)">
-                <input type="number" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
+                <input type="number" inputMode="decimal" step="any" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
               </Field>
               {form.error && <div className="text-red-500 text-xs mb-3">{form.error}</div>}
               <div className="flex gap-2 mt-5">
@@ -12166,7 +12166,7 @@ export default function App() {
               )}
             </Field>
  <Field label="المبلغ (ر.س)">
-              <input id="trip-amount" type="number" inputMode="numeric" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value, error: '' })} />
+              <input id="trip-amount" type="number" inputMode="decimal" step="any" className={inputCls} value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: e.target.value, error: '' })} />
             </Field>
             <Field label="اليوم" hint="يقع في آخر يوم كتبته. وإذا بدأ يوم جديد اضغط «+ يوم جديد». وما صُرف قبل السفرة (حجز وتجهيز) اختر له «قبل السفرة».">
               <div className="flex flex-wrap gap-1.5">
