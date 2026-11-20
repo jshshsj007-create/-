@@ -524,4 +524,33 @@ test('بلا اسم ما فيه اقتراحات', () => {
   assert.deepEqual(searchStudents(undefined, 'محمد'), []);
 });
 
+/* ---- أكثر الطلاب حضورًا في برنامج ---- */
+{
+  const { topAttendance } = await import('../src/people.js');
+  const row = (id, name, attendance, extra = {}) => ({ id, name, attendance, ...extra });
+  const sep = { id: 'p', type: 'منفصل', weeks: [
+    { id: 'w1', participants: [row('1', 'محمد عبدالله', 'حاضر'), row('2', 'سعد', 'حاضر'), row('3', 'فهد', 'غائب'), row('4', 'خالد', 'حاضر'), row('5', 'تركي', 'حاضر'), row('6', 'ناصر', 'حاضر'), row('7', 'ماجد', 'حاضر')] },
+    { id: 'w2', participants: [row('8', 'محمد عبد الله', 'حاضر'), row('9', 'سعد', 'حاضر'), row('10', 'فهد', 'غائب'), row('11', 'خالد', 'معلق'), row('12', 'تركي', 'حاضر'), row('13', 'ناصر', 'غائب')] },
+    { id: 'w3', participants: [row('14', 'محمد عبدالله', 'حاضر'), row('15', 'سعد', 'غائب'), row('16', 'تركي', 'حاضر')] },
+  ] };
+  test('أكثر خمسة حضورًا: الشخص مرةً واحدة ولو اختلف رسم اسمه، والترتيب بعدد الحضور', () => {
+    const top = topAttendance(sep, 5);
+    assert.equal(top.length, 5);
+    assert.deepEqual(top.slice(0, 3).map((x) => [x.name, x.attended]), [['تركي', 3], ['محمد عبدالله', 3], ['سعد', 2]]);
+    assert.ok(!top.some((x) => x.name === 'فهد'), 'من لم يحضر قط لا يدخل');
+  });
+  test('وعند التساوي: بنسبة الحضور ثم بالاسم', () => {
+    const top = topAttendance(sep, 5);
+    // خالد حضر ١ من ٢، وناصر ١ من ٢، وماجد ١ من ١ ← ماجد أولًا بنسبته
+    assert.equal(top[3].name, 'ماجد');
+  });
+  test('والمجمَّع يقرأ حضوره من خريطة البرنامج، وبرنامجٌ فارغ بلا قائمة', () => {
+    const grouped = { id: 'g', type: 'مجمع', weeks: [{ id: 'd1' }, { id: 'd2' }], participants: [
+      { id: 'a', name: 'سعد', days: ['d1', 'd2'] }, { id: 'b', name: 'فهد', days: ['d1', 'd2'] }], attendance: { d1: { a: 'حاضر', b: 'حاضر' }, d2: { a: 'حاضر', b: 'غائب' } } };
+    assert.deepEqual(topAttendance(grouped, 5).map((x) => [x.name, x.attended, x.total]), [['سعد', 2, 2], ['فهد', 1, 2]]);
+    assert.deepEqual(topAttendance({ id: 'z', type: 'منفصل', weeks: [] }), []);
+    assert.deepEqual(topAttendance(null), []);
+  });
+}
+
 console.log(`\n${passed} اختبار نجح.`);

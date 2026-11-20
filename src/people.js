@@ -397,3 +397,37 @@ export const remapParticipants = (programs, remap) => {
     weeks: (prog.weeks || []).map((w) => ({ ...w, participants: (w.participants || []).map(fix) })),
   }));
 };
+
+/**
+ * أكثر الطلاب حضورًا في برنامجٍ واحد.
+ *
+ * يُعدّ الشخص مرةً واحدة مهما سُجّل في أكثر من أسبوع: بمعرّف طالبه إن رُبط، وإلا باسمه موحَّدًا
+ * (كما يفعل البحث بالاسم)، فلا يتشتّت «محمد عبدالله» و«محمد عبد الله». والمجمَّع يحفظ حضوره في
+ * خريطةٍ على البرنامج، والمنفصل على صفّ كل أسبوع، فنقرأ الاثنين.
+ *
+ * والترتيب بعدد مرات الحضور، فإن تساوى اثنان فبنسبة الحضور (من حضر خمسةً من خمسة قبل من حضر
+ * خمسةً من عشرة)، ثم بالاسم ليثبت الترتيب. ومن لم يحضر قط لا يدخل القائمة وإن قلّ الطلاب.
+ */
+export const topAttendance = (program, n = 5) => {
+  if (!program) return [];
+  const grouped = program.type === 'مجمع';
+  const entries = grouped
+    ? (program.participants || []).flatMap((p) => (p.days || []).map((wid) => ({ p, status: program.attendance?.[wid]?.[p.id] || 'معلق' })))
+    : (program.weeks || []).flatMap((w) => (w.participants || []).map((p) => ({ p, status: p.attendance || 'معلق' })));
+  // الشخص بمعرّف طالبه إن رُبط، وإلا بالاسم كاملًا كما يفعل البحث (فـ«عبدالله» و«عبد الله» واحد)
+  const people = [];
+  for (const { p, status } of entries) {
+    if (!p.studentId && !normalizeName(p.name || '')) continue;
+    let g = people.find((x) => (p.studentId && x.id === p.studentId) || (!p.studentId && !x.id && sameName(x.name, p.name)));
+    if (!g) { g = { id: p.studentId || '', name: p.name || '', attended: 0, total: 0 }; people.push(g); }
+    g.total += 1;
+    if (status === 'حاضر') g.attended += 1;
+  }
+  return people
+    .filter((g) => g.attended > 0)
+    .sort((a, b) => b.attended - a.attended
+      || (b.attended / b.total) - (a.attended / a.total)
+      || a.name.localeCompare(b.name, 'ar'))
+    .slice(0, Math.max(0, n))
+    .map(({ name, attended, total }) => ({ name, attended, total }));
+};

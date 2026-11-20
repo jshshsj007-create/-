@@ -9,7 +9,7 @@ import { api, clone, merge3, readSession, writeSession, clearSession, readPendin
 import {
   normalizePhone, isValidPhone, formatPhone, normalizeName, sameName,
   studentsOf, upsertRegistration, findDuplicates, mergeGuardians, mergeStudents, guardianNameFrom,
-  dedupeByPhone, remapParticipants, nameMatches, searchStudents,
+  dedupeByPhone, remapParticipants, nameMatches, searchStudents, topAttendance,
 } from './people.js';
 import { STATES, TONES, studentState, stateCounts, stateOpts, NEAR, FAR } from './status.js';
 import { stamped, traceText, agoText, clockText } from './trace.js';
@@ -6307,7 +6307,7 @@ export default function App() {
               </div>
               {canAttend && (
                 <button className={btnGhostBox} onClick={() => { setForm({ q: '' }); setModal('studentAttendance'); }}>
-                  <Search size={15} /> ابحث عن طالب
+                  <Search size={15} /> حضور الطلاب
                 </button>
               )}
               {isGrouped && canMoney && (
@@ -10893,7 +10893,7 @@ export default function App() {
       )}
 
       {modal === 'studentAttendance' && program && (
-        <Modal title="ابحث عن طالب" onClose={closeModal} wide>
+        <Modal title="حضور الطلاب" onClose={closeModal} wide>
           <Field label="اسم الطالب" hint="يبحث داخل هذا البرنامج فقط — بالاسم، ولو ما كان مربوطًا برقم جوال.">
             <div className="relative">
               <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" />
@@ -10903,7 +10903,27 @@ export default function App() {
           </Field>
           {(() => {
             const q = (form.q || '').trim();
-            if (q.length < 2) return null;
+            if (q.length < 2) {
+              // قبل أن يكتب شيئًا: أكثر خمسةٍ حضورًا في هذا البرنامج
+              const top = topAttendance(program, 5);
+              if (!top.length) return null;
+              return (
+                <div className={cardCls} data-testid="top-attendance">
+                  <div className="text-sm font-bold text-slate-700 mb-2.5">أكثر خمسة حضورًا</div>
+                  <div className="space-y-1.5">
+                    {top.map((r, i) => (
+                      <div key={r.name} className="flex items-center justify-between gap-2 text-sm">
+                        <span className="flex items-center gap-2 min-w-0">
+                          <span className="w-5 h-5 shrink-0 rounded-full bg-brand-50 text-brand-700 text-[11px] font-bold flex items-center justify-center">{i + 1}</span>
+                          <span className="font-semibold text-slate-800 truncate">{r.name}</span>
+                        </span>
+                        <Badge tone={r.attended === r.total ? 'green' : 'brand'}>حضر {r.attended} من {r.total}</Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            }
             const results = programAttendanceSearch(q);
             if (!results.length) return <div className={emptyCls}>ما فيه طالب بهذا الاسم في هذا البرنامج.</div>;
             return (
