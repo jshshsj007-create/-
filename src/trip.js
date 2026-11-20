@@ -75,7 +75,7 @@ export const tripBalances = (trip) => tripPeople(trip).map((name) => {
 });
 
 /** مجموع ما بقي عليك لكل الشباب. */
-export const tripOwedTotal = (trip) => tripBalances(trip).reduce((s, b) => s + Math.max(0, b.owed), 0);
+export const tripOwedTotal = (trip) => Math.round(tripBalances(trip).reduce((s, b) => s + Math.max(0, b.owed), 0) * 100) / 100;
 
 /** مصاريف كل يوم: مجموعه، ومجموع كل تصنيف فيه. اليوم بلا اسمٍ يأتي آخرًا. */
 export const tripDays = (trip) => {

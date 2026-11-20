@@ -244,4 +244,11 @@ test('الهللات في حساب الدافع: لا يطلع كسرٌ وهمي
   assert.equal(tripBalances({ people: ['ع'], expenseItems: [{ id: 'a', amount: 12.5, paidBy: 'ع' }], settlements: [] })[0].owed, 12.5);
 });
 
+test('بالهللة: السكن المقسَّم مجموعه ما دُفع، وما بقي بلا كسرٍ عشريٍّ وهميّ', () => {
+  const parts = makeSpread({ ids: ['x', 'y', 'z'], name: 'سكن', amount: 400.01, startDay: 'اليوم الأول', n: 3, cat: 'سكن', paidBy: 'تركي' });
+  assert.deepEqual(parts.map((p) => p.amount), [133.35, 133.33, 133.33]);
+  const t = { people: ['تركي', 'ع'], expenseItems: [...parts, { id: 'q', amount: 33.33, paidBy: 'ع' }, { id: 'w', amount: 7.17, paidBy: 'ع' }], settlements: [{ id: 's', person: 'ع', amount: 10.1 }] };
+  assert.equal(tripOwedTotal(t), 430.41);
+});
+
 console.log(`\n✅ ${passed} اختبارًا لحساب السفرة`);
