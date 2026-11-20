@@ -182,6 +182,37 @@ test('ولا يُنزَّل مرتين: بعد التسوية لا بقية', ()
   assert.equal(settleSubRests(once.data).items.length, 0);
 });
 
+/* ---- عمليات فيض اليدوية تدخل «كم معك» ---- */
+{
+  const ledger = (inAcc, amount) => ({ id: 'p1', type: 'مجمع', participants: [{ id: 'x', name: 'س', accountId: inAcc, amount, source: 'manual', pending: false }], collections: [], expenseItems: [], schoolPayouts: [], faidPayouts: [], weeks: [] });
+  const d = (adj) => ({ faidAccounts: [{ id: 'rajhi', name: 'الراجحي' }, { id: 'abu', name: 'أبو فارس' }], programs: [ledger('rajhi', 5640)], handovers: [], faidAdjustments: adj });
+  test('مصروفٌ يدوي ينقص الحساب (الثمانمئة المصروفة من الراجحي)', () => {
+    const r = cashOf(d([{ id: 'a1', accountId: 'rajhi', type: 'مصروف', amount: 800 }]), 'rajhi');
+    assert.equal(r.balance, 4840);
+    assert.equal(r.outflow, 800);
+  });
+  test('وإيرادٌ يدوي يزيده، ورصيدٌ افتتاحي كذلك', () => {
+    const r = cashOf(d([{ id: 'a2', accountId: 'abu', type: 'إيراد', amount: 4895 }, { id: 'a3', accountId: 'abu', kind: 'opening', type: 'إيراد', amount: 105 }]), 'abu');
+    assert.equal(r.balance, 5000);
+  });
+  test('وتحويلٌ إلى الاستثمار ينقص الحساب، ورجوعٌ منه يزيده', () => {
+    const r = cashOf(d([{ id: 'a4', accountId: 'rajhi', kind: 'investment', type: 'مصروف', amount: 1000 }, { id: 'a5', accountId: 'rajhi', kind: 'investment', type: 'إيراد', amount: 300 }]), 'rajhi');
+    assert.equal(r.balance, 5640 - 1000 + 300);
+  });
+  test('ولا يُعدّ ترحيلُ نصيب فيض من برنامج (له source): مالُه دخل الحساب أصلًا مع البرنامج', () => {
+    const r = cashOf(d([{ id: 'a6', batchId: 'b', source: { programId: 'p1', label: 'ج' }, accountId: 'rajhi', type: 'إيراد', amount: 4895 }]), 'rajhi');
+    assert.equal(r.balance, 5640);
+  });
+  test('وتقسيمٌ يدوي (له batchId بلا source) يُعدّ، وحسابٌ آخر لا يتأثر', () => {
+    const dd = d([{ id: 'a7', batchId: 'b2', accountId: 'abu', type: 'إيراد', amount: 70 }, { id: 'a8', batchId: 'b2', accountId: 'rajhi', type: 'إيراد', amount: 30 }]);
+    assert.equal(cashOf(dd, 'abu').balance, 70);
+    assert.equal(cashOf(dd, 'rajhi').balance, 5670);
+  });
+  test('والمحفوظ لا يتأثر بها', () => {
+    assert.equal(cashOf(d([{ id: 'a9', accountId: 'rajhi', type: 'مصروف', amount: 800 }]), 'rajhi').held, 0);
+  });
+}
+
 console.log(`\n✅ ${passed} اختبارًا لـ«كم معك» والتسليم\n`);
 
 /* --------------- بقيّة الاشتراك: مالٌ في اليد بلا دفتر --------------- */

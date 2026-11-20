@@ -152,6 +152,20 @@ export const cashOf = (data, accountId) => {
     inflow += r.amount;
     held += r.amount;
   }
+  /**
+   * وعمليات فيض اليدوية على هذا الحساب: ما قبضه وما صرفه خارج البرامج.
+   *
+   * كانت تُقيَّد في دفتر فيض وحده، فيقول «كم معك» ما ليس في اليد: صُرف ٨٠٠ من الراجحي وبقي رصيده فيه كاملًا.
+   * وهو يريد من هذه الشاشة أن تطابق ما في الحساب فعلًا، فتدخل هنا.
+   *
+   * إلا ما له `source`: ترحيل نصيب فيض من برنامج. فمالُه دخل الحسابَ أصلًا مع اشتراكات البرنامج وخرج منه
+   * نصيبًا في `faidPayouts`، فعدُّه ثانيةً يضاعفه. وما سواه — إيرادٌ يدوي، مصروفٌ، رصيدٌ افتتاحي، تحويلٌ
+   * إلى الاستثمار ورجوعٌ منه — يزيد الحساب أو ينقصه بحسب نوعه.
+   */
+  for (const a of data?.faidAdjustments || []) {
+    if (a.accountId !== accountId || a.source) continue;
+    if (a.type === 'إيراد') inflow += num(a.amount); else outflow += num(a.amount);
+  }
   // ما سلّمه لغيره يخرج، وما سُلّم إليه يدخل
   for (const h of data?.handovers || []) {
     if (h.fromId === accountId) outflow += num(h.amount);
