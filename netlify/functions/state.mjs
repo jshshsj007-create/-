@@ -400,7 +400,7 @@ const khayrOfStudent = (khayr, me) => {
  */
 const strip = (data, me) => {
   const out = { ...data, users: (data?.users || []).map(({ password, ...rest }) => rest) };
-  if (!allowed(me, 'أولياء الأمور')) { out.guardians = []; out.students = []; }
+  if (!allowed(me, 'أولياء الأمور')) { out.guardians = []; out.students = []; out.dupIgnored = []; }
   if (!allowed(me, 'خيركم')) out.khayr = khayrOfStudent(data?.khayr, me);
   /**
    * أسئلة النادي تحمل الجواب الصحيح وأسماء الأولاد الذين جاوبوا. من لا يفتح
@@ -683,6 +683,8 @@ const guard = (incoming, current, me) => {
   if (!allowed(me, 'أولياء الأمور')) {
     out.guardians = current?.guardians || [];
     out.students = current?.students || [];
+    // وقراراتُ «أبقِ كل واحد» تتبعهما: جهازٌ بلا هذه الصلاحية لا يمحوها ولا يضيف إليها
+    out.dupIgnored = current?.dupIgnored || [];
   }
 
   // الطالب يقرأ سجلّه ولا يكتبه، ومثله من أُعطي «خيركم» للقراءة فقط

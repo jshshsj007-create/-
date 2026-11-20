@@ -553,4 +553,22 @@ test('بلا اسم ما فيه اقتراحات', () => {
   });
 }
 
+/* ---- «أبقِ كل واحد»: استبعاد زوجٍ من التكرار المحتمل ---- */
+{
+  const { findDuplicates, dupKey } = await import('../src/people.js');
+  const gs = [{ id: 'g1', name: 'عبدالله الحارثي', phone: '0554402299' }, { id: 'g2', name: 'عبدالله الحارثي', phone: '0503114267' }, { id: 'g3', name: 'ناصر', phone: '0555000611' }, { id: 'g4', name: 'ناصر', phone: '0555000611' }];
+  test('الزوج المُبقى لا يعود تنبيهًا، وغيره يبقى', () => {
+    const all = findDuplicates(gs, []);
+    assert.equal(all.length, 2);
+    const left = findDuplicates(gs, [], [dupKey(all[0])]);
+    assert.equal(left.length, 1);
+    assert.notEqual(dupKey(left[0]), dupKey(all[0]));
+  });
+  test('مفتاح الزوج لا يتأثر بترتيب طرفيه، ويفرّق بين الولي والطالب', () => {
+    const a = { id: 'x1' }, b = { id: 'x2' };
+    assert.equal(dupKey({ kind: 'guardian', a, b }), dupKey({ kind: 'guardian', a: b, b: a }));
+    assert.notEqual(dupKey({ kind: 'guardian', a, b }), dupKey({ kind: 'student', a, b }));
+  });
+}
+
 console.log(`\n${passed} اختبار نجح.`);

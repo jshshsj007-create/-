@@ -231,10 +231,19 @@ export const upsertRegistration = (db, { guardian, kids }, now = Date.now()) => 
 /* ------------------------------ التكرار المحتمل ------------------------------ */
 
 /**
+ * مفتاح الزوج المشتبه: نوعه ومعرّفا طرفيه مرتّبين، فلا يتغيّر باختلاف من كان «أ» ومن «ب».
+ *
+ * يُحفظ في `dupIgnored` لمّا يقول صاحب الفريق «أبقِ كل واحد»: أنهما شخصان مختلفان، فلا يعود التنبيه
+ * عليهما كل مرة. ومعرّفان لا اسمان، فلو غُيّر اسم أحدهما أو ظهر شبيهٌ آخر بقي القرار على هذين.
+ */
+export const dupKey = (d) => [d.kind, ...[d.a?.id, d.b?.id].map(String).sort()].join(':');
+
+/**
  * وليّا أمر بجوالين مختلفين ما يُكتشفان بالمفتاح، فنشتبه فيهما لما يتطابق
  * الاسم، أو يكون لهما ابن بنفس الاسم والمدرسة. الدمج قرار المستخدم لا التطبيق.
  */
-export const findDuplicates = (guardians, students) => {
+export const findDuplicates = (guardians, students, ignored = []) => {
+  const skip = new Set(ignored || []);
   const list = guardians || [];
   const out = [];
 
@@ -267,7 +276,7 @@ export const findDuplicates = (guardians, students) => {
       if (a.name && b.name && sameName(a.name, b.name)) out.push({ kind: 'guardian', a, b, reason: 'نفس الاسم' });
     }
   }
-  return out;
+  return out.filter((d) => !skip.has(dupKey(d)));
 };
 
 /**

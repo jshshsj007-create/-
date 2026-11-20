@@ -9,7 +9,7 @@ import { api, clone, merge3, readSession, writeSession, clearSession, readPendin
 import {
   normalizePhone, isValidPhone, formatPhone, normalizeName, sameName,
   studentsOf, upsertRegistration, findDuplicates, mergeGuardians, mergeStudents, guardianNameFrom,
-  dedupeByPhone, remapParticipants, nameMatches, searchStudents, topAttendance,
+  dedupeByPhone, remapParticipants, nameMatches, searchStudents, topAttendance, dupKey,
 } from './people.js';
 import { STATES, TONES, studentState, stateCounts, stateOpts, NEAR, FAR } from './status.js';
 import { stamped, traceText, agoText, clockText } from './trace.js';
@@ -4998,7 +4998,9 @@ export default function App() {
   /** فتح رابط عام قرار مالي وإداري، فيبقى لمن يملك المال والمشتركين معًا. */
   const canSignup = canMoney && canGuardians;
   /** التكرار المحتمل: التطبيق يشتبه، والمستخدم يقرّر. */
-  const duplicates = canGuardians ? findDuplicates(data.guardians, data.students) : [];
+  const duplicates = canGuardians ? findDuplicates(data.guardians, data.students, data.dupIgnored) : [];
+  /** «أبقِ كل واحد»: شخصان مختلفان، فلا يعود التنبيه عليهما. */
+  const keepBoth = (d) => save({ ...data, dupIgnored: [...new Set([...(data.dupIgnored || []), dupKey(d)])] });
 
   /* ------------------------------- خيركم ------------------------------- */
   /**
@@ -10257,6 +10259,13 @@ export default function App() {
                   </span>
                 </button>
               )}
+              {/* كلُّ الأزواج أُبقي فيها كل واحد: يبقى طريقٌ صغير إلى النافذة لمن أراد إعادتها */}
+              {duplicates.length === 0 && (data.dupIgnored || []).length > 0 && (
+                <button type="button" data-testid="dup-open-ignored" className="w-full text-right text-[11px] text-slate-400 mb-3 px-1"
+                  onClick={() => { setForm({}); setModal('duplicates'); }}>
+                  أبقيتَ كل واحدٍ في {(data.dupIgnored || []).length} من الاشتباهات — عرضها
+                </button>
+              )}
 
               <div className="relative mb-3">
                 <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -13130,10 +13139,20 @@ export default function App() {
                         </button>
                       ))}
                     </div>
+                    <button type="button" data-testid="dup-keep-both" className={btnGhost + ' w-full text-xs mt-2'}
+                      onClick={() => keepBoth(d)}>
+                      أبقِ كل واحد — هما شخصان مختلفان
+                    </button>
                   </div>
                 );
               })}
             </div>
+          )}
+          {(data.dupIgnored || []).length > 0 && (
+            <button type="button" data-testid="dup-restore" className="w-full text-xs text-slate-400 mt-3 py-2"
+              onClick={() => askConfirm('نعيد عرض كل ما أبقيتَ كل واحدٍ فيه؟', () => save({ ...data, dupIgnored: [] }), 'نعم، أعدها')}>
+              ما أبقيتَ فيه كل واحد: {(data.dupIgnored || []).length} — أعد عرضها
+            </button>
           )}
           <button className={btnGhost + ' w-full mt-4'} onClick={closeModal}>إغلاق</button>
         </Modal>

@@ -241,5 +241,23 @@ r = await call({ op: 'push', token: alawan, baseRev: r.body.rev, data: evil });
 after = (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data.trips.find((t) => t.id === 't1');
 check('ولا يسطو على بند غيره بادّعاء معرّفه', after.expenseItems.filter((x) => x.id === 'et1').length === 1 && after.expenseItems.find((x) => x.id === 'et1').amount === 600);
 
+// ---- «أبقِ كل واحد»: قراراتُ استبعاد التكرار تتبع صلاحية «أولياء الأمور» ----
+{
+  let p = (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body;
+  const dd = JSON.parse(JSON.stringify(p.data));
+  dd.dupIgnored = ['guardian:g1:g2'];
+  r = await call({ op: 'push', token: adminTok, baseRev: p.rev, data: dd });
+  const kept = (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data;
+  check('المدير يحفظ قرارات «أبقِ كل واحد»', JSON.stringify(kept.dupIgnored) === '["guardian:g1:g2"]', JSON.stringify(kept.dupIgnored));
+  const fahd2 = await login('fahd', 'pw9');
+  const fp = (await call({ op: 'pull', token: fahd2, sinceRev: 0 })).body;
+  check('ومن لا يملك «أولياء الأمور» لا يراها', (fp.data.dupIgnored || []).length === 0, JSON.stringify(fp.data.dupIgnored));
+  const fd = JSON.parse(JSON.stringify(fp.data));
+  fd.dupIgnored = ['guardian:evil:evil'];
+  await call({ op: 'push', token: fahd2, baseRev: fp.rev, data: fd });
+  const afterF = (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data;
+  check('ولا يمحوها ولا يضيف إليها', JSON.stringify(afterF.dupIgnored) === '["guardian:g1:g2"]', JSON.stringify(afterF.dupIgnored));
+}
+
 console.log(`\n${bad ? '✗' : '✅'} ${ok} نجح، ${bad} فشل`);
 process.exit(bad ? 1 : 0);
