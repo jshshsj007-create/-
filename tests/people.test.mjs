@@ -571,4 +571,31 @@ test('بلا اسم ما فيه اقتراحات', () => {
   });
 }
 
+/* ---- طالبٌ ذهب وليُّه: يُربط بجوال ---- */
+{
+  const { attachGuardianByPhone } = await import('../src/people.js');
+  let n = 0;
+  const db = () => ({ newId: () => 'n' + (++n), guardians: [{ id: 'g9', name: 'سعد', phone: '0551234567' }], students: [{ id: 's1', guardianId: 'gone', name: 'زايد الربيعان' }] });
+  test('جوالٌ جديد: يُنشأ وليٌّ ويُربط به الطالب', () => {
+    const r = attachGuardianByPhone(db(), 's1', { phone: '0509998877' });
+    assert.equal(r.isNew, true);
+    assert.equal(r.guardians.length, 2);
+    assert.equal(r.guardian.phone, '509998877');
+    assert.equal(r.students[0].guardianId, r.guardian.id);
+    assert.ok(r.guardian.name, 'اسمٌ من اسم الطالب إن لم يُكتب');
+  });
+  test('جوالٌ موجود: يُربط بصاحبه ولا يتكرّر الولي', () => {
+    const r = attachGuardianByPhone(db(), 's1', { phone: '+966 55 123 4567', name: 'اسمٌ ثانٍ' });
+    assert.equal(r.isNew, false);
+    assert.equal(r.guardians.length, 1);
+    assert.equal(r.students[0].guardianId, 'g9');
+    assert.equal(r.guardian.name, 'سعد', 'ولا يُطمس اسمه');
+  });
+  test('جوالٌ غير سليم أو طالبٌ مجهول: خطأ ولا تغيير', () => {
+    assert.ok(attachGuardianByPhone(db(), 's1', { phone: '123' }).error);
+    assert.ok(attachGuardianByPhone(db(), 's1', { phone: '' }).error);
+    assert.ok(attachGuardianByPhone(db(), 'nope', { phone: '0509998877' }).error);
+  });
+}
+
 console.log(`\n${passed} اختبار نجح.`);

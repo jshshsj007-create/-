@@ -228,6 +228,35 @@ export const upsertRegistration = (db, { guardian, kids }, now = Date.now()) => 
   return { guardians, students, guardian: g, guardianIsNew, linked };
 };
 
+/**
+ * طالبٌ ذهب وليُّ أمره: يُكتب جوالٌ فيُربط بوليٍّ يملكه.
+ *
+ * إن كان في القاعدة وليٌّ بهذا الجوال رُبط به ولم يُنشأ ثانٍ — وإلا لتكرّر وليٌّ بالجوال نفسه، وهو ما
+ * يُبنى عليه منع التكرار كله. وإلا أُنشئ وليٌّ جديد باسمٍ كتبه صاحب الفريق، فإن لم يكتب فمن اسم الطالب
+ * كما يفعل التسجيل. وجوالٌ غير سليم لا يُقبل، فلا يُكتب رقمٌ لا يصل إلى أحد.
+ */
+export const attachGuardianByPhone = (db, studentId, { phone, name } = {}, now = Date.now()) => {
+  const student = (db.students || []).find((x) => x.id === studentId);
+  if (!student) return { error: 'ما لقيت الطالب' };
+  if (!isValidPhone(phone)) return { error: 'اكتب جوالًا سعوديًا صحيحًا: 05XXXXXXXX' };
+  const guardians = [...(db.guardians || [])];
+  let g = findGuardianByPhone(guardians, phone);
+  const isNew = !g;
+  if (!g) {
+    g = {
+      id: db.newId(),
+      name: String(name || '').trim() || guardianNameFrom(student.name),
+      phone: normalizePhone(phone),
+      notes: '',
+      createdAt: now,
+      lastSeenAt: now,
+    };
+    guardians.push(g);
+  }
+  const students = (db.students || []).map((x) => (x.id === studentId ? { ...x, guardianId: g.id } : x));
+  return { guardians, students, guardian: g, isNew };
+};
+
 /* ------------------------------ التكرار المحتمل ------------------------------ */
 
 /**

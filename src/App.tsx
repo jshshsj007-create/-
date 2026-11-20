@@ -9,7 +9,7 @@ import { api, clone, merge3, readSession, writeSession, clearSession, readPendin
 import {
   normalizePhone, isValidPhone, formatPhone, normalizeName, sameName,
   studentsOf, upsertRegistration, findDuplicates, mergeGuardians, mergeStudents, guardianNameFrom,
-  dedupeByPhone, remapParticipants, nameMatches, searchStudents, topAttendance, dupKey,
+  dedupeByPhone, remapParticipants, nameMatches, searchStudents, topAttendance, dupKey, attachGuardianByPhone,
 } from './people.js';
 import { STATES, TONES, studentState, stateCounts, stateOpts, NEAR, FAR } from './status.js';
 import { stamped, traceText, agoText, clockText } from './trace.js';
@@ -10375,6 +10375,26 @@ export default function App() {
                   {data.guardians.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
                     .map((x) => <option key={x.id} value={x.id}>{x.name}{x.phone ? ` · ${x.phone}` : ''}</option>)}
                 </select>
+              </Field>
+
+              {/* أو يكتب جوّاله: يُربط بوليٍّ يملك هذا الرقم، وإلا يُنشأ له وليٌّ جديد */}
+              <Field label="أو سجّل جوال وليّ أمره" hint="إن كان الرقم لوليٍّ موجود رُبط به، وإلا أُنشئ وليٌّ جديد.">
+                <input className={inputCls} data-testid="lost-phone" dir="ltr" inputMode="tel" placeholder="05XXXXXXXX"
+                  value={form.lostPhone || ''} onChange={(e) => setForm({ ...form, lostPhone: e.target.value, lostError: '' })} />
+                <input className={inputCls + ' mt-2'} data-testid="lost-name" placeholder="اسم وليّ الأمر (اختياري)"
+                  value={form.lostName || ''} onChange={(e) => setForm({ ...form, lostName: e.target.value })} />
+                {form.lostError && <div className="text-red-500 text-xs mt-1.5">{form.lostError}</div>}
+                <button type="button" data-testid="lost-save" className={btnPrimary + ' w-full mt-2'}
+                  onClick={() => {
+                    const r = attachGuardianByPhone({ guardians: data.guardians, students: data.students, newId: uid }, s.id, { phone: form.lostPhone, name: form.lostName });
+                    if (r.error) { setForm({ ...form, lostError: r.error }); return; }
+                    save({ ...data, guardians: r.guardians, students: r.students });
+                    setForm({});
+                    setSelectedGuardianId(r.guardian.id);
+                    goto('guardianDetail');
+                  }}>
+                  سجّل الجوال واربطه
+                </button>
               </Field>
 
               {isAdmin && (
