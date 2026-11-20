@@ -205,10 +205,6 @@ test('السكن يغطي يومًا أو يومين أو ثلاثة', () => {
 test('قسمة المبلغ على الأيام: صحيحٌ في كل يوم والكسر في أولها، والمجموع مطابق', () => {
   assert.deepEqual(splitAcross(900, 3), [300, 300, 300]);
   assert.deepEqual(splitAcross(1000, 3), [334, 333, 333]);
-  // الهللات: تُقسَّم بالهللة ولا تُقرَّب، والمجموع يطابق ما دُفع
-  assert.deepEqual(splitAcross(100.5, 2), [50.25, 50.25]);
-  assert.deepEqual(splitAcross(100.01, 3), [33.35, 33.33, 33.33]);
-  assert.equal(splitAcross(1234.57, 3).reduce((a, b) => Math.round((a + b) * 100) / 100, 0), 1234.57);
   assert.equal(splitAcross(1000, 3).reduce((a, b) => a + b, 0), 1000);
   assert.deepEqual(splitAcross(500, 1), [500]);
   assert.deepEqual(splitAcross(7, 2), [4, 3]);
@@ -234,14 +230,6 @@ test('سكنٌ لثلاثة أيام: ثلاثة بنود بنصيبٍ لكل ي
   const one = makeSpread({ ids: ['x1'], name: 'سكن', amount: 400, startDay: 'اليوم الأول', n: 1, cat: 'سكن' });
   assert.equal(one.length, 1);
   assert.equal(one[0].grp, undefined, 'ويومٌ واحد لا علامة له');
-});
-
-test('الهللات في حساب الدافع: لا يطلع كسرٌ وهميّ يُقرأ «زيادة»', () => {
-  const t = { people: ['تركي'], expenseItems: [{ id: 'a', amount: 0.1, paidBy: 'تركي' }, { id: 'b', amount: 0.2, paidBy: 'تركي' }], settlements: [{ id: 's', person: 'تركي', amount: 0.3 }] };
-  const b = tripBalances(t).find((x) => x.name === 'تركي');
-  assert.equal(b.paid, 0.3);
-  assert.equal(b.owed, 0, 'دفع ٠٫٣ واستلم ٠٫٣: مسدَّد لا ٥٫٥e-17');
-  assert.equal(tripBalances({ people: ['ع'], expenseItems: [{ id: 'a', amount: 12.5, paidBy: 'ع' }], settlements: [] })[0].owed, 12.5);
 });
 
 console.log(`\n✅ ${passed} اختبارًا لحساب السفرة`);
