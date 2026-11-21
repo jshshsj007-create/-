@@ -13749,10 +13749,6 @@ function CashScreen({ rows, totals, handovers, settle, onSettle, onOpen, onHando
         )}
       </div>
 
-      <div className="text-[11px] text-slate-400 leading-5 px-1">
-        يشمل ما سجّلتَه يدويًا في «العمليات»: إيرادًا أو مصروفًا أو رصيدًا افتتاحيًا أو استثمارًا — لتطابق الأرقام ما في كل حساب فعلًا.
-      </div>
-
       {settle?.items?.length > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-900">
           <div className="font-bold">بقايا اشتراكات في برامج انتهت: {fmt(settle.total)} ر.س</div>
