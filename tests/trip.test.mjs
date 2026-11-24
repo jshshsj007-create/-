@@ -198,8 +198,8 @@ test('نسخ سفرة: الشباب والمسؤولون والمُدخِلون�
 });
 
 test('السكن يغطي يومًا أو يومين أو ثلاثة', () => {
-  assert.deepEqual(STAY_DAYS, [1, 2, 3]);
-  assert.deepEqual(STAY_DAYS.map(stayLabel), ['يوم واحد', 'يومين', 'ثلاثة أيام']);
+  assert.deepEqual(STAY_DAYS, [1, 2, 3, 4, 5]);
+  assert.deepEqual(STAY_DAYS.map(stayLabel), ['يوم واحد', 'يومين', 'ثلاثة أيام', 'أربعة أيام', 'خمسة أيام']);
 });
 
 test('قسمة المبلغ على الأيام: صحيحٌ في كل يوم والكسر في أولها، والمجموع مطابق', () => {
@@ -230,6 +230,16 @@ test('سكنٌ لثلاثة أيام: ثلاثة بنود بنصيبٍ لكل ي
   const one = makeSpread({ ids: ['x1'], name: 'سكن', amount: 400, startDay: 'اليوم الأول', n: 1, cat: 'سكن' });
   assert.equal(one.length, 1);
   assert.equal(one[0].grp, undefined, 'ويومٌ واحد لا علامة له');
+});
+
+test('سكنٌ على أربعة أيام: ٣٧٠٠ = ٩٢٥ لكل يوم من الأول إلى الرابع، ومجموعها ما دُفع', () => {
+  const parts = makeSpread({ ids: ['a', 'b', 'c', 'd'], name: 'سكن', amount: 3700, startDay: 'اليوم الأول', n: 4, cat: 'سكن', paidBy: 'أبو فارس', by: 'u1' });
+  assert.deepEqual(parts.map((x) => x.amount), [925, 925, 925, 925]);
+  assert.deepEqual(parts.map((x) => x.day), ['اليوم الأول', 'اليوم الثاني', 'اليوم الثالث', 'اليوم الرابع']);
+  assert.ok(parts.every((x) => x.grp === 'a' && x.by === 'u1' && x.paidBy === 'أبو فارس'));
+  assert.equal(parts[3].part, '٤ من ٤');
+  // ومبلغٌ لا يقبل القسمة: الباقي على أول يوم ويبقى المجموع
+  assert.deepEqual(makeSpread({ ids: ['a', 'b', 'c', 'd'], name: 'س', amount: 3702, startDay: 'اليوم الأول', n: 4, cat: 'سكن', paidBy: 'ع' }).map((x) => x.amount), [927, 925, 925, 925]);
 });
 
 console.log(`\n✅ ${passed} اختبارًا لحساب السفرة`);

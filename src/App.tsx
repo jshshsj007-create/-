@@ -3567,6 +3567,16 @@ export default function App() {
       const fields = { name: form.cat === 'أخرى' ? form.name : (form.sub || form.cat), amount: form.amount, day: form.day || currentDay(trip), cat: form.cat, paidBy: form.paidBy, sub: form.cat === 'أكل وشرب' ? form.sub : '' };
       // تعديل بندٍ قائم: يبقى معرّفه ومن أدخله وتُوضع عليه علامة «عُدّل»
       if (form.editId) {
+        const old = (trip.expenseItems || []).find((x) => x.id === form.editId);
+        const nights = form.cat === 'سكن' && !old?.grp ? Number(form.nights || 1) : 1;
+        // سكنٌ واحد يُجعل على أيام: يبقى بندُه الأول بمعرّفه ومن أدخله، وتلحق به بقية الأجزاء
+        if (old && nights > 1) {
+          const parts = makeSpread({ ids: [old.id, ...Array.from({ length: nights - 1 }, () => uid())], name: fields.name, amount: fields.amount, startDay: fields.day, n: nights, cat: fields.cat, paidBy: fields.paidBy, by: old.by })
+            .map((x) => ({ ...x, edited: true }));
+          patchTrip({ expenseItems: (trip.expenseItems || []).flatMap((x) => (x.id === old.id ? parts : [x])) });
+          closeModal();
+          return;
+        }
         patchTrip({ expenseItems: (trip.expenseItems || []).map((x) => (x.id === form.editId ? editExpense(x, fields) : x)) });
         closeModal();
         return;
@@ -3635,7 +3645,7 @@ export default function App() {
   const openEditExpense = (it) => {
     const known = TRIP_CATS.includes(it.cat);
     // ما كُتب قديمًا بنوعٍ خارج القائمة يُفتح «أخرى» باسمه، فلا يضيع ما كُتب
-    setForm({ itemKey: 'expenseItems', editId: it.id, cat: known ? it.cat : 'أخرى', name: (!known || it.cat === 'أخرى') ? it.name : '', sub: it.sub || '', paidBy: it.paidBy || '', amount: it.amount, day: it.day || currentDay(trip) });
+    setForm({ itemKey: 'expenseItems', editId: it.id, cat: known ? it.cat : 'أخرى', name: (!known || it.cat === 'أخرى') ? it.name : '', sub: it.sub || '', paidBy: it.paidBy || '', amount: it.amount, day: it.day || currentDay(trip), editGrp: Boolean(it.grp), nights: 1 });
     setModal('addTripItem');
   };
   const removeTripItem = (key, itemId) => {
@@ -12190,7 +12200,7 @@ export default function App() {
                   <button key={c} type="button" className={chip(form.cat === c)} onClick={() => setForm({ ...form, cat: c, sub: c === 'أكل وشرب' ? form.sub : '', nights: c === 'سكن' ? form.nights : 1, error: '' })}>{c}</button>
                 ))}
               </div>
-              {form.cat === 'سكن' && !form.editId && (
+              {form.cat === 'سكن' && !form.editGrp && (
                 <div className="mt-2" data-testid="stay-days">
                   <div className="text-[11px] text-slate-400 mb-1.5">كم يومًا يغطي؟ يُقسَّم المبلغ على الأيام.</div>
                   <div className="flex flex-wrap gap-1.5">
