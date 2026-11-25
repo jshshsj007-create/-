@@ -53,6 +53,7 @@ node tests/ledger.test.mjs
 node tests/auth.test.mjs
 node tests/quick.test.mjs
 node tests/club.test.mjs
+node tests/wudu.test.mjs
 node tests/faid.test.mjs
 node tests/merge.test.mjs
 node tests/people.test.mjs

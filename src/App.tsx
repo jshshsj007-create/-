@@ -42,7 +42,7 @@ import {
   reviewCycles, cycleTarget, cycleDrift, spanText, stopsOf, stopsExtraOf, stopText, pagesBetween, pagesOf,
   sessionRows, sessionReportText, khayrSessionSections, khayrSeasonSections,
 } from './khayr.js';
-import { DEFAULT_WUDU_STEPS, wuduDone, wuduPercent, wuduMastered, wuduStats } from './wudu.js';
+import { DEFAULT_WUDU_STEPS, wuduDone, wuduPercent, wuduMastered, wuduStats, wuduSummaryLine } from './wudu.js';
 import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 import PdfFirstPage from './pdfview.jsx';
 import { say } from './adad.js';
@@ -6483,6 +6483,8 @@ export default function App() {
                 c.leagues ? say(c.leagues, 'league') : '',
                 c.cups ? say(c.cups, 'cup') : '',
                 c.questions ? `${say(c.questions, 'question')}${correct ? ` — أجاب عليها صحيحًا ${say(correct, 'answer')}` : ''}` : '',
+                // كم أتقن الوضوء: يُسأل عنه أولًا، وكان غائبًا عن التقرير
+                wuduSummaryLine(data.wudu?.students, data.wudu?.steps),
               ].filter(Boolean);
               // ما كتبه كل قائد في خانة «ملاحظات سلوكية» من تقرير يومه، جدولًا تحت كل أسبوع
               const { leaders, hidden: hiddenLeaderNotes } = leaderNotesProgram(data, program.id, program, data.users);
