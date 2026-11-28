@@ -52,6 +52,16 @@ test('صمتٌ تام لا يُنتج شيئًا', () => {
   assert.equal(run([quiet(5)]).got.length, 0);
 });
 
+test('كلامٌ متّصل طويل يُقطع عند وقفةٍ قصيرة بعد ٤ ثوانٍ فيبدأ التحليل والطالب يقرأ', () => {
+  const { got } = run([quiet(0.5), tone(4.5), quiet(0.3), tone(3), quiet(1.5)]);
+  assert.equal(got.length, 2, JSON.stringify(got));
+  assert.ok(got[0] < 6, `${got[0]}`);
+});
+
+test('وقفةٌ قصيرة قبل ٤ ثوانٍ لا تقطع', () => {
+  assert.equal(run([quiet(0.5), tone(1.5), quiet(0.3), tone(1.5), quiet(1.5)]).got.length, 1);
+});
+
 test('كلامٌ متّصل أطول من الحدّ يُقطع قسرًا فلا يتأخّر «أعد» إلى ما لا نهاية', () => {
   const { got } = run([tone(25)], { maxMs: 10000 });
   assert.ok(got.length >= 2, `${got.length}`);

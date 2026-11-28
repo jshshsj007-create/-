@@ -40,7 +40,7 @@ export const resample = (x, from, to = 16000) => {
  * يقطّع الصوت المتّصل إلى مقاطع كلامٍ بين وقفاتها: لا نرسل للنموذج صمتًا، ولا نبقى ننتظر نهايةَ التلاوة كلها.
  * عتبة الصوت تتكيّف مع ضجيج الغرفة (متوسّط ما قبل الكلام) لا رقمٌ ثابت: جوالٌ في مجلسٍ مزدحم غير جوالٍ في غرفة.
  */
-export const createSegmenter = ({ rate, onSegment, silenceMs = 900, minSpeechMs = 350, maxMs = 20000, preRollMs = 300 }) => {
+export const createSegmenter = ({ rate, onSegment, onLevel, silenceMs = 600, minSpeechMs = 350, maxMs = 12000, preRollMs = 300, softAfterMs = 4000, softSilenceMs = 220 }) => {
   let floor = 0.004, speaking = false, silence = 0, speech = 0, total = 0;
   let chunks = [], pre = [], preLen = 0;
   const ms = (n) => (n / rate) * 1000;
@@ -57,6 +57,7 @@ export const createSegmenter = ({ rate, onSegment, silenceMs = 900, minSpeechMs 
       let s = 0; for (let i = 0; i < block.length; i++) s += block[i] * block[i];
       const rms = Math.sqrt(s / block.length);
       const loud = rms > Math.max(0.012, floor * 3.5);
+      onLevel?.(rms, loud);
       const copy = new Float32Array(block);
       if (!speaking) {
         floor = floor * 0.95 + rms * 0.05;
@@ -65,7 +66,9 @@ export const createSegmenter = ({ rate, onSegment, silenceMs = 900, minSpeechMs 
       }
       chunks.push(copy); total += block.length;
       if (loud) { silence = 0; speech += ms(block.length); } else silence += ms(block.length);
-      if (silence >= silenceMs || ms(total) >= maxMs) emit();
+      // بعد أربع ثوانٍ من الكلام المتّصل نقطع عند أول وقفةٍ قصيرة (بين كلمتين) لا ننتظر وقفةَ آخر الآية: فيبدأ التحليل
+      // والطالب ما زال يقرأ، وتصل النتيجة أبكر. القطع في وقفةٍ لا في وسط كلمة، فلا تتأذّى الدقة.
+      if (silence >= silenceMs || ms(total) >= maxMs || (ms(total) >= softAfterMs && silence >= softSilenceMs)) emit();
     },
     /** ينهي المقطع الجاري (انتهى الطالب) أو يرمي ما سُمع (صمتَ الوكيل ينطق «أعد»). */
     flush(keep = true) { if (speaking && keep) emit(); else reset(); pre = []; preLen = 0; },
@@ -79,7 +82,8 @@ let asr = null;
 const files = {};
 const run = async (audio) => {
   const { input_features } = await asr.processor.feature_extractor(audio);
-  // المشفّر يقبل نافذةً أقصر من ٣٠ ثانية (١٠٠٠ إطار فأكثر): ثوانٍ من التلاوة تكلّف ثوانيَ لا نافذةً كاملة
+  // المشفّر يقبل نافذةً أقصر من ٣٠ ثانية، لكن ما دون ١٠٠٠ إطار جرّبناه فدار النموذج على نفسه («هو الله أحد قل هو الله أحد…»)
+  // في آيةٍ قصيرة. فالحدّ الأدنى ١٠٠٠ كما فُحصت عليه الدقة.
   const frames = Math.min(3000, Math.max(1000, Math.ceil(audio.length / 160) + 20));
   const feats = input_features.slice(null, null, [0, frames]);
   const out = await asr.model.generate({ inputs: feats, max_new_tokens: 200 });
@@ -100,6 +104,8 @@ self.onmessage = async (e) => {
           }
         },
       });
+      // تشغيلةٌ تجريبية: أول تحليلٍ في الجلسة أبطأ (تجهيز الذاكرة والمترجم)، فلا نتركه لأول مقطعٍ من الطالب
+      try { await run(new Float32Array(16000 * 3)); } catch { /* التسخين اختياري */ }
       self.postMessage({ type: 'ready' });
     } else if (m.type === 'asr') {
       const t0 = performance.now();
