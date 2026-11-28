@@ -44,7 +44,7 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
   saveRef.current = onSave;
 
   // أحوالٌ تتغيّر أسرع مما يُرسم: في مراجع لا في حالة
-  const R = useRef({ rec: null, active: false, base: 0, cursor: 0, repeats: 0, hints: 0, words: [], startedAt: 0, level: 'normal', practice: false, speak: true, surah: 112, from: 1, to: 4 });
+  const R = useRef({ rec: null, active: false, base: 0, cursor: 0, repeats: 0, hints: 0, words: [], startedAt: 0, level: 'normal', practice: false, speak: true, surah: 112, from: 1, to: 4, ctx: null, voice: null });
 
   useEffect(() => {
     if (quran) return undefined;
@@ -61,13 +61,36 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
 
   const count = quran?.s?.[surah - 1]?.length || 0;
 
-  const say = (text) => {
-    if (!R.current.speak) return;
+  /** نبرةٌ قصيرة + اهتزاز: تصل حتى لو جهازه بلا صوتٍ عربي للنطق أو كتم النطق، فلا يضيع «أعد». */
+  const beep = () => {
     try {
+      const ctx = R.current.ctx;
+      if (ctx) {
+        if (ctx.state === 'suspended') ctx.resume();
+        const o = ctx.createOscillator(); const g = ctx.createGain();
+        o.type = 'sine'; o.frequency.value = 660; g.gain.value = 0.2;
+        o.connect(g); g.connect(ctx.destination);
+        o.start(); o.stop(ctx.currentTime + 0.18);
+      }
+    } catch { /* بلا صوت: يكفي ما سواه */ }
+    try { navigator.vibrate?.(200); } catch { /* غير مدعوم */ }
+  };
+
+  /** ينطق ثم يستأنف الاستماع. السماع أثناء النطق يخلط صوتَ الوكيل بصوت الطالب (والجوال يحجز الميكروفون عن النطق). */
+  const say = (text, then) => {
+    const done = (() => { let d = false; return () => { if (!d) { d = true; then?.(); } }; })();
+    if (!R.current.speak) { done(); return; }
+    try {
+      const synth = window.speechSynthesis;
       const u = new SpeechSynthesisUtterance(text);
-      u.lang = 'ar-SA'; u.rate = 0.9;
-      window.speechSynthesis.cancel(); window.speechSynthesis.speak(u);
-    } catch { /* الجهاز بلا نطق: تكفي الإشارة المرئية */ }
+      u.lang = 'ar-SA'; u.rate = 0.9; u.volume = 1;
+      const v = synth.getVoices().find((x) => /^ar/i.test(x.lang));
+      if (v) u.voice = v;
+      u.onend = done; u.onerror = done;
+      synth.cancel();
+      setTimeout(() => { try { synth.speak(u); } catch { done(); } }, 60);
+      setTimeout(done, 2200);            // إن لم يُنطق شيء (لا صوت عربي) لا يبقى الميكروفون مغلقًا
+    } catch { done(); }
   };
 
   const stopRec = () => { R.current.active = false; try { R.current.rec?.abort(); } catch { /* مغلق */ } R.current.rec = null; };
@@ -99,11 +122,13 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
     if (a.bad >= 0) {
       r.repeats += 1; setRepeats(r.repeats);
       r.base = a.bad; r.cursor = a.bad; setCursor(a.bad); setBad(a.bad);
-      say('أعد');
-      // نبدأ تعرّفًا جديدًا ليُنسى ما قيل قبل الخطأ، ويعيد من الكلمة الخاطئة
-      try { r.rec?.abort(); } catch { /* مغلق */ }
+      // نوقف التعرّف ليُنسى ما قيل قبل الخطأ، ولئلا يسمع صوتَ الوكيل؛ ونستأنفه بعد النطق من الكلمة الخاطئة
+      const old = r.rec; r.rec = null;
+      try { old?.abort(); } catch { /* مغلق */ }
+      beep();
+      say('أعد', () => { if (R.current.active && !R.current.rec) setTimeout(() => startRec(), 200); });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const startRec = useCallback(() => {
@@ -140,6 +165,12 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
     const r = R.current;
     Object.assign(r, { words: E, base: 0, cursor: 0, repeats: 0, hints: 0, startedAt: Date.now(), level, practice, speak, surah, from, to, active: true });
     setWords(E); setCursor(0); setBad(-1); setReveal(-1); setHeard(''); setRepeats(0); setHints(0); setMsg('');
+    // من نقرة الطالب: وحدها تُفتح فيها الصوتيات على الجوال، فنهيّئ النبرة والنطق هنا لا عند أول «أعد»
+    try {
+      if (!r.ctx) { const AC = window.AudioContext || window.webkitAudioContext; if (AC) r.ctx = new AC(); }
+      r.ctx?.resume?.();
+      const u = new SpeechSynthesisUtterance(' '); u.volume = 0; window.speechSynthesis.speak(u);
+    } catch { /* بلا صوتيات: تبقى الإشارة المرئية */ }
     setPhase('listen');
     startRec();
   };

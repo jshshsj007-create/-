@@ -206,6 +206,35 @@ test('مدًى أطول من النافذة (سورة الشعراء كلها): 
   assert.equal(cursor, E.length);
 });
 
+test('قال «صمد» بدل «الله الصمد»: يُقال «أعد» من «الله» دون انتظار كلماتٍ بعدها', () => {
+  const E = words(112, 1, 4);
+  const r = advance(E, 0, 'قل هو الله احد صمد', { level: 'normal', final: false });
+  assert.equal(r.cursor, 4);
+  assert.equal(r.bad, 4, 'عند «الله» الثانية');
+});
+
+test('انتقل إلى آيةٍ أخرى: «أعد» من حيث توقّف لا انتظارٌ صامت', () => {
+  const E = words(112, 1, 4);
+  const r = advance(E, 0, 'قل هو الله احد لم يلد ولم يولد', { level: 'normal', final: false });
+  assert.equal(r.bad, 4);
+  // وقفزٌ بعيدٌ في سورةٍ طويلة: بعد الآية الأولى إلى آيةٍ بعيدة
+  const B = words(2, 1, 40);
+  const far = said(2, 30, 30);
+  const r2 = advance(B, 0, far, { level: 'normal', final: false });
+  assert.equal(r2.bad, 0);
+});
+
+test('القراءة السليمة لا تُعدّ قفزًا: مقاطع متعدّدة بلا «أعد» كاذب', () => {
+  for (const [s, a, b] of [[112, 1, 4], [1, 1, 7], [55, 13, 13], [2, 255, 255], [78, 1, 20]]) {
+    const E = words(s, a, b);
+    const w = E.map((x) => x.w);
+    for (let n = 1; n < w.length; n++) {
+      const r = advance(E, 0, w.slice(0, n).join(' '), { level: 'normal', final: false });
+      assert.equal(r.bad, -1, `${s}:${a}-${b} عند ${n} كلمة`);
+    }
+  }
+});
+
 test('الأداء: مقارنة نافذة كاملة بسرعة (أقل من ٣٠٠ م.ث)', () => {
   const E = words(2, 255, 286);
   const t = Date.now();

@@ -196,6 +196,41 @@ export const judge = (expected, heardText, { level = 'normal', final = false } =
   return { status, ok, firstBad, done: ok === n, reached };
 };
 
+/** بلا «ال» التعريف: «صمد» تُسمع لـ«الصمد» ولا تعني الحذف عند من يقارن الجذر. */
+const dal = (w) => (w.length > 3 && w.startsWith('ال') ? w.slice(2) : w);
+
+/**
+ * هل قفز الطالب؟ المحاذاة لا تراه: ما سُمع ولا مقابل له عند المؤشّر تعدّه ضجيجًا (زيادةٌ بكلفة أخفّ من حذف
+ * ما قُفز عنه)، فيبقى المؤشّر «ينتظر» ولا يُقال شيء. فنبحث صراحةً عمّا سُمع في موضعٍ لاحقٍ من المتوقَّع:
+ * ثلاث كلماتٍ متتاليةٌ أمامه (انتقل إلى آيةٍ أخرى)، أو كلمةٌ واحدة قريبةٌ منه (تجاوز كلمةً أو كلمتين).
+ * لا يُستدعى إلا حين لم يثبت شيءٌ عند المؤشّر أصلًا، فلا يمسّ القراءةَ السليمة.
+ */
+const jumped = (expected, next, heardText, level, consumed, room) => {
+  const t = Math.max(LEVELS[level] ?? LEVELS.normal, 0.85);
+  const near = (a, b) => sim(dal(a), dal(b)) >= t;
+  // ما استُهلك من المسموع في المطابقات السابقة لا يُنظر فيه: وإلا عُدّ تكرارُ لازمةٍ في السورة (كالشعراء) قفزًا
+  const all = norm(heardText).split(' ').filter(Boolean);
+  // سمع أكثر مما تتسع له النافذة: المحاذاة مقصوصة فلا يُحكم بها على قفز (الكلام الزائد استمرارٌ لا قفز)
+  if (all.length > room - 3) return false;
+  const H = all.slice(consumed);
+  if (!H.length) return false;
+  const E = expected.map((x) => (typeof x === 'string' ? x : x.w));
+  const last = H[H.length - 1];
+  // كلمةٌ واحدة: قريبةٌ من إحدى الكلمات الثلاث التالية، وليست تكرارًا لما قيل قبل المؤشّر ولا لما عنده
+  if (dal(last).length >= 3 && !near(last, E[next]) && !(next > 0 && near(last, E[next - 1]))) {
+    for (let p = next + 1; p <= Math.min(E.length - 1, next + 3); p++) if (near(last, E[p])) return true;
+  }
+  // ثلاث متتاليات في أي موضعٍ لاحق (الترشيح بالتطابق التام للكلمة الأولى يُبقي الكلفة صغيرة في المدى الطويل)
+  const set = new Set(H.map(dal));
+  for (let p = next + 1; p + 2 < E.length; p++) {
+    if (!set.has(dal(E[p]))) continue;
+    for (let j = 0; j + 2 < H.length; j++) {
+      if (near(H[j], E[p]) && near(H[j + 1], E[p + 1]) && near(H[j + 2], E[p + 2])) return true;
+    }
+  }
+  return false;
+};
+
 /**
  * خطوة جلسة: من أين نكمل، وأين الخطأ إن وُجد.
  *
@@ -221,5 +256,7 @@ export const advance = (expected, cursor, heardText, opts = {}) => {
     const after = r.status.slice(k + 1).filter((s) => s === 'ok').length;
     if (opts.final || after >= 2) bad = next;
   }
+  // لم يثبت شيءٌ عند المؤشّر (ينتظر، أو حاذى الضجيجَ بكلماتٍ بعيدة): قد يكون قفز
+  if (bad < 0 && st !== 'ok' && jumped(expected, next, heardText, opts.level, k, rest.length)) bad = next;
   return { cursor: next, bad, done: false, status: r.status };
 };
