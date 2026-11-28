@@ -12,6 +12,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Mic, MicOff, Check, RotateCcw, Volume2, Eye, ChevronLeft } from 'lucide-react';
 import { SURAHS } from './khayr.js';
 import { wordsOf, advance } from './tasmee.js';
+import { createEngine, createSegmenter, resample, openMic, modelCached, MODEL_MB } from './accurate.js';
 
 const SR = typeof window !== 'undefined' ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
@@ -38,13 +39,18 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
   const [hints, setHints] = useState(0);
   const [msg, setMsg] = useState('');
   const [words, setWords] = useState([]);
+  // طريقة السمع: «سريع» تعرّف الجوال المدمج، و«دقيق» نموذجٌ قرآني على الجهاز (src/accurate.js) لا يكمّل الآية من عنده
+  const [engine, setEngineState] = useState(() => { try { const v = localStorage.getItem('faidTasmeeEngine'); if (v) return v; } catch { /* بلا تخزين */ } return typeof Worker !== 'undefined' && navigator.mediaDevices ? 'accurate' : 'fast'; });
+  const setEngine = (v) => { setEngineState(v); try { localStorage.setItem('faidTasmeeEngine', v); } catch { /* بلا تخزين */ } };
+  const [model, setModel] = useState({ state: 'idle', pct: 0 });
+  const [busy, setBusy] = useState(false);
   const [reveal, setReveal] = useState([]);              // فهارس الكلمات التي كشفها الطالب بنفسه
   // onSave يتغيّر مع كل رسم (يحمل بيانات التطبيق وقتها): الدوال المحفوظة بلا اعتماديات تُحفظ عبر مرجعٍ لئلا تحفظ فوق بياناتٍ أقدم
   const saveRef = useRef(onSave);
   saveRef.current = onSave;
 
   // أحوالٌ تتغيّر أسرع مما يُرسم: في مراجع لا في حالة
-  const R = useRef({ rec: null, active: false, base: 0, cursor: 0, repeats: 0, hints: 0, words: [], startedAt: 0, level: 'normal', practice: false, speak: true, surah: 112, from: 1, to: 4, ctx: null, voice: null, log: [], seen: { idx: -1, n: 0 } });
+  const R = useRef({ rec: null, active: false, base: 0, cursor: 0, repeats: 0, hints: 0, words: [], startedAt: 0, level: 'normal', practice: false, speak: true, surah: 112, from: 1, to: 4, ctx: null, voice: null, log: [], seen: { idx: -1, n: 0 }, eng: null, closeMic: null, seg: null, epoch: 0, muted: false, queue: [], processing: false, engine: 'fast' });
 
   useEffect(() => {
     if (quran) return undefined;
@@ -57,7 +63,29 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
   }, [quran, quranUrl]);
 
   // لا يبقى الميكروفون مفتوحًا إن خرج الطالب من الشاشة
-  useEffect(() => () => { R.current.active = false; try { R.current.rec?.abort(); } catch { /* مغلقٌ أصلًا */ } }, []);
+  useEffect(() => () => {
+    const r = R.current;
+    r.active = false;
+    try { r.rec?.abort(); } catch { /* مغلقٌ أصلًا */ }
+    try { r.closeMic?.(); } catch { /* مغلق */ }
+    try { r.ctx?.close?.(); } catch { /* مغلق */ }
+    r.eng?.terminate();
+  }, []);
+
+  const getEngine = () => { if (!R.current.eng) R.current.eng = createEngine(); return R.current.eng; };
+  /** تنزيل النموذج (مرة واحدة) أو تحميله من ذاكرة المتصفح. يُستدعى من نقرة الطالب أو تلقائيًا إن نُزّل سابقًا. */
+  const ensureModel = async () => {
+    setMsg('');
+    setModel((m) => (m.state === 'ready' ? m : { state: 'loading', pct: 0 }));
+    try {
+      await getEngine().load((f) => setModel({ state: 'loading', pct: Math.round(f * 100) }));
+      setModel({ state: 'ready', pct: 100 });
+    } catch {
+      setModel({ state: 'error', pct: 0 });
+      setMsg('تعذّر تحميل نموذج القرآن. تأكد من الإنترنت وأعد المحاولة، أو اختر «سريع».');
+    }
+  };
+  useEffect(() => { if (engine === 'accurate' && model.state === 'idle' && modelCached()) ensureModel(); }, [engine]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const count = quran?.s?.[surah - 1]?.length || 0;
 
@@ -93,7 +121,15 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
     } catch { done(); }
   };
 
-  const stopRec = () => { R.current.active = false; try { R.current.rec?.abort(); } catch { /* مغلق */ } R.current.rec = null; };
+  const stopRec = () => {
+    const r = R.current;
+    r.active = false;
+    try { r.rec?.abort(); } catch { /* مغلق */ }
+    r.rec = null;
+    try { r.closeMic?.(); } catch { /* مغلق */ }
+    r.closeMic = null; r.seg = null; r.queue = []; r.muted = false;
+    setBusy(false);
+  };
 
   const finish = (ok) => {
     stopRec();
@@ -109,6 +145,40 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
       }
       setPhase('done');
     } else setPhase('stopped');
+  };
+
+  /** مقطعٌ حلّله النموذج القرآني: نصٌّ بما سُمع حقًّا، فيُحكم به أسرع من النص المؤقّت (solid). */
+  const handleAcc = (text, ms, secs) => {
+    const r = R.current;
+    if (!r.active) return;
+    setHeard(text.trim().split(/\s+/).slice(-14).join(' '));
+    const a = advance(r.words, r.cursor, text, { level: r.level, final: false, solid: true });
+    if (r.log.length < 80) r.log.push({ t: Date.now() - r.startedAt, mode: 'acc', secs: Math.round(secs * 10) / 10, ms, heard: text, base: r.cursor, cursor: a.cursor, bad: a.bad });
+    if (a.cursor > r.cursor) { r.cursor = a.cursor; setCursor(a.cursor); setBad(-1); }
+    if (a.done) { finish(true); return; }
+    if (a.bad < 0) return;
+    r.repeats += 1; setRepeats(r.repeats);
+    r.cursor = a.bad; setCursor(a.bad); setBad(a.bad); setReveal([]);
+    // ما قاله الطالب بعد الخطأ قبل أن يسمع «أعد» لا يُحكم به: يعيد من الكلمة الخاطئة
+    r.epoch += 1; r.queue = []; r.muted = true; r.seg?.flush(false);
+    beep();
+    say('أعد', () => setTimeout(() => { r.muted = false; r.seg?.flush(false); }, 350));
+  };
+
+  const pump = async () => {
+    const r = R.current;
+    if (r.processing) return;
+    const item = r.queue.shift();
+    if (!item) { setBusy(false); return; }
+    r.processing = true; setBusy(true);
+    try {
+      const x = resample(item.audio, r.ctx.sampleRate);
+      const secs = x.length / 16000;
+      const out = await getEngine().transcribe(x);
+      if (item.epoch === r.epoch) handleAcc(out.text, out.ms, secs);
+    } catch { setMsg('تعذّر تحليل المقطع. أعد المحاولة.'); }
+    r.processing = false;
+    pump();
   };
 
   /**
@@ -180,9 +250,11 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
   const begin = () => {
     const E = wordsOf(quran, surah, from, to);
     if (!E.length) { setMsg('اختر مدًى صحيحًا من السورة.'); return; }
-    if (!SR && !test?.makeRec) { setMsg('هذا المتصفح لا يدعم التعرّف على الكلام. جرّب Chrome على أندرويد، أو Safari على آيفون حديث.'); return; }
+    const acc = engine === 'accurate';
+    if (!acc && !SR && !test?.makeRec) { setMsg('هذا المتصفح لا يدعم التعرّف على الكلام. جرّب Chrome على أندرويد، أو Safari على آيفون حديث، أو اختر «دقيق».'); return; }
+    if (acc && model.state !== 'ready') { setMsg('نموذج القرآن لم يجهز بعد.'); return; }
     const r = R.current;
-    Object.assign(r, { words: E, base: 0, cursor: 0, repeats: 0, hints: 0, startedAt: Date.now(), level, practice, speak, surah, from, to, active: true });
+    Object.assign(r, { words: E, base: 0, cursor: 0, repeats: 0, hints: 0, startedAt: Date.now(), level, practice, speak, surah, from, to, active: true, engine, epoch: 0, queue: [], muted: false, log: [], seen: { idx: -1, n: 0 } });
     setWords(E); setCursor(0); setBad(-1); setReveal([]); setHeard(''); setRepeats(0); setHints(0); setMsg('');
     // من نقرة الطالب: وحدها تُفتح فيها الصوتيات على الجوال، فنهيّئ النبرة والنطق هنا لا عند أول «أعد»
     try {
@@ -190,6 +262,18 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
       r.ctx?.resume?.();
       const u = new SpeechSynthesisUtterance(' '); u.volume = 0; window.speechSynthesis.speak(u);
     } catch { /* بلا صوتيات: تبقى الإشارة المرئية */ }
+    if (acc) {
+      if (!r.ctx) { setMsg('هذا المتصفح لا يدعم تسجيل الصوت.'); r.active = false; return; }
+      setPhase('listen');
+      openMic(r.ctx, (blk) => { if (!r.muted) r.seg?.feed(blk); })
+        .then((close) => {
+          if (!r.active) { close(); return; }
+          r.closeMic = close;
+          r.seg = createSegmenter({ rate: r.ctx.sampleRate, onSegment: (audio) => { r.queue.push({ audio, epoch: r.epoch }); pump(); } });
+        })
+        .catch(() => { setMsg('ما أُذن للميكروفون. اسمح به من إعدادات المتصفح ثم أعد المحاولة.'); finish(false); });
+      return;
+    }
     setPhase('listen');
     startRec();
   };
@@ -198,7 +282,7 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
   const [copied, setCopied] = useState('');
   const copyReport = async () => {
     const r = R.current;
-    const rep = { ua: navigator.userAgent, surah: r.surah, from: r.from, to: r.to, level: r.level, words: r.words.length, cursor: r.cursor, repeats: r.repeats, events: r.log };
+    const rep = { engine: r.engine, ua: navigator.userAgent, surah: r.surah, from: r.from, to: r.to, level: r.level, words: r.words.length, cursor: r.cursor, repeats: r.repeats, events: r.log };
     const text = JSON.stringify(rep);
     try { await navigator.clipboard.writeText(text); setCopied('نُسخ. الصقه في المحادثة.'); }
     catch { setCopied(text); }
@@ -258,6 +342,21 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
           <div className="text-[11px] text-slate-400">في السورة {count} آية.</div>
 
           <div>
+            <span className="text-xs text-slate-500">طريقة السمع</span>
+            <div className="flex gap-2 mt-1">
+              {[['fast', 'سريع'], ['accurate', 'دقيق']].map(([k, l]) => (
+                <button key={k} type="button" data-testid={`daily-engine-${k}`} onClick={() => setEngine(k)}
+                  className={`flex-1 px-3 py-2 rounded-xl text-sm font-semibold border ${engine === k ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600'}`}>{l}</button>
+              ))}
+            </div>
+            <div className="text-[11px] text-slate-400 mt-1 leading-5">
+              {engine === 'fast'
+                ? '«سريع» يستعمل تعرّف الجوال المدمج: فوريّ، لكنه يكمّل الآية المشهورة من عنده فقد يفوته الخطأ.'
+                : `«دقيق» نموذجٌ للقرآن يشتغل على جوالك ويكتب ما قلتَ فعلًا، فيكشف الكلمة الناقصة والمبدَّلة والآية المتروكة. يُنزَّل مرة واحدة (نحو ${MODEL_MB} ميغا، يُستحسن بالواي فاي). اقرأ ثم قف قليلًا ليُحلَّل ما قلت.`}
+            </div>
+          </div>
+
+          <div>
             <span className="text-xs text-slate-500">الصرامة</span>
             <div className="flex gap-2 mt-1">
               {Object.entries(LEVEL_LABEL).map(([k, l]) => (
@@ -272,9 +371,17 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
           <label className="flex items-center gap-2 text-sm text-slate-600"><input data-testid="daily-practice" type="checkbox" checked={practice} onChange={(e) => setPractice(e.target.checked)} /> تجربة: بلا حفظ (لتعرف كيف يسمعك الجهاز)</label>
 
           {msg && <div className="text-red-600 text-sm">{msg}</div>}
-          <button data-testid="daily-start" onClick={begin} className="w-full bg-brand-600 text-white font-bold rounded-xl py-3 flex items-center justify-center gap-2"><Mic size={18} /> ابدأ التسميع</button>
+          {engine === 'accurate' && model.state !== 'ready' ? (
+            <button data-testid="daily-model" disabled={model.state === 'loading'} onClick={ensureModel}
+              className="w-full bg-brand-600 disabled:opacity-60 text-white font-bold rounded-xl py-3 relative overflow-hidden">
+              {model.state === 'loading' && <span className="absolute inset-y-0 right-0 bg-brand-700/60" style={{ width: `${model.pct}%` }} />}
+              <span className="relative">{model.state === 'loading' ? `جاري تجهيز النموذج… ${model.pct}٪` : `نزّل نموذج القرآن (نحو ${MODEL_MB} ميغا، مرة واحدة)`}</span>
+            </button>
+          ) : (
+            <button data-testid="daily-start" onClick={begin} className="w-full bg-brand-600 text-white font-bold rounded-xl py-3 flex items-center justify-center gap-2"><Mic size={18} /> ابدأ التسميع</button>
+          )}
           <div className="text-[11px] text-slate-400 leading-5">
-            يكشف الكلمة الناقصة والمبدَّلة والآية المتروكة. ولا يحكم على التجويد (المدود والغنة والمخارج)، فيبقى للشيخ. ولا يحفظ التطبيق صوتك، تُحفظ النتيجة فقط. ويحوّل متصفحُك الصوتَ إلى نصٍّ عبر خدمة التعرّف التي يستعملها جهازك.
+            يكشف الكلمة الناقصة والمبدَّلة والآية المتروكة. ولا يحكم على التجويد (المدود والغنة والمخارج)، فيبقى للشيخ. ولا يحفظ التطبيق صوتك، تُحفظ النتيجة فقط. {engine === 'accurate' ? 'وفي «دقيق» يُحلَّل الصوت داخل جوالك ولا يخرج منه (النموذج: Tarteel AI، رخصة Apache-2.0).' : 'وفي «سريع» يحوّل متصفحُك الصوتَ إلى نصٍّ عبر خدمة التعرّف التي يستعملها جهازك.'}
           </div>
         </div>
       )}
@@ -283,7 +390,7 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
         <div className="bg-white rounded-2xl border border-slate-100 p-4" data-testid="daily-listen">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2 text-sm font-bold text-slate-700">
-              <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse" /> أسمعك… {SURAHS[surah - 1]} ({from}–{to})
+              <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse" /> {busy ? 'أحلّل…' : 'أسمعك…'} {SURAHS[surah - 1]} ({from}–{to})
             </div>
             <div className="text-xs text-slate-400" data-testid="daily-progress">{cursor} من {words.length} كلمة</div>
           </div>

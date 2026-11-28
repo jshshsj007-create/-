@@ -118,7 +118,7 @@ const DEL = 1;         // كلمةٌ متوقَّعة لم تُسمع
 const INS = 0.6;       // كلمةٌ زائدة سُمعت (تردّد، تكرار، ضجيج) — أخفّ من الحذف لأنها كثيرًا ما تكون ضجيجًا
 const MERGE = 0.1;     // ثمن لصق كلمتين أو فصل كلمة
 
-const subCost = (s) => (s < 0.5 ? SUB_MAX : (1 - s) * 2);
+const subCost = (s, max = SUB_MAX) => (s < 0.5 ? max : (1 - s) * 2);
 
 /**
  * يحاذي المتوقَّع بما سُمع كلمةً كلمة، ويقول لكل متوقَّعة: ok (طابقت) أو wrong (استُبدلت بغيرها)
@@ -126,10 +126,15 @@ const subCost = (s) => (s < 0.5 ? SUB_MAX : (1 - s) * 2);
  *
  * `final`: انتهى الكلام، فما بقي بلا سماعٍ يُعدّ ناقصًا لا منتظَرًا.
  */
-export const judge = (expected, heardText, { level = 'normal', final = false } = {}) => {
+export const judge = (expected, heardText, { level = 'normal', final = false, solid = false } = {}) => {
   const theta = LEVELS[level] ?? LEVELS.normal;
-  const E = expected.map((x) => (typeof x === 'string' ? x : x.w));
-  let H = norm(heardText).split(' ').filter(Boolean);
+  // `solid`: السماع من نموذجٍ يكتب ما سمع حرفيًا، فالكلمة الزائدة المسموعة ليست ضجيجًا في الغالب. نرفع كلفة الزيادة
+  // ونخفض كلفة الاستبدال لتُحاذى الكلمة الأخيرة المخالفة بما يقابلها فتُحسب خطأً، لا أن تُعدّ ضجيجًا في الذيل المجّاني
+  const INS_ = solid ? 1 : INS, SUBMAX = solid ? 0.95 : SUB_MAX;
+  // الألف المضاعفة في أول الكلمة («أأنذرتهم»، «أالله») تُوحَّد على الجهتين: يكتبها النموذج القرآني مفردةً أو مضاعفة
+  const lead = (w) => (w.length > 3 ? w.replace(/^اا/, 'ا') : w);
+  const E = expected.map((x) => lead(typeof x === 'string' ? x : x.w));
+  let H = norm(heardText).split(' ').filter(Boolean).map(lead);
   // «الف لام ميم» تُسمع ثلاث كلمات وهي كلمةٌ واحدة في المصحف: تُلصق إن كان في المدى فاتحةُ سورة
   if (E.some((w) => MUQATTAAT.has(w))) H = glueLetterNames(H);
   const n = E.length, m = H.length;
@@ -140,18 +145,18 @@ export const judge = (expected, heardText, { level = 'normal', final = false } =
   const dp = Array.from({ length: n + 1 }, () => new Float64Array(m + 1));
   const back = Array.from({ length: n + 1 }, () => new Uint8Array(m + 1));
   for (let i = 1; i <= n; i++) { dp[i][0] = dp[i - 1][0] + DEL; back[i][0] = 2; }
-  for (let j = 1; j <= m; j++) { dp[0][j] = dp[0][j - 1] + INS; back[0][j] = 3; }
+  for (let j = 1; j <= m; j++) { dp[0][j] = dp[0][j - 1] + INS_; back[0][j] = 3; }
   for (let i = 1; i <= n; i++) {
     for (let j = 1; j <= m; j++) {
-      let best = dp[i - 1][j - 1] + subCost(simTo(E[i - 1], H[j - 1])), mv = 1;
+      let best = dp[i - 1][j - 1] + subCost(simTo(E[i - 1], H[j - 1]), SUBMAX), mv = 1;
       if (dp[i - 1][j] + DEL < best) { best = dp[i - 1][j] + DEL; mv = 2; }
-      if (dp[i][j - 1] + INS < best) { best = dp[i][j - 1] + INS; mv = 3; }
+      if (dp[i][j - 1] + INS_ < best) { best = dp[i][j - 1] + INS_; mv = 3; }
       if (j >= 2) {                       // السامع لصق كلمتين
-        const c = dp[i - 1][j - 2] + subCost(simTo(E[i - 1], H[j - 2] + H[j - 1])) + MERGE;
+        const c = dp[i - 1][j - 2] + subCost(simTo(E[i - 1], H[j - 2] + H[j - 1]), SUBMAX) + MERGE;
         if (c < best) { best = c; mv = 4; }
       }
       if (i >= 2) {                       // السامع فصل كلمةً إلى اثنتين (نطقَها أو كتبها هو مفصولة)
-        const c = dp[i - 2][j - 1] + subCost(Math.min(simTo(E[i - 2] + E[i - 1], H[j - 1]), 1)) + MERGE;
+        const c = dp[i - 2][j - 1] + subCost(Math.min(simTo(E[i - 2] + E[i - 1], H[j - 1]), 1), SUBMAX) + MERGE;
         if (c < best) { best = c; mv = 5; }
       }
       dp[i][j] = best; back[i][j] = mv;
@@ -254,7 +259,9 @@ export const advance = (expected, cursor, heardText, opts = {}) => {
   let bad = -1;
   if (st === 'wrong' || st === 'missing') {
     const after = r.status.slice(k + 1).filter((s) => s === 'ok').length;
-    if (opts.final || after >= 2) bad = next;
+    // `solid`: مقطعٌ انتهى بصمتٍ من نموذجٍ يكتب ما سمع (لا نصٌّ مؤقّتٌ يتبدّل): كلمةٌ خاطئة أو ناقصة يُحكم بها
+    // دون انتظار كلمتين بعدها. أما النصّ المؤقّت من تعرّف الجوال فلا بدّ فيه من الاحتياط.
+    if (opts.final || opts.solid || after >= 2) bad = next;
   }
   // لم يثبت شيءٌ عند المؤشّر (ينتظر، أو حاذى الضجيجَ بكلماتٍ بعيدة): قد يكون قفز
   if (bad < 0 && st !== 'ok' && jumped(expected, next, heardText, opts.level, k, rest.length)) bad = next;

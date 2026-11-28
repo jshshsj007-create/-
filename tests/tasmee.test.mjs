@@ -235,6 +235,20 @@ test('القراءة السليمة لا تُعدّ قفزًا: مقاطع مت�
   }
 });
 
+test('مقطعٌ منتهٍ (solid): كلمةٌ خاطئة في آخره تُعلَن فورًا، وما سُمع صحيحًا لا يُعلَن', () => {
+  const E = words(112, 1, 4);
+  // آخر ما سُمع كلمةٌ خاطئة: بلا solid يُنتظر، ومعه يُحكم
+  assert.equal(advance(E, 0, 'قل هو الله احد الله القمر', { level: 'normal', final: false }).bad, -1);
+  assert.equal(advance(E, 0, 'قل هو الله احد الله القمر', { level: 'normal', final: false, solid: true }).bad, 5);
+  // وقراءةٌ سليمةٌ ناقصةٌ من آخرها: لا خطأ
+  assert.equal(advance(E, 0, 'قل هو الله احد الله', { level: 'normal', final: false, solid: true }).bad, -1);
+});
+
+test('همزة الاستفهام اللاصقة («أالله») تُقبل وقد يكتبها النموذج القرآني', () => {
+  const E = words(112, 2, 2);
+  assert.equal(advance(E, 0, 'أالله الصمد', { level: 'normal', final: true }).done, true);
+});
+
 test('الأداء: مقارنة نافذة كاملة بسرعة (أقل من ٣٠٠ م.ث)', () => {
   const E = words(2, 255, 286);
   const t = Date.now();
