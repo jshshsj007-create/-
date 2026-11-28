@@ -259,5 +259,38 @@ check('ولا يسطو على بند غيره بادّعاء معرّفه', afte
   check('ولا يمحوها ولا يضيف إليها', JSON.stringify(afterF.dupIgnored) === '["guardian:g1:g2"]', JSON.stringify(afterF.dupIgnored));
 }
 
+// ---- «التسميع اليومي»: كل طالبٍ يرى جلساته ويكتبها هو وحدها ----
+{
+  const ses = (id, extra = {}) => ({ id, surah: 112, from: 1, to: 4, words: 15, repeats: 1, hints: 0, level: 'normal', at: Date.now(), ...extra });
+  const fT = await login('fahd', 'pw9');
+  const nT = await login('noura', 'pw3');
+  let p = (await call({ op: 'pull', token: fT, sinceRev: 0 })).body;
+  let d = JSON.parse(JSON.stringify(p.data));
+  d.daily = { sessions: [ses('f1', { userId: 'u3' }), ses('f2', { audio: 'data:audio/webm;base64,AAAA', heard: 'نص' })] };
+  r = await call({ op: 'push', token: fT, baseRev: p.rev, data: d });
+  const adm = (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data.daily?.sessions || [];
+  check('الطالب يحفظ جلسته باسمه هو، لا بما ادّعاه', adm.length === 2 && adm.every((x) => x.userId === 'u9'), JSON.stringify(adm.map((x) => x.userId)));
+  check('ولا يُحفظ صوتٌ ولا نصٌّ مسموع', adm.every((x) => !('audio' in x) && !('heard' in x)));
+  const nView = (await call({ op: 'pull', token: nT, sinceRev: 0 })).body.data.daily?.sessions || [];
+  check('وطالبٌ آخر لا يرى جلساته', nView.length === 0, JSON.stringify(nView));
+  const fView = (await call({ op: 'pull', token: fT, sinceRev: 0 })).body.data.daily?.sessions || [];
+  check('وهو يرى جلساته', fView.length === 2);
+  // الآخر يحفظ جلسته ويحاول محو جلسات فهد وتعديلها
+  p = (await call({ op: 'pull', token: nT, sinceRev: 0 })).body;
+  d = JSON.parse(JSON.stringify(p.data));
+  d.daily = { sessions: [ses('n1'), ses('f1', { repeats: 0, words: 1 })] };
+  await call({ op: 'push', token: nT, baseRev: p.rev, data: d });
+  const after = (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data.daily.sessions;
+  check('وجلسة غيره باقيةٌ كما هي ولو ادّعى معرّفها', after.find((x) => x.id === 'f1')?.userId === 'u9' && after.find((x) => x.id === 'f1')?.repeats === 1);
+  check('وجلسته هو حُفظت باسمه', after.find((x) => x.id === 'n1')?.userId === 'u3');
+  check('ولم تتكرر الجلسات: ثلاثٌ بالضبط', after.length === 3, String(after.length));
+  // جهازٌ ثالث يمحو الكل: لا يمحو إلا ما لصاحبه
+  p = (await call({ op: 'pull', token: fT, sinceRev: 0 })).body;
+  d = JSON.parse(JSON.stringify(p.data)); d.daily = { sessions: [] };
+  await call({ op: 'push', token: fT, baseRev: p.rev, data: d });
+  const last = (await call({ op: 'pull', token: adminTok, sinceRev: 0 })).body.data.daily.sessions;
+  check('محوُه لجلساته لا يمسّ جلسة غيره', last.length === 1 && last[0].id === 'n1', JSON.stringify(last.map((x) => x.id)));
+}
+
 console.log(`\n${bad ? '✗' : '✅'} ${ok} نجح، ${bad} فشل`);
 process.exit(bad ? 1 : 0);

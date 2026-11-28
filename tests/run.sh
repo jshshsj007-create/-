@@ -34,9 +34,12 @@ cat > "$STUB/lucide-react/package.json" <<'JSON'
 {"name":"lucide-react","version":"0.0.0-stub","type":"module","main":"index.mjs","exports":{".":"./index.mjs"}}
 JSON
 node -e '
-const names = require("fs").readFileSync("src/App.tsx","utf8")
-  .match(/import \{([\s\S]*?)\} from .lucide-react.;/)[1]
-  .split(",").map(s => s.trim().split(" as ")[0]).filter(Boolean);
+const fs = require("fs");
+// أيقونات كل ملفات الواجهة، لا App.tsx وحده: مكوّنٌ جديد في ملفٍ آخر يستورد أيقونته
+const names = [...new Set(fs.readdirSync("src").filter((f) => /\.(tsx|jsx)$/.test(f)).flatMap((f) => {
+  const m = fs.readFileSync("src/" + f, "utf8").match(/import \{([\s\S]*?)\} from .lucide-react.;/);
+  return m ? m[1].split(",").map(s => s.trim().split(" as ")[0]).filter(Boolean) : [];
+}))];
 require("fs").writeFileSync(process.argv[1] + "/lucide-react/index.mjs",
   "const I = () => null;\n" + names.map(n => `export const ${n} = I;`).join("\n"));
 ' "$STUB"
@@ -54,6 +57,8 @@ node tests/auth.test.mjs
 node tests/quick.test.mjs
 node tests/club.test.mjs
 node tests/wudu.test.mjs
+node tests/tasmee.test.mjs
+node tests/dailyaccess.test.mjs
 node tests/faid.test.mjs
 node tests/merge.test.mjs
 node tests/people.test.mjs

@@ -4,7 +4,7 @@ import {
   Users as UsersIcon, Calendar, TrendingUp, TrendingDown, Layers, ShieldCheck,
   Lock, Unlock, Trophy, LogOut, KeyRound, Plane, Search, AlertTriangle, Send,
   RotateCcw, Wand2, CalendarDays, FileText, Copy, Clock, BookMarked, Eye, EyeOff, Link2, MapPin, Paperclip,
-  ClipboardList, StickyNote, Megaphone, Sparkles, Video, Bell, BellOff } from 'lucide-react';
+  ClipboardList, StickyNote, Megaphone, Sparkles, Video, Bell, BellOff, Mic } from 'lucide-react';
 import { api, clone, merge3, readSession, writeSession, clearSession, readPending, writePending, clearPending } from './cloud.js';
 import {
   normalizePhone, isValidPhone, formatPhone, normalizeName, sameName,
@@ -42,6 +42,7 @@ import {
   reviewCycles, cycleTarget, cycleDrift, spanText, stopsOf, stopsExtraOf, stopText, pagesBetween, pagesOf,
   sessionRows, sessionReportText, khayrSessionSections, khayrSeasonSections,
 } from './khayr.js';
+import DailyTasmee from './DailyTasmee.jsx';
 import { DEFAULT_WUDU_STEPS, wuduDone, wuduPercent, wuduMastered, wuduStats, wuduSummaryLine } from './wudu.js';
 import { FaydhLogo, TEAM_NAME, LOGO_MARK_WHITE } from './logo.jsx';
 import PdfFirstPage from './pdfview.jsx';
@@ -553,6 +554,8 @@ const defaultData = () => ({
    * تُعدَّل، ونسبة كلّ طالب تُحسب منها لا تُكتب يدويًا.
    */
   wudu: { steps: DEFAULT_WUDU_STEPS(), students: [] },
+  /** التسميع اليومي: جلساتٌ كل واحدة باسم صاحبها، ولا صوتَ فيها ولا نصًّا مسموعًا. */
+  daily: { sessions: [] },
   /**
    * إعدادات الفريق: كلمة «متقطع» لها معنى واحد عند الجميع، فتُضبط هنا مرة
    * وتنطبق على كل البرامج.
@@ -671,6 +674,7 @@ export function migrate(loaded) {
   d.wudu = { steps: DEFAULT_WUDU_STEPS(), students: [], ...(d.wudu || {}) };
   if (!d.wudu.steps?.length) d.wudu.steps = DEFAULT_WUDU_STEPS();
   d.wudu.students = (d.wudu.students || []).map((s) => ({ notes: '', steps: {}, masteredAt: null, ...s }));
+  d.daily = { sessions: [], ...(d.daily || {}) };
   d.dayReports = (d.dayReports || []).map((r) => ({ comp: '', league: '', notes: '', ...r }));
   d.studentNotes = d.studentNotes || [];
   d.notices = (d.notices || []).map((n) => ({ to: '', days: 0, reads: [], ...n }));
@@ -5027,6 +5031,10 @@ export default function App() {
   const editKhayr = canKhayr && canWritePerm(effectiveUser, 'خيركم');
   const khayr = data.khayr || { students: [], sessions: [] };
   const myKhayrStudent = canKhayr ? null : studentOfUser(khayr.students, currentUser?.id);
+  /** طالبٌ مربوط بحساب هذا المستخدم (ولو كان من فريق خيركم): له «التسميع اليومي». */
+  const myDailyStudent = studentOfUser(khayr.students, currentUser?.id);
+  /** تُضاف الجلسة باسم صاحب الحساب، فلا يضيف أحدٌ جلسةً باسم غيره (والخادم يتحقق). */
+  const addDaily = (s) => save({ ...data, daily: { ...(data.daily || {}), sessions: [...(data.daily?.sessions || []), { ...s, userId: currentUser?.id, studentId: myDailyStudent?.id }] } });
   const termKhayrSessions = khayr.sessions.filter((s) => s.termKey === termKey);
   const scopedKhayrSessions = khayrScope === 'all' ? khayr.sessions : termKhayrSessions;
   const khayrSession = khayr.sessions.find((s) => s.id === selectedKhayrSessionId);
@@ -5359,6 +5367,7 @@ export default function App() {
     { id: 'khayr', label: 'خيركم', desc: 'التسميع والمتابعة', icon: BookMarked, show: canKhayr },
     // الطالب المربوط يدخل على سجلّه هو، بلا أي صلاحية
     { id: 'khayrMe', label: 'خيركم', desc: 'سجلّك في التسميع', icon: BookMarked, show: !!myKhayrStudent },
+    { id: 'daily', label: 'التسميع اليومي', desc: 'اسمّع للوكيل وهو يصحّح لك', icon: Mic, show: !!myDailyStudent },
     { id: 'trips', label: 'السفرات', desc: 'الرحلات وحساباتها', icon: Plane, show: canTrips },
     { id: 'guardians', label: 'المشتركين', desc: 'الطلاب وأولياء أمورهم', icon: UsersIcon, show: canGuardians },
     // الملاحظات السلوكية يراها القادة كلهم — لأنهم كلهم يتعاملون مع الطلاب
@@ -5382,7 +5391,7 @@ export default function App() {
     (id === 'programs' && (view === 'programDetail' || view === 'weekDetail' || view === 'unpaid')) ||
     (id === 'home' && (view === 'competitions' || view === 'trips' || view === 'tripDetail'
       || view === 'competitionDetail' || view === 'guardians' || view === 'guardianDetail' || view === 'lostStudent'
-      || view === 'khayr' || view === 'khayrSession' || view === 'khayrMe'));
+      || view === 'khayr' || view === 'khayrSession' || view === 'khayrMe' || view === 'daily'));
 
   /**
    * الباقة التي اشترى بها هذا المشترك — اسمُها كما كان يوم سجّل.
@@ -9284,6 +9293,12 @@ export default function App() {
               </div>
             )}
           </div>
+        )}
+
+        {view === 'daily' && myDailyStudent && (
+          <DailyTasmee
+            sessions={(data.daily?.sessions || []).filter((x) => x.userId === currentUser?.id)}
+            onSave={addDaily} onBack={() => goto('home')} />
         )}
 
         {view === 'khayrMe' && myKhayrStudent && (() => {

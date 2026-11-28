@@ -18,6 +18,7 @@ import { hash, verify, isHashed } from '../lib/password.mjs';
 import { loginBlocked, noteFail, clearFails, recordLogin } from '../../src/login.js';
 import { countVisit, dayKey } from '../../src/visits.js';
 import { managedIds, enteredIds, paidIds, payerOf, manages, enters, tripsSeen, tripsKept } from '../../src/tripaccess.js';
+import { dailySeen, dailyKept } from '../../src/dailyaccess.js';
 import { moneyChanged, moneyRows, moneyMissing, moneySum, blindMoney, restoreMoney, PART_MONEY } from '../../src/money.js';
 import { vapid, saveSub, dropSub, subsOf, whoHasPush, notifyNewNotices } from '../lib/push.mjs';
 import { TRASH_DAYS } from '../../src/trash.js';
@@ -402,6 +403,8 @@ const strip = (data, me) => {
   const out = { ...data, users: (data?.users || []).map(({ password, ...rest }) => rest) };
   if (!allowed(me, 'أولياء الأمور')) { out.guardians = []; out.students = []; out.dupIgnored = []; }
   if (!allowed(me, 'خيركم')) out.khayr = khayrOfStudent(data?.khayr, me);
+  // «التسميع اليومي»: كلٌّ يرى جلساته، ومن يتابع الطلاب يرى الكل
+  out.daily = { sessions: dailySeen(data?.daily?.sessions, me, allowed(me, 'خيركم')) };
   /**
    * أسئلة النادي تحمل الجواب الصحيح وأسماء الأولاد الذين جاوبوا. من لا يفتح
    * شاشة النادي لا يفتحها في بياناته أيضًا.
@@ -689,6 +692,8 @@ const guard = (incoming, current, me) => {
 
   // الطالب يقرأ سجلّه ولا يكتبه، ومثله من أُعطي «خيركم» للقراءة فقط
   if (!canWrite(me, 'خيركم')) out.khayr = current?.khayr || { students: [], sessions: [] };
+  // «التسميع اليومي»: الطالب يكتب جلساته هو وحدها، ومن يتابع الطلاب يكتب الكل
+  out.daily = { sessions: dailyKept(out.daily?.sessions, current?.daily?.sessions, me, canWrite(me, 'خيركم')) };
 
   // وما حُجب في `strip` يُردّ هنا، وإلا محته حفظةٌ عادية من جهازٍ ما شافه
   if (!allowed(me, 'النادي')) out.questions = current?.questions || [];
