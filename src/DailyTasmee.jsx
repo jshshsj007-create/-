@@ -11,11 +11,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Mic, MicOff, Check, RotateCcw, Volume2, Eye, ChevronLeft } from 'lucide-react';
 import { SURAHS } from './khayr.js';
-import { wordsOf, advance } from './tasmee.js';
+import { wordsOf, advance, locateStart } from './tasmee.js';
+import { say as adad } from './adad.js';
 import { createEngine, createSegmenter, resample, openMic, modelCached, MODEL_MB } from './accurate.js';
 
 const SR = typeof window !== 'undefined' ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+const WORD = ['كلمة', 'كلمتين', 'كلمات', 'كلمة'];
 const LEVEL_LABEL = { normal: 'عادي', strict: 'صارم' };
 
 const dayText = (ts) => {
@@ -28,6 +30,9 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
   const [surah, setSurah] = useState(112);
   const [from, setFrom] = useState(1);
   const [to, setTo] = useState(4);
+  // «من أي موضع»: لا يحدّد الطالب الآية، يقرأ من حيث شاء في السورة ويعرف الوكيل مكانه من أول كلماته
+  const [auto, setAuto] = useState(true);
+  const [start, setStart] = useState(0);
   const [level, setLevel] = useState('normal');
   const [practice, setPractice] = useState(false);           // تجربة: النص ظاهر، وبلا حفظ
   const [speak, setSpeak] = useState(true);
@@ -44,13 +49,14 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
   const setEngine = (v) => { setEngineState(v); try { localStorage.setItem('faidTasmeeEngine', v); } catch { /* بلا تخزين */ } };
   const [model, setModel] = useState({ state: 'idle', pct: 0 });
   const [busy, setBusy] = useState(false);
+  const [doneWords, setDoneWords] = useState(0);
   const [reveal, setReveal] = useState([]);              // فهارس الكلمات التي كشفها الطالب بنفسه
   // onSave يتغيّر مع كل رسم (يحمل بيانات التطبيق وقتها): الدوال المحفوظة بلا اعتماديات تُحفظ عبر مرجعٍ لئلا تحفظ فوق بياناتٍ أقدم
   const saveRef = useRef(onSave);
   saveRef.current = onSave;
 
   // أحوالٌ تتغيّر أسرع مما يُرسم: في مراجع لا في حالة
-  const R = useRef({ rec: null, active: false, base: 0, cursor: 0, repeats: 0, hints: 0, words: [], startedAt: 0, level: 'normal', practice: false, speak: true, surah: 112, from: 1, to: 4, ctx: null, voice: null, log: [], seen: { idx: -1, n: 0 }, eng: null, closeMic: null, seg: null, epoch: 0, muted: false, queue: [], processing: false, engine: 'fast' });
+  const R = useRef({ rec: null, active: false, base: 0, cursor: 0, repeats: 0, hints: 0, words: [], startedAt: 0, level: 'normal', practice: false, speak: true, surah: 112, from: 1, to: 4, ctx: null, voice: null, log: [], seen: { idx: -1, n: 0 }, eng: null, closeMic: null, seg: null, epoch: 0, muted: false, queue: [], processing: false, engine: 'fast', auto: false, located: true, start: 0 });
 
   useEffect(() => {
     if (quran) return undefined;
@@ -131,20 +137,48 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
     setBusy(false);
   };
 
-  const finish = (ok) => {
-    stopRec();
+  /**
+   * تلخيص ما أُنجز للحفظ والعرض. في «من أي موضع» يبدأ المدى من حيث بدأ الطالب، وينتهي عند آخر كلمةٍ أتمّها.
+   * (من حدّد المدى بنفسه فمداه كما اختار.)
+   */
+  const summary = (end) => {
     const r = R.current;
-    if (ok) {
+    const a = r.words[r.start]?.ayah ?? r.from;
+    const b = r.words[Math.max(r.start, end - 1)]?.ayah ?? r.to;
+    return { from: a, to: b, words: end - r.start };
+  };
+
+  const finish = (ok, partial = false) => {
+    const r = R.current;
+    const end = ok ? r.words.length : r.cursor;
+    // في «من أي موضع» لا يُعدّ «انتهيت» فشلًا: ما قرأه صحيحًا يُحفظ (ثلاث كلماتٍ فأكثر)
+    const keep = ok || (partial && r.auto && r.located && end - r.start >= 3);
+    stopRec();
+    if (keep) {
+      const sm = summary(end);
       say('أحسنت');
       if (!r.practice) {
         saveRef.current?.({
-          id: uid(), at: Date.now(), surah: r.surah, from: r.from, to: r.to,
-          words: r.words.length, repeats: r.repeats, hints: r.hints, level: r.level,
+          id: uid(), at: Date.now(), surah: r.surah, from: sm.from, to: sm.to,
+          words: sm.words, repeats: r.repeats, hints: r.hints, level: r.level,
           ms: Date.now() - r.startedAt,
         });
       }
+      setFrom(sm.from); setTo(sm.to); setDoneWords(sm.words);
       setPhase('done');
     } else setPhase('stopped');
+  };
+
+  /** أين بدأ الطالب؟ يُعاد الحكم كلما زاد الكلام حتى يثبت الموضع. `force`: مقطعٌ منتهٍ، نأخذ أول موضعٍ ولا ننتظر. */
+  const tryLocate = (text, force) => {
+    const r = R.current;
+    if (!r.auto || r.located) return true;
+    const L = locateStart(r.words, text);
+    if (!L) return false;
+    if (L.ambiguous && !force && text.trim().split(/\s+/).length < 8) return false;
+    r.located = true; r.start = L.start; r.base = L.start; r.cursor = L.start;
+    setStart(L.start); setCursor(L.start); setMsg('');
+    return true;
   };
 
   /** مقطعٌ حلّله النموذج القرآني: نصٌّ بما سُمع حقًّا، فيُحكم به أسرع من النص المؤقّت (solid). */
@@ -152,6 +186,7 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
     const r = R.current;
     if (!r.active) return;
     setHeard(text.trim().split(/\s+/).slice(-14).join(' '));
+    if (!tryLocate(text, true)) { setMsg('ما عرفتُ من أين بدأت. اقرأ ثلاث كلماتٍ فأكثر من السورة.'); return; }
     const a = advance(r.words, r.cursor, text, { level: r.level, final: false, solid: true });
     if (r.log.length < 80) r.log.push({ t: Date.now() - r.startedAt, mode: 'acc', secs: Math.round(secs * 10) / 10, ms, heard: text, base: r.cursor, cursor: a.cursor, bad: a.bad });
     if (a.cursor > r.cursor) { r.cursor = a.cursor; setCursor(a.cursor); setBad(-1); }
@@ -192,6 +227,7 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
     if (!r.active) return;
     const text = cands[0];
     setHeard(text.trim().split(/\s+/).slice(-14).join(' '));
+    if (!tryLocate(text, false)) return;
     let best = null;
     for (const c of cands) {
       const a = advance(r.words, r.base, c, { level: r.level, final: false });
@@ -248,14 +284,14 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
   }, []);
 
   const begin = () => {
-    const E = wordsOf(quran, surah, from, to);
+    const E = auto ? wordsOf(quran, surah, 1, count) : wordsOf(quran, surah, from, to);
     if (!E.length) { setMsg('اختر مدًى صحيحًا من السورة.'); return; }
     const acc = engine === 'accurate';
     if (!acc && !SR && !test?.makeRec) { setMsg('هذا المتصفح لا يدعم التعرّف على الكلام. جرّب Chrome على أندرويد، أو Safari على آيفون حديث، أو اختر «دقيق».'); return; }
     if (acc && model.state !== 'ready') { setMsg('نموذج القرآن لم يجهز بعد.'); return; }
     const r = R.current;
-    Object.assign(r, { words: E, base: 0, cursor: 0, repeats: 0, hints: 0, startedAt: Date.now(), level, practice, speak, surah, from, to, active: true, engine, epoch: 0, queue: [], muted: false, log: [], seen: { idx: -1, n: 0 } });
-    setWords(E); setCursor(0); setBad(-1); setReveal([]); setHeard(''); setRepeats(0); setHints(0); setMsg('');
+    Object.assign(r, { words: E, base: 0, cursor: 0, repeats: 0, hints: 0, startedAt: Date.now(), level, practice, speak, surah, from, to, active: true, engine, auto, located: !auto, start: 0, epoch: 0, queue: [], muted: false, log: [], seen: { idx: -1, n: 0 } });
+    setWords(E); setStart(0); setDoneWords(0); setCursor(0); setBad(-1); setReveal([]); setHeard(''); setRepeats(0); setHints(0); setMsg('');
     // من نقرة الطالب: وحدها تُفتح فيها الصوتيات على الجوال، فنهيّئ النبرة والنطق هنا لا عند أول «أعد»
     try {
       if (!r.ctx) { const AC = window.AudioContext || window.webkitAudioContext; if (AC) r.ctx = new AC(); }
@@ -293,6 +329,7 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
    */
   const hint = (kind = 'word') => {
     const r = R.current;
+    if (r.auto && !r.located) return;       // لم نعرف بعدُ أين بدأ: لا آية نلقّنه إياها
     const cur = Math.min(r.cursor, r.words.length - 1);
     const ay = r.words[cur]?.ayah;
     const first = r.words.findIndex((x) => x.ayah === ay);
@@ -310,7 +347,9 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
   /** كلماتُ المدى كما تُعرض: ما قرأه صحيحًا واضح، وما بعده نقاط. لا يظهر الجواب إلا إذا ضغط الطالب «تلميح»: وإلا لم يكن تسميعًا. */
   const shown = (i) => i < cursor || reveal.includes(i);
 
-  const pct = words.length ? Math.round((cursor / words.length) * 100) : 0;
+  const span = words.length - start;
+  const pct = span > 0 ? Math.round(((cursor - start) / span) * 100) : 0;
+  const waiting = auto && !R.current.located && phase === 'listen';
   const mine = [...sessions].sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 15);
 
   return (
@@ -331,14 +370,19 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
               {SURAHS.map((n, i) => <option key={n} value={i + 1}>{i + 1}. {n}</option>)}
             </select>
           </label>
-          <div className="grid grid-cols-2 gap-2">
-            <label className="block"><span className="text-xs text-slate-500">من آية</span>
-              <input data-testid="daily-from" type="number" min={1} max={count} inputMode="numeric" className="w-full mt-1 border border-slate-200 rounded-xl px-3 py-2.5 text-sm"
-                value={from} onChange={(e) => { const v = Math.max(1, Math.min(count, Number(e.target.value) || 1)); setFrom(v); if (to < v) setTo(v); }} /></label>
-            <label className="block"><span className="text-xs text-slate-500">إلى آية</span>
-              <input data-testid="daily-to" type="number" min={from} max={count} inputMode="numeric" className="w-full mt-1 border border-slate-200 rounded-xl px-3 py-2.5 text-sm"
-                value={to} onChange={(e) => setTo(Math.max(from, Math.min(count, Number(e.target.value) || from)))} /></label>
-          </div>
+          <label className="flex items-center gap-2 text-sm text-slate-700 font-semibold"><input data-testid="daily-auto" type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> أقرأ من أي موضع في السورة</label>
+          {auto
+            ? <div className="text-[11px] text-slate-400 leading-5">اقرأ من أي آية تشاء، حتى من منتصف السورة، ويعرف الوكيل مكانك من أول كلماتك. وإذا انتهيتَ اضغط «انتهيت» فيُحفظ ما قرأتَه صحيحًا.</div>
+            : (
+              <div className="grid grid-cols-2 gap-2">
+                <label className="block"><span className="text-xs text-slate-500">من آية</span>
+                  <input data-testid="daily-from" type="number" min={1} max={count} inputMode="numeric" className="w-full mt-1 border border-slate-200 rounded-xl px-3 py-2.5 text-sm"
+                    value={from} onChange={(e) => { const v = Math.max(1, Math.min(count, Number(e.target.value) || 1)); setFrom(v); if (to < v) setTo(v); }} /></label>
+                <label className="block"><span className="text-xs text-slate-500">إلى آية</span>
+                  <input data-testid="daily-to" type="number" min={from} max={count} inputMode="numeric" className="w-full mt-1 border border-slate-200 rounded-xl px-3 py-2.5 text-sm"
+                    value={to} onChange={(e) => setTo(Math.max(from, Math.min(count, Number(e.target.value) || from)))} /></label>
+              </div>
+            )}
           <div className="text-[11px] text-slate-400">في السورة {count} آية.</div>
 
           <div>
@@ -390,9 +434,9 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
         <div className="bg-white rounded-2xl border border-slate-100 p-4" data-testid="daily-listen">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2 text-sm font-bold text-slate-700">
-              <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse" /> {busy ? 'أحلّل…' : 'أسمعك…'} {SURAHS[surah - 1]} ({from}–{to})
+              <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse" /> {busy ? 'أحلّل…' : 'أسمعك…'} {SURAHS[surah - 1]}{auto ? '' : ` (${from}–${to})`}
             </div>
-            <div className="text-xs text-slate-400" data-testid="daily-progress">{cursor} من {words.length} كلمة</div>
+            <div className="text-xs text-slate-400" data-testid="daily-progress">{waiting ? 'اقرأ من أي آية' : `${cursor - start} من ${adad(span, WORD)}`}</div>
           </div>
           <div className="h-2 rounded-full bg-slate-100 overflow-hidden mb-3"><div className="h-full bg-brand-600 transition-all" style={{ width: `${pct}%` }} /></div>
 
@@ -405,11 +449,13 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
           )}
 
           <div className="leading-10 text-lg text-slate-800 min-h-[60px]" data-testid="daily-words">
-            {words.map((x, i) => (
-              <span key={i} className={`inline-block mx-0.5 ${i < cursor ? 'text-green-700' : i === bad ? 'text-red-600 font-bold' : 'text-slate-300'}`}>
-                {shown(i) ? x.raw : '••••'}
-              </span>
-            ))}
+            {waiting
+              ? <span className="text-sm text-slate-400">اقرأ من أي آية في السورة، وأعرف مكانك من أول كلماتك.</span>
+              : words.map((x, i) => (i < start ? null : (
+                <span key={i} className={`inline-block mx-0.5 ${i < cursor ? 'text-green-700' : i === bad ? 'text-red-600 font-bold' : 'text-slate-300'}`}>
+                  {shown(i) ? x.raw : '••••'}
+                </span>
+              )))}
           </div>
 
           <div className="text-[11px] text-slate-400 mt-3 min-h-[16px]" data-testid="daily-heard">{heard ? `سمعتُ: ${heard}` : 'ابدأ القراءة…'}</div>
@@ -418,9 +464,9 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
             <button data-testid="daily-hint-word" onClick={() => hint('word')} className="flex items-center gap-1 text-xs border border-slate-200 text-slate-600 rounded-xl px-3 py-2"><Eye size={14} /> الكلمة</button>
             <button data-testid="daily-hint-start" onClick={() => hint('start')} className="text-xs border border-slate-200 text-slate-600 rounded-xl px-3 py-2">بداية الآية</button>
             <button data-testid="daily-hint-ayah" onClick={() => hint('ayah')} className="text-xs border border-slate-200 text-slate-600 rounded-xl px-3 py-2">الآية كاملة</button>
-            <button data-testid="daily-stop" onClick={() => finish(false)} className="basis-full text-sm border border-slate-200 text-slate-700 rounded-xl py-2.5 flex items-center justify-center gap-1"><MicOff size={14} /> انتهيت</button>
+            <button data-testid="daily-stop" onClick={() => finish(false, true)} className="basis-full text-sm border border-slate-200 text-slate-700 rounded-xl py-2.5 flex items-center justify-center gap-1"><MicOff size={14} /> {auto ? 'انتهيت (أحفظ ما قرأت)' : 'انتهيت'}</button>
           </div>
-          <div className="text-[11px] text-slate-400 mt-2 flex items-center gap-1"><Volume2 size={12} /> أعدتَ {repeats} {repeats === 1 ? 'مرة' : 'مرات'}{hints ? ` · تلميحات ${hints}` : ''}</div>
+          <div className="text-[11px] text-slate-400 mt-2 flex items-center gap-1"><Volume2 size={12} /> {repeats ? `أعدتَ ${adad(repeats, 'time')}` : 'بلا إعادة'}{hints ? ` · تلميحات ${hints}` : ''}</div>
         </div>
       )}
 
@@ -428,7 +474,7 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
         <div className="bg-green-50 border border-green-200 rounded-2xl p-5 text-center" data-testid="daily-done">
           <div className="w-12 h-12 rounded-full bg-green-600 text-white flex items-center justify-center mx-auto mb-2"><Check size={26} /></div>
           <div className="text-green-800 font-extrabold text-lg">أحسنت! أتممتَ المدى</div>
-          <div className="text-sm text-green-700 mt-1">{SURAHS[surah - 1]} ({from}–{to}) · {words.length} كلمة · أعدتَ {repeats} {repeats === 1 ? 'مرة' : 'مرات'}{hints ? ` · تلميحات ${hints}` : ''}</div>
+          <div className="text-sm text-green-700 mt-1">{SURAHS[surah - 1]} ({from}–{to}) · {adad(doneWords || words.length, WORD)} · {repeats ? `أعدتَ ${adad(repeats, 'time')}` : 'بلا إعادة'}{hints ? ` · تلميحات ${hints}` : ''}</div>
           {practice && <div className="text-xs text-slate-500 mt-2">كانت تجربة، فلم تُحفظ.</div>}
           {practice && (
             <div className="mt-3">
@@ -443,7 +489,7 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
       {phase === 'stopped' && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 text-center" data-testid="daily-stopped">
           <div className="text-amber-800 font-bold">توقّف التسميع قبل أن يكتمل</div>
-          <div className="text-sm text-amber-700 mt-1">وصلتَ إلى {cursor} من {words.length} كلمة، ولا تُحفظ إلا الجلسة المكتملة.</div>
+          <div className="text-sm text-amber-700 mt-1">{auto ? 'ما قرأتَه صحيحًا أقل من ثلاث كلمات فلم يُحفظ.' : `وصلتَ إلى ${cursor} من ${adad(words.length, WORD)}، ولا تُحفظ إلا الجلسة المكتملة.`}</div>
           {msg && <div className="text-red-600 text-sm mt-2">{msg}</div>}
           {practice && (
             <div className="mt-3">

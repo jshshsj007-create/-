@@ -272,3 +272,32 @@ export const advance = (expected, cursor, heardText, opts = {}) => {
   if (bad < 0 && st !== 'ok' && jumped(expected, next, heardText, opts.level, k, rest.length)) bad = next;
   return { cursor: next, bad, done: false, status: r.status };
 };
+
+/**
+ * أين بدأ الطالب؟ لمن لا يريد تحديد الآية: يقرأ من أي موضعٍ في السورة ونعرف مكانه من أول كلماته.
+ * نبحث عن ثلاث كلماتٍ متتاليةٍ مما سمعناه في المتوقَّع (قريبةً لا مطابقةً حرفية، ولا «ال» التعريف)، ونعود إلى الوراء
+ * ما دامت الكلمات التي قبلها تطابق ما قبل الموضع (لئلا يُحسب أول ما قاله زائدًا). وعبارةٌ تتكرّر في السورة
+ * (كلازمة الرحمن) لا يُحسم بها موضعٌ من ثلاث كلمات: فنرجع `ambiguous` ليُنتظر كلامٌ أكثر.
+ * يرجع `{ start, ambiguous }` أو `null` إن لم يُعثر على موضع.
+ */
+export const locateStart = (expected, heardText, minRun = 3) => {
+  const E = expected.map((x) => (typeof x === 'string' ? x : x.w));
+  const H = norm(heardText).split(' ').filter(Boolean);
+  if (H.length < minRun) return null;
+  const near = (a, b) => sim(dal(a), dal(b)) >= 0.85;
+  const set = new Set(H.map(dal));
+  const found = [];
+  for (let j = 0; j + minRun <= H.length && !found.length; j++) {
+    for (let p = 0; p + minRun <= E.length; p++) {
+      if (!set.has(dal(E[p]))) continue;
+      let ok = true;
+      for (let k = 0; k < minRun && ok; k++) ok = near(H[j + k], E[p + k]);
+      if (!ok) continue;
+      let m = 0;
+      while (m < j && p - 1 - m >= 0 && near(H[j - 1 - m], E[p - 1 - m])) m++;
+      found.push(p - m);
+    }
+  }
+  if (!found.length) return null;
+  return { start: found[0], ambiguous: found.length > 1 };
+};

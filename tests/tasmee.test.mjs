@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { norm, sim, wordsOf, judge, advance, LEVELS } from '../src/tasmee.js';
+import { norm, sim, wordsOf, judge, advance, locateStart, LEVELS } from '../src/tasmee.js';
 
 const quran = JSON.parse(fs.readFileSync(new URL('../public/quran.json', import.meta.url), 'utf8'));
 let passed = 0;
@@ -256,6 +256,28 @@ test('«عمّ يتساءلون» بإملاءات التعرّف المختلف
   }
   // والنموذج القرآني يكتب برسم المصحف: «عما» عنده قراءةٌ أخرى
   assert.equal(advance(E, 0, 'عما يتساءلون', { level: 'normal', final: false, solid: true }).bad, 0);
+});
+
+test('البداية من منتصف السورة: يُعرف الموضع من أول كلماتٍ ثلاث', () => {
+  const E = words(78, 1, 40);
+  const at = (a) => E.findIndex((x) => x.ayah === a);
+  for (const a of [1, 6, 17, 31, 40]) {
+    const r = locateStart(E, said(78, a, Math.min(40, a + 1)));
+    assert.equal(r.start, at(a), `آية ${a}`);
+  }
+  // يبدأ من منتصف آية، وبتردّدٍ في أولها
+  const w = said(78, 17, 17).split(' ');
+  assert.equal(locateStart(E, w.slice(2).join(' ')).start, at(17) + 2);
+  assert.equal(locateStart(E, 'اه ' + w.join(' ')).start, at(17));
+  // أقل من ثلاث كلمات: لا يُحسم
+  assert.equal(locateStart(E, w.slice(0, 2).join(' ')), null);
+  // وتعوّذه قبل القراءة لا يضلّله
+  assert.equal(locateStart(E, 'اعوذ بالله من الشيطان الرجيم ' + said(78, 6, 7)).start, at(6));
+});
+
+test('لازمةٌ مكرّرة (الرحمن) لا يُحسم بها الموضع من ثلاث كلمات', () => {
+  const E = words(55, 1, 78);
+  assert.equal(locateStart(E, 'فباي الاء ربكما').ambiguous, true);
 });
 
 test('الأداء: مقارنة نافذة كاملة بسرعة (أقل من ٣٠٠ م.ث)', () => {
