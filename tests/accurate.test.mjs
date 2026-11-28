@@ -53,9 +53,21 @@ test('صمتٌ تام لا يُنتج شيئًا', () => {
 });
 
 test('كلامٌ متّصل طويل يُقطع عند وقفةٍ قصيرة بعد ٤ ثوانٍ فيبدأ التحليل والطالب يقرأ', () => {
-  const { got } = run([quiet(0.5), tone(4.5), quiet(0.3), tone(3), quiet(1.5)]);
+  const { got } = run([quiet(0.5), tone(5.5), quiet(0.4), tone(3), quiet(1.5)]);
   assert.equal(got.length, 2, JSON.stringify(got));
-  assert.ok(got[0] < 6, `${got[0]}`);
+  assert.ok(got[0] < 7, `${got[0]}`);
+});
+
+test('هادئ الصوت (سعة ٠٫٠١) يُسمع ولا يضيع', () => {
+  const { got } = run([quiet(0.5), tone(2, 0.01), quiet(1.5)]);
+  assert.equal(got.length, 1);
+});
+
+test('القطع عند وقفةٍ قصيرة يُعلَّم soft، وعند السكوت silence', () => {
+  const reasons = [];
+  const seg = createSegmenter({ rate: RATE, onSegment: (a, why) => reasons.push(why) });
+  [quiet(0.5), tone(5.5), quiet(0.4), tone(2), quiet(1.5)].flat().forEach((b) => seg.feed(b));
+  assert.deepEqual(reasons, ['soft', 'silence']);
 });
 
 test('وقفةٌ قصيرة قبل ٤ ثوانٍ لا تقطع', () => {

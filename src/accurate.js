@@ -40,23 +40,24 @@ export const resample = (x, from, to = 16000) => {
  * يقطّع الصوت المتّصل إلى مقاطع كلامٍ بين وقفاتها: لا نرسل للنموذج صمتًا، ولا نبقى ننتظر نهايةَ التلاوة كلها.
  * عتبة الصوت تتكيّف مع ضجيج الغرفة (متوسّط ما قبل الكلام) لا رقمٌ ثابت: جوالٌ في مجلسٍ مزدحم غير جوالٍ في غرفة.
  */
-export const createSegmenter = ({ rate, onSegment, onLevel, silenceMs = 600, minSpeechMs = 350, maxMs = 12000, preRollMs = 300, softAfterMs = 4000, softSilenceMs = 220 }) => {
-  let floor = 0.004, speaking = false, silence = 0, speech = 0, total = 0;
+export const createSegmenter = ({ rate, onSegment, onLevel, silenceMs = 600, minSpeechMs = 350, maxMs = 12000, preRollMs = 300, softAfterMs = 5000, softSilenceMs = 300 }) => {
+  let floor = 0.0015, speaking = false, silence = 0, speech = 0, total = 0;
   let chunks = [], pre = [], preLen = 0;
   const ms = (n) => (n / rate) * 1000;
   const reset = () => { speaking = false; silence = 0; speech = 0; total = 0; chunks = []; };
   const concat = (parts) => { const n = parts.reduce((s, p) => s + p.length, 0); const o = new Float32Array(n); let k = 0; for (const p of parts) { o.set(p, k); k += p.length; } return o; };
-  const emit = () => {
+  const emit = (reason) => {
     const ok = speech >= minSpeechMs;
     const audio = concat(chunks);
     reset();
-    if (ok) onSegment(audio);
+    if (ok) onSegment(audio, reason);
   };
   return {
     feed(block) {
       let s = 0; for (let i = 0; i < block.length; i++) s += block[i] * block[i];
       const rms = Math.sqrt(s / block.length);
-      const loud = rms > Math.max(0.012, floor * 3.5);
+      // العتبة الدنيا منخفضة (٠٫٠٠٦): من يقرأ بصوتٍ هادئٍ على جوالٍ بميكروفونٍ ضعيف لا يضيع أول كلامه
+      const loud = rms > Math.max(0.006, floor * 3.5);
       onLevel?.(rms, loud);
       const copy = new Float32Array(block);
       if (!speaking) {
@@ -68,10 +69,12 @@ export const createSegmenter = ({ rate, onSegment, onLevel, silenceMs = 600, min
       if (loud) { silence = 0; speech += ms(block.length); } else silence += ms(block.length);
       // بعد أربع ثوانٍ من الكلام المتّصل نقطع عند أول وقفةٍ قصيرة (بين كلمتين) لا ننتظر وقفةَ آخر الآية: فيبدأ التحليل
       // والطالب ما زال يقرأ، وتصل النتيجة أبكر. القطع في وقفةٍ لا في وسط كلمة، فلا تتأذّى الدقة.
-      if (silence >= silenceMs || ms(total) >= maxMs || (ms(total) >= softAfterMs && silence >= softSilenceMs)) emit();
+      // `reason`: «silence» انتهى كلامه فآخر كلمةٍ كاملة، و«soft» قطعناه نحن وقد يكون آخر كلمةٍ ناقصًا فلا يُحكم عليها وحدها
+      if (silence >= silenceMs) emit('silence');
+      else if (ms(total) >= maxMs || (ms(total) >= softAfterMs && silence >= softSilenceMs)) emit('soft');
     },
     /** ينهي المقطع الجاري (انتهى الطالب) أو يرمي ما سُمع (صمتَ الوكيل ينطق «أعد»). */
-    flush(keep = true) { if (speaking && keep) emit(); else reset(); pre = []; preLen = 0; },
+    flush(keep = true) { if (speaking && keep) emit('silence'); else reset(); pre = []; preLen = 0; },
   };
 };
 

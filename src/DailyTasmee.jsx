@@ -190,7 +190,7 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
   };
 
   /** مقطعٌ حلّله النموذج القرآني: نصٌّ بما سُمع حقًّا، فيُحكم به أسرع من النص المؤقّت (solid). */
-  const handleAcc = (text, ms, secs) => {
+  const handleAcc = (text, ms, secs, solid = true) => {
     const r = R.current;
     setTiming({ ms, secs });
     // سرعة جهازه: إن احتاج التحليل أكثر من مرةٍ وثلثٍ مدّةَ الكلام في مقطعين متتاليين فجوالُه بطيءٌ على «دقيق»
@@ -199,8 +199,8 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
     if (!r.active) return;
     setHeard(text.trim().split(/\s+/).slice(-14).join(' '));
     if (!tryLocate(text, true)) { setMsg('ما عرفتُ من أين بدأت. اقرأ ثلاث كلماتٍ فأكثر من السورة.'); return; }
-    const a = advance(r.words, r.cursor, text, { level: r.level, final: false, solid: true });
-    if (r.log.length < 80) r.log.push({ t: Date.now() - r.startedAt, mode: 'acc', secs: Math.round(secs * 10) / 10, ms, heard: text, base: r.cursor, cursor: a.cursor, bad: a.bad, rt: Math.round((ms / (secs * 1000)) * 100) / 100 });
+    const a = advance(r.words, r.cursor, text, { level: r.level, final: false, solid });
+    if (r.log.length < 80) r.log.push({ t: Date.now() - r.startedAt, mode: 'acc', solid, secs: Math.round(secs * 10) / 10, ms, heard: text, base: r.cursor, cursor: a.cursor, bad: a.bad, rt: Math.round((ms / (secs * 1000)) * 100) / 100 });
     if (a.cursor > r.cursor) { r.cursor = a.cursor; setCursor(a.cursor); setBad(-1); }
     if (a.done) { finish(true); return; }
     if (a.bad < 0) return;
@@ -222,7 +222,7 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
       const x = resample(item.audio, r.ctx.sampleRate);
       const secs = x.length / 16000;
       const out = await getEngine().transcribe(x);
-      if (item.epoch === r.epoch) handleAcc(out.text, out.ms, secs);
+      if (item.epoch === r.epoch) handleAcc(out.text, out.ms, secs, item.solid);
     } catch { setMsg('تعذّر تحليل المقطع. أعد المحاولة.'); }
     r.processing = false;
     pump();
@@ -318,7 +318,7 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
         .then((close) => {
           if (!r.active) { close(); return; }
           r.closeMic = close;
-          r.seg = createSegmenter({ rate: r.ctx.sampleRate, onLevel: (rms) => { r.lvl = rms; }, onSegment: (audio) => { r.queue.push({ audio, epoch: r.epoch }); pump(); } });
+          r.seg = createSegmenter({ rate: r.ctx.sampleRate, onLevel: (rms) => { r.lvl = rms; }, onSegment: (audio, reason) => { r.queue.push({ audio, epoch: r.epoch, solid: reason === 'silence' }); pump(); } });
         })
         .catch(() => { setMsg('ما أُذن للميكروفون. اسمح به من إعدادات المتصفح ثم أعد المحاولة.'); finish(false); });
       return;
