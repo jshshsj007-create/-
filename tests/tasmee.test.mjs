@@ -249,6 +249,15 @@ test('همزة الاستفهام اللاصقة («أالله») تُقبل و�
   assert.equal(advance(E, 0, 'أالله الصمد', { level: 'normal', final: true }).done, true);
 });
 
+test('«عمّ يتساءلون» بإملاءات التعرّف المختلفة تُقبل (همزةٌ على ياء أو على السطر، وألف المدّ)', () => {
+  const E = words(78, 1, 1);
+  for (const h of ['عم يتساءلون', 'عم يتسائلون', 'عم يتسألون', 'عما يتساءلون', 'عمّ يتسالون']) {
+    for (const level of ['normal', 'strict']) assert.equal(advance(E, 0, h, { level, final: true }).done, true, `${h} (${level})`);
+  }
+  // والنموذج القرآني يكتب برسم المصحف: «عما» عنده قراءةٌ أخرى
+  assert.equal(advance(E, 0, 'عما يتساءلون', { level: 'normal', final: false, solid: true }).bad, 0);
+});
+
 test('الأداء: مقارنة نافذة كاملة بسرعة (أقل من ٣٠٠ م.ث)', () => {
   const E = words(2, 255, 286);
   const t = Date.now();

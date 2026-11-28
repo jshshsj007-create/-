@@ -21,6 +21,8 @@ export const norm = (s) => String(s ?? '')
   .replace(/[أإآٱ]/g, 'ا')
   .replace(/[ىیۍ]/g, 'ي')
   .replace(/ک/g, 'ك')
+  // الهمزة بعد الألف تُكتب على ياء أو على السطر («يتسائلون»، «يتساءلون»)، والتعرّف يكتب أيّهما: صورةٌ واحدة
+  .replace(/ائ/g, 'ا')
   .replace(/ة/g, 'ه')
   .replace(/ؤ/g, 'و')
   .replace(/ئ/g, 'ي')
@@ -137,6 +139,9 @@ export const judge = (expected, heardText, { level = 'normal', final = false, so
   let H = norm(heardText).split(' ').filter(Boolean).map(lead);
   // «الف لام ميم» تُسمع ثلاث كلمات وهي كلمةٌ واحدة في المصحف: تُلصق إن كان في المدى فاتحةُ سورة
   if (E.some((w) => MUQATTAAT.has(w))) H = glueLetterNames(H);
+  // تعرّف الجوال يكتب المدّ ألفًا في آخر الكلمة («عمّ» تُسمع «عمّا»): يُقبل منه. أما النموذج القرآني (solid) فيكتب
+  // برسم المصحف، فالألف الزائدة عنده قراءةٌ مختلفة لا إملاء
+  const sm = (e, h) => (!solid && h.length === e.length + 1 && h.endsWith('ا') && h.startsWith(e) ? 1 : simTo(e, h));
   const n = E.length, m = H.length;
   const status = new Array(n).fill('pending');
   if (!n) return { status, ok: 0, firstBad: -1, done: true, reached: -1 };
@@ -148,15 +153,15 @@ export const judge = (expected, heardText, { level = 'normal', final = false, so
   for (let j = 1; j <= m; j++) { dp[0][j] = dp[0][j - 1] + INS_; back[0][j] = 3; }
   for (let i = 1; i <= n; i++) {
     for (let j = 1; j <= m; j++) {
-      let best = dp[i - 1][j - 1] + subCost(simTo(E[i - 1], H[j - 1]), SUBMAX), mv = 1;
+      let best = dp[i - 1][j - 1] + subCost(sm(E[i - 1], H[j - 1]), SUBMAX), mv = 1;
       if (dp[i - 1][j] + DEL < best) { best = dp[i - 1][j] + DEL; mv = 2; }
       if (dp[i][j - 1] + INS_ < best) { best = dp[i][j - 1] + INS_; mv = 3; }
       if (j >= 2) {                       // السامع لصق كلمتين
-        const c = dp[i - 1][j - 2] + subCost(simTo(E[i - 1], H[j - 2] + H[j - 1]), SUBMAX) + MERGE;
+        const c = dp[i - 1][j - 2] + subCost(sm(E[i - 1], H[j - 2] + H[j - 1]), SUBMAX) + MERGE;
         if (c < best) { best = c; mv = 4; }
       }
       if (i >= 2) {                       // السامع فصل كلمةً إلى اثنتين (نطقَها أو كتبها هو مفصولة)
-        const c = dp[i - 2][j - 1] + subCost(Math.min(simTo(E[i - 2] + E[i - 1], H[j - 1]), 1), SUBMAX) + MERGE;
+        const c = dp[i - 2][j - 1] + subCost(Math.min(sm(E[i - 2] + E[i - 1], H[j - 1]), 1), SUBMAX) + MERGE;
         if (c < best) { best = c; mv = 5; }
       }
       dp[i][j] = best; back[i][j] = mv;
@@ -179,16 +184,16 @@ export const judge = (expected, heardText, { level = 'normal', final = false, so
   while (i > 0 || j > 0) {
     const mv = back[i][j];
     if (mv === 1) {
-      const s = simTo(E[i - 1], H[j - 1]);
+      const s = sm(E[i - 1], H[j - 1]);
       status[i - 1] = s >= theta ? 'ok' : 'wrong';
       matched[i - 1] = true; i--; j--;
     } else if (mv === 2) { status[i - 1] = 'missing'; i--; }
     else if (mv === 3) { j--; }
     else if (mv === 4) {
-      const s = simTo(E[i - 1], H[j - 2] + H[j - 1]);
+      const s = sm(E[i - 1], H[j - 2] + H[j - 1]);
       status[i - 1] = s >= theta ? 'ok' : 'wrong'; matched[i - 1] = true; i--; j -= 2;
     } else {
-      const s = Math.min(simTo(E[i - 2] + E[i - 1], H[j - 1]), 1);
+      const s = Math.min(sm(E[i - 2] + E[i - 1], H[j - 1]), 1);
       status[i - 1] = status[i - 2] = s >= theta ? 'ok' : 'wrong'; matched[i - 1] = matched[i - 2] = true; i -= 2; j--;
     }
   }
