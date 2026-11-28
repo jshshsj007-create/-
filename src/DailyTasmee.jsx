@@ -44,7 +44,7 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
   saveRef.current = onSave;
 
   // أحوالٌ تتغيّر أسرع مما يُرسم: في مراجع لا في حالة
-  const R = useRef({ rec: null, active: false, base: 0, cursor: 0, repeats: 0, hints: 0, words: [], startedAt: 0, level: 'normal', practice: false, speak: true, surah: 112, from: 1, to: 4, ctx: null, voice: null });
+  const R = useRef({ rec: null, active: false, base: 0, cursor: 0, repeats: 0, hints: 0, words: [], startedAt: 0, level: 'normal', practice: false, speak: true, surah: 112, from: 1, to: 4, ctx: null, voice: null, log: [], seen: { idx: -1, n: 0 } });
 
   useEffect(() => {
     if (quran) return undefined;
@@ -111,23 +111,38 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
     } else setPhase('stopped');
   };
 
-  /** نتيجة التعرّف: يتقدّم المؤشّر بما ثبت، ويُقال «أعد» إذا تجاوز الكلامُ خطأً. */
-  const handle = useCallback((text) => {
+  /**
+   * نتيجة التعرّف. `cands`: النصّ الأول ثم بدائل الجهاز للجملة الأخيرة (يسمع الجهاز أحيانًا الصحيحَ بديلًا ثانيًا).
+   * يُقبل أفضلُ المرشّحين تقدّمًا: ظلمُ طالبٍ قرأ صحيحًا أسوأ من إمهال خطأٍ ثانيةً.
+   * و«أعد» لا تُقال من أول نبضة: النصّ المؤقّت يتبدّل مع كل كلمة، فلا بدّ أن يثبت الخطأ في نبضتين متتاليتين
+   * أو أن تُختم الجملة (isFinal).
+   */
+  const handle = useCallback((cands, isFinal) => {
     const r = R.current;
     if (!r.active) return;
+    const text = cands[0];
     setHeard(text.trim().split(/\s+/).slice(-14).join(' '));
-    const a = advance(r.words, r.base, text, { level: r.level, final: false });
+    let best = null;
+    for (const c of cands) {
+      const a = advance(r.words, r.base, c, { level: r.level, final: false });
+      const aOk = a.bad < 0, bOk = best && best.bad < 0;
+      if (!best || (aOk && !bOk) || (aOk === bOk && a.cursor > best.cursor)) best = a;
+    }
+    const a = best;
+    if (r.log.length < 80) r.log.push({ t: Date.now() - r.startedAt, fin: !!isFinal, heard: cands.length > 1 ? cands : cands[0], base: r.base, cursor: a.cursor, bad: a.bad });
     if (a.cursor > r.cursor) { r.cursor = a.cursor; setCursor(a.cursor); setBad(-1); }
     if (a.done) { finish(true); return; }
-    if (a.bad >= 0) {
-      r.repeats += 1; setRepeats(r.repeats);
-      r.base = a.bad; r.cursor = a.bad; setCursor(a.bad); setBad(a.bad);
-      // نوقف التعرّف ليُنسى ما قيل قبل الخطأ، ولئلا يسمع صوتَ الوكيل؛ ونستأنفه بعد النطق من الكلمة الخاطئة
-      const old = r.rec; r.rec = null;
-      try { old?.abort(); } catch { /* مغلق */ }
-      beep();
-      say('أعد', () => { if (R.current.active && !R.current.rec) setTimeout(() => startRec(), 200); });
-    }
+    if (a.bad < 0) { r.seen = { idx: -1, n: 0 }; return; }
+    r.seen = r.seen.idx === a.bad ? { idx: a.bad, n: r.seen.n + 1 } : { idx: a.bad, n: 1 };
+    if (!isFinal && r.seen.n < 2) return;
+    r.seen = { idx: -1, n: 0 };
+    r.repeats += 1; setRepeats(r.repeats);
+    r.base = a.bad; r.cursor = a.bad; setCursor(a.bad); setBad(a.bad); setReveal(-1);
+    // نوقف التعرّف ليُنسى ما قيل قبل الخطأ، ولئلا يسمع صوتَ الوكيل؛ ونستأنفه بعد النطق من الكلمة الخاطئة
+    const old = r.rec; r.rec = null;
+    try { old?.abort(); } catch { /* مغلق */ }
+    beep();
+    say('أعد', () => { if (R.current.active && !R.current.rec) setTimeout(() => startRec(), 200); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -135,13 +150,17 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
     const r = R.current;
     if (!r.active) return;
     const rec = test?.makeRec ? test.makeRec() : new SR();
-    rec.lang = 'ar-SA'; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 1;
+    rec.lang = 'ar-SA'; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 4;
     r.rec = rec;
     rec.onresult = (ev) => {
       if (rec !== R.current.rec) return;
-      let t = '';
-      for (let i = 0; i < ev.results.length; i++) t += ` ${ev.results[i][0].transcript}`;
-      handle(t);
+      const n = ev.results.length;
+      let head = '';
+      for (let i = 0; i < n - 1; i++) head += ` ${ev.results[i][0].transcript}`;
+      const last = ev.results[n - 1];
+      const cands = [];
+      for (let k = 0; k < last.length; k++) cands.push(`${head} ${last[k].transcript}`);
+      handle(cands, !!last.isFinal);
     };
     rec.onerror = (e) => {
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { setMsg('ما أُذن للميكروفون. اسمح به من إعدادات المتصفح ثم أعد المحاولة.'); finish(false); }
@@ -175,11 +194,20 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
     startRec();
   };
 
+  /** تقرير لصاحب الاختبار: ما سمعه الجهاز فعلًا وقرارُ كل خطوة. لا يُحفظ ولا يُرسل: يُنسخ ليلصقه صاحبه حيث يشاء. */
+  const [copied, setCopied] = useState('');
+  const copyReport = async () => {
+    const r = R.current;
+    const rep = { ua: navigator.userAgent, surah: r.surah, from: r.from, to: r.to, level: r.level, words: r.words.length, cursor: r.cursor, repeats: r.repeats, events: r.log };
+    const text = JSON.stringify(rep);
+    try { await navigator.clipboard.writeText(text); setCopied('نُسخ. الصقه في المحادثة.'); }
+    catch { setCopied(text); }
+  };
   const hint = () => { R.current.hints += 1; setHints(R.current.hints); setReveal(R.current.cursor); };
   const reset = () => { stopRec(); setPhase('pick'); setMsg(''); };
 
-  /** كلماتُ المدى كما تُعرض: ما ثبت واضح، وما بعده نقاط إلا ما كُشف بتلميحٍ أو بـ«أعد». */
-  const shown = (i) => practice || i < cursor || i === reveal || i === bad;
+  /** كلماتُ المدى كما تُعرض: ما قرأه صحيحًا واضح، وما بعده نقاط. لا يظهر الجواب إلا إذا ضغط الطالب «تلميح»: وإلا لم يكن تسميعًا. */
+  const shown = (i) => i < cursor || i === reveal;
 
   const pct = words.length ? Math.round((cursor / words.length) * 100) : 0;
   const mine = [...sessions].sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 15);
@@ -224,7 +252,7 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
           </div>
 
           <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={speak} onChange={(e) => setSpeak(e.target.checked)} /> ينطق الوكيل «أعد» بصوت</label>
-          <label className="flex items-center gap-2 text-sm text-slate-600"><input data-testid="daily-practice" type="checkbox" checked={practice} onChange={(e) => setPractice(e.target.checked)} /> تجربة: النص ظاهر وبلا حفظ (لتعرف كيف يسمعك الجهاز)</label>
+          <label className="flex items-center gap-2 text-sm text-slate-600"><input data-testid="daily-practice" type="checkbox" checked={practice} onChange={(e) => setPractice(e.target.checked)} /> تجربة: بلا حفظ (لتعرف كيف يسمعك الجهاز)</label>
 
           {msg && <div className="text-red-600 text-sm">{msg}</div>}
           <button data-testid="daily-start" onClick={begin} className="w-full bg-brand-600 text-white font-bold rounded-xl py-3 flex items-center justify-center gap-2"><Mic size={18} /> ابدأ التسميع</button>
@@ -247,7 +275,8 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
           {bad >= 0 && (
             <div className="bg-red-50 border border-red-200 rounded-xl p-3 mb-3 text-center" data-testid="daily-repeat">
               <div className="text-red-700 font-extrabold text-lg flex items-center justify-center gap-2"><RotateCcw size={18} /> أعد</div>
-              <div className="text-sm text-red-600 mt-1">ابدأ من: <b>{words[bad]?.raw}</b> (آية {words[bad]?.ayah})</div>
+              <div className="text-sm text-red-600 mt-1">أعد من الموضع الأحمر</div>
+              <button data-testid="daily-show-word" onClick={hint} className="mt-2 text-xs border border-red-200 text-red-700 rounded-lg px-3 py-1.5">أظهر لي الكلمة</button>
             </div>
           )}
 
@@ -275,6 +304,12 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
           <div className="text-green-800 font-extrabold text-lg">أحسنت! أتممتَ المدى</div>
           <div className="text-sm text-green-700 mt-1">{SURAHS[surah - 1]} ({from}–{to}) · {words.length} كلمة · أعدتَ {repeats} {repeats === 1 ? 'مرة' : 'مرات'}{hints ? ` · تلميحات ${hints}` : ''}</div>
           {practice && <div className="text-xs text-slate-500 mt-2">كانت تجربة، فلم تُحفظ.</div>}
+          {practice && (
+            <div className="mt-3">
+              <button data-testid="daily-copy" onClick={copyReport} className="text-xs border border-slate-300 text-slate-600 rounded-lg px-3 py-1.5">نسخ تقرير التجربة</button>
+              {copied && <div className="text-[11px] text-slate-500 mt-1 break-all select-all" dir="ltr">{copied}</div>}
+            </div>
+          )}
           <button onClick={reset} className="mt-4 bg-brand-600 text-white font-bold rounded-xl px-5 py-2.5 text-sm">تسميع جديد</button>
         </div>
       )}
@@ -284,6 +319,12 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
           <div className="text-amber-800 font-bold">توقّف التسميع قبل أن يكتمل</div>
           <div className="text-sm text-amber-700 mt-1">وصلتَ إلى {cursor} من {words.length} كلمة، ولا تُحفظ إلا الجلسة المكتملة.</div>
           {msg && <div className="text-red-600 text-sm mt-2">{msg}</div>}
+          {practice && (
+            <div className="mt-3">
+              <button data-testid="daily-copy" onClick={copyReport} className="text-xs border border-slate-300 text-slate-600 rounded-lg px-3 py-1.5">نسخ تقرير التجربة</button>
+              {copied && <div className="text-[11px] text-slate-500 mt-1 break-all select-all" dir="ltr">{copied}</div>}
+            </div>
+          )}
           <button onClick={reset} className="mt-4 bg-brand-600 text-white font-bold rounded-xl px-5 py-2.5 text-sm">حاول من جديد</button>
         </div>
       )}
