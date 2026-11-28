@@ -38,7 +38,7 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
   const [hints, setHints] = useState(0);
   const [msg, setMsg] = useState('');
   const [words, setWords] = useState([]);
-  const [reveal, setReveal] = useState(-1);
+  const [reveal, setReveal] = useState([]);              // فهارس الكلمات التي كشفها الطالب بنفسه
   // onSave يتغيّر مع كل رسم (يحمل بيانات التطبيق وقتها): الدوال المحفوظة بلا اعتماديات تُحفظ عبر مرجعٍ لئلا تحفظ فوق بياناتٍ أقدم
   const saveRef = useRef(onSave);
   saveRef.current = onSave;
@@ -137,7 +137,7 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
     if (!isFinal && r.seen.n < 2) return;
     r.seen = { idx: -1, n: 0 };
     r.repeats += 1; setRepeats(r.repeats);
-    r.base = a.bad; r.cursor = a.bad; setCursor(a.bad); setBad(a.bad); setReveal(-1);
+    r.base = a.bad; r.cursor = a.bad; setCursor(a.bad); setBad(a.bad); setReveal([]);
     // نوقف التعرّف ليُنسى ما قيل قبل الخطأ، ولئلا يسمع صوتَ الوكيل؛ ونستأنفه بعد النطق من الكلمة الخاطئة
     const old = r.rec; r.rec = null;
     try { old?.abort(); } catch { /* مغلق */ }
@@ -183,7 +183,7 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
     if (!SR && !test?.makeRec) { setMsg('هذا المتصفح لا يدعم التعرّف على الكلام. جرّب Chrome على أندرويد، أو Safari على آيفون حديث.'); return; }
     const r = R.current;
     Object.assign(r, { words: E, base: 0, cursor: 0, repeats: 0, hints: 0, startedAt: Date.now(), level, practice, speak, surah, from, to, active: true });
-    setWords(E); setCursor(0); setBad(-1); setReveal(-1); setHeard(''); setRepeats(0); setHints(0); setMsg('');
+    setWords(E); setCursor(0); setBad(-1); setReveal([]); setHeard(''); setRepeats(0); setHints(0); setMsg('');
     // من نقرة الطالب: وحدها تُفتح فيها الصوتيات على الجوال، فنهيّئ النبرة والنطق هنا لا عند أول «أعد»
     try {
       if (!r.ctx) { const AC = window.AudioContext || window.webkitAudioContext; if (AC) r.ctx = new AC(); }
@@ -203,11 +203,28 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
     try { await navigator.clipboard.writeText(text); setCopied('نُسخ. الصقه في المحادثة.'); }
     catch { setCopied(text); }
   };
-  const hint = () => { R.current.hints += 1; setHints(R.current.hints); setReveal(R.current.cursor); };
+  /**
+   * تلقين الشيخ: كلمة، أو بداية الآية، أو الآية كلها. لا يظهر شيءٌ إلا بطلب الطالب، وكل طلبٍ يُعدّ تلميحًا في سجلّه.
+   * وتبدأ الآية من أولها لا من المؤشّر: من نسي كيف تبدأ يحتاج فاتحتها لا ما بعدها.
+   */
+  const hint = (kind = 'word') => {
+    const r = R.current;
+    const cur = Math.min(r.cursor, r.words.length - 1);
+    const ay = r.words[cur]?.ayah;
+    const first = r.words.findIndex((x) => x.ayah === ay);
+    let last = first;
+    while (last + 1 < r.words.length && r.words[last + 1].ayah === ay) last++;
+    let idx;
+    if (kind === 'word') idx = [cur];
+    else if (kind === 'start') idx = Array.from({ length: Math.min(3, last - first + 1) }, (_, k) => first + k);
+    else idx = Array.from({ length: last - first + 1 }, (_, k) => first + k);
+    r.hints += 1; setHints(r.hints);
+    setReveal((old) => [...new Set([...old, ...idx])]);
+  };
   const reset = () => { stopRec(); setPhase('pick'); setMsg(''); };
 
   /** كلماتُ المدى كما تُعرض: ما قرأه صحيحًا واضح، وما بعده نقاط. لا يظهر الجواب إلا إذا ضغط الطالب «تلميح»: وإلا لم يكن تسميعًا. */
-  const shown = (i) => i < cursor || i === reveal;
+  const shown = (i) => i < cursor || reveal.includes(i);
 
   const pct = words.length ? Math.round((cursor / words.length) * 100) : 0;
   const mine = [...sessions].sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 15);
@@ -276,7 +293,7 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
             <div className="bg-red-50 border border-red-200 rounded-xl p-3 mb-3 text-center" data-testid="daily-repeat">
               <div className="text-red-700 font-extrabold text-lg flex items-center justify-center gap-2"><RotateCcw size={18} /> أعد</div>
               <div className="text-sm text-red-600 mt-1">أعد من الموضع الأحمر</div>
-              <button data-testid="daily-show-word" onClick={hint} className="mt-2 text-xs border border-red-200 text-red-700 rounded-lg px-3 py-1.5">أظهر لي الكلمة</button>
+              <button data-testid="daily-show-word" onClick={() => hint('word')} className="mt-2 text-xs border border-red-200 text-red-700 rounded-lg px-3 py-1.5">أظهر لي الكلمة</button>
             </div>
           )}
 
@@ -290,9 +307,11 @@ export default function DailyTasmee({ sessions = [], onSave, onBack, quranUrl = 
 
           <div className="text-[11px] text-slate-400 mt-3 min-h-[16px]" data-testid="daily-heard">{heard ? `سمعتُ: ${heard}` : 'ابدأ القراءة…'}</div>
           {msg && <div className="text-red-600 text-sm mt-2">{msg}</div>}
-          <div className="flex gap-2 mt-3">
-            <button onClick={hint} className="flex items-center gap-1 text-xs border border-slate-200 text-slate-600 rounded-xl px-3 py-2"><Eye size={14} /> تلميح</button>
-            <button data-testid="daily-stop" onClick={() => finish(false)} className="flex-1 text-sm border border-slate-200 text-slate-700 rounded-xl py-2.5 flex items-center justify-center gap-1"><MicOff size={14} /> انتهيت</button>
+          <div className="flex flex-wrap gap-2 mt-3">
+            <button data-testid="daily-hint-word" onClick={() => hint('word')} className="flex items-center gap-1 text-xs border border-slate-200 text-slate-600 rounded-xl px-3 py-2"><Eye size={14} /> الكلمة</button>
+            <button data-testid="daily-hint-start" onClick={() => hint('start')} className="text-xs border border-slate-200 text-slate-600 rounded-xl px-3 py-2">بداية الآية</button>
+            <button data-testid="daily-hint-ayah" onClick={() => hint('ayah')} className="text-xs border border-slate-200 text-slate-600 rounded-xl px-3 py-2">الآية كاملة</button>
+            <button data-testid="daily-stop" onClick={() => finish(false)} className="basis-full text-sm border border-slate-200 text-slate-700 rounded-xl py-2.5 flex items-center justify-center gap-1"><MicOff size={14} /> انتهيت</button>
           </div>
           <div className="text-[11px] text-slate-400 mt-2 flex items-center gap-1"><Volume2 size={12} /> أعدتَ {repeats} {repeats === 1 ? 'مرة' : 'مرات'}{hints ? ` · تلميحات ${hints}` : ''}</div>
         </div>
